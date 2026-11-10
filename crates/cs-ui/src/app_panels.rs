@@ -340,6 +340,10 @@ impl ChimpApp {
     ) {
         let spec = id.spec();
         let Host::Flyout(body) = spec.host else {
+            debug_assert!(
+                false,
+                "{id:?} no es un panel flotante (su host no es Flyout)"
+            );
             return;
         };
         // El skin compartido: el contenido toma prestada la app entera mientras se dibuja.

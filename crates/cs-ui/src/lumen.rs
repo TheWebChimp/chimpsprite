@@ -71,7 +71,9 @@ const STACKED_PREVIEW: f32 = 120.0;
 
 /// Los anchos de los botones de una columna de `width`: cada uno de `n` parejos.
 fn button_width(width: f32, n: usize) -> f32 {
-    ((width - (n - 1) as f32 * BUTTON_GAP) / n as f32).floor()
+    ((width - (n - 1) as f32 * BUTTON_GAP) / n as f32)
+        .floor()
+        .max(0.0)
 }
 /// Del borde de una caja a lo de adentro: las dos líneas y 2 de aire.
 const BOX_PAD: f32 = 5.0;
@@ -365,7 +367,7 @@ fn map_button_widths(ui: &Ui, width: f32) -> (f32, f32, f32) {
         ),
         None => (third, 0.0),
     };
-    let rest = width - generate - 2.0 * BUTTON_GAP;
+    let rest = (width - generate - 2.0 * BUTTON_GAP).max(0.0);
     let modify = (rest / 2.0).floor().max(MODIFY).min(rest - export_min);
     (generate, modify, rest - modify)
 }
@@ -1711,6 +1713,31 @@ mod tests {
             clip.top() >= viewport.top() + LOGO_AT.y,
             "{logo:?} clipped by {clip:?}, viewport {viewport:?}"
         );
+    }
+
+    /// Sin Pixel UI y en el primer frame de un contexto nuevo (todavía sin medir nada, el ancho
+    /// disponible es 0), los botones de Generate/Modify/Export no piden un ancho negativo: egui lo
+    /// rechaza con un `debug_assert` ("Negative desired size").
+    #[test]
+    fn the_first_frame_without_pixel_ui_asks_for_no_negative_width() {
+        let ctx = egui::Context::default();
+        let mut panel = LumenPanel::default();
+        panel.load("box".into(), sprite());
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_size(pos2(0.0, 0.0), egui::Vec2::ZERO)),
+                |ui| {
+                    panel.ui(ui);
+                },
+            );
+        });
+        output.textures_delta.clear();
+        assert_eq!(button_width(0.0, 3), 0.0);
     }
 
     #[test]

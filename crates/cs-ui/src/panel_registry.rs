@@ -44,7 +44,7 @@ pub enum PanelId {
     Artboards,
     Library,
     Slices,
-    /// Las paletas de Lospec (su contenido lo pone la app, ver [`dock::DockOutput::app_panel`]).
+    /// Las paletas de Lospec.
     Lospec,
     /// Las fuentes de dafont (solo escritorio: en la web el sitio no acepta peticiones de otras
     /// páginas).
@@ -64,7 +64,7 @@ pub enum PanelId {
 #[derive(Clone, Copy, Debug)]
 #[expect(
     dead_code,
-    reason = "`min_width` y `closable` los leerá el dibujo de paneles de las siguientes tareas"
+    reason = "hasta la fase C (cuando el docking lea `min_width` y `closable`)"
 )]
 pub(crate) struct PanelSpec {
     /// El título: el rótulo de su botón y su identidad en la memoria de egui.
