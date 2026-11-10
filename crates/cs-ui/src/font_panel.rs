@@ -34,14 +34,21 @@ use crate::widgets;
 /// Ancho de adentro del panel (sin su marco) en el mockup: el contenido y la barra del scroll.
 /// El dock abre el panel de este ancho; adentro, los ajustes se acomodan al que les toque.
 pub const REFERENCE_WIDTH: f32 = CONTENT_W + pixel_ui::SCROLL_BAR;
-/// El ancho más chico en que los ajustes caben sin encimarse ni salirse (medido): lo más ancho que
-/// no se parte es Weight con su select (32 + 5 + 112). El título y la vista Edit todavía no se
-/// acomodan: el dock aún no achica el panel.
+/// Lo más angosto del panel: por ahora, su ancho de referencia. Baja cuando se migren el título,
+/// la vista Edit (Test Drive mide 284) y la de Kerning; la de Config ya llega a
+/// [`CONFIG_MIN_WIDTH`].
+#[expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")]
+pub const MIN_WIDTH: f32 = REFERENCE_WIDTH;
+/// El ancho más chico en que la vista Config cabe sin encimarse ni salirse (medido): lo más ancho
+/// que no se parte es Weight con su select (32 + 5 + 112).
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+    expect(
+        dead_code,
+        reason = "el panel lo usará cuando se migren las otras vistas"
+    )
 )]
-pub const MIN_WIDTH: f32 = 150.0;
+pub const CONFIG_MIN_WIDTH: f32 = 150.0;
 /// Ancho del contenido que se desplaza (x 8 a 312 en el mockup; la barra, de 312 a 322).
 const CONTENT_W: f32 = 304.0;
 /// El logo del título (el chango herrero y "FontForge", 141×28), en (6, 2): sube por encima del

@@ -4256,9 +4256,9 @@ fn the_font_settings_are_the_mockup_layout() {
 
 #[test]
 fn the_font_settings_reflow_at_any_width() {
-    use crate::font_panel::{MIN_WIDTH, REFERENCE_WIDTH, config_view};
+    use crate::font_panel::{CONFIG_MIN_WIDTH, REFERENCE_WIDTH, config_view};
     use crate::forms::testing::run_at;
-    for width in [MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
+    for width in [CONFIG_MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
         let sprite = cs_core::Sprite::new(8, 8, cs_core::ColorMode::Rgba);
         let mut editor = crate::editor::Editor::with_sprite(sprite);
         editor.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
