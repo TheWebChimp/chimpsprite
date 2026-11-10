@@ -416,6 +416,12 @@ impl CanvasView {
         self.pan
     }
 
+    /// El zoom pedido que todavía no se aplicó (para los tests).
+    #[cfg(test)]
+    pub(crate) fn pending_zoom(&self) -> Option<ZoomRequest> {
+        self.pending_zoom
+    }
+
     /// Cuántas veces se compuso un artboard (para los tests).
     #[cfg(test)]
     pub(crate) fn composed_count(&self) -> u32 {

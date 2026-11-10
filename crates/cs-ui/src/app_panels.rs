@@ -1,8 +1,9 @@
-//! Los paneles flotantes del dock (Artboards, Slices, Groom, Lumen, FontForge, 3D, Library, Dafont,
-//! Lospec):
-//! se dibujan con `draw_panel`, que solo toma prestados los campos que cada uno usa, y lo que
-//! piden se aplica después con `apply_panel_action`, con la app entera. `panel_flyout` los
-//! hospeda flotando junto a su botón, con lo que dice su ficha del registro.
+//! Los paneles de la app (los flotantes del dock: Artboards, Slices, Groom, Lumen, FontForge, 3D,
+//! Library, Dafont, Lospec; y las regiones fijas: Tools, Color, Timeline, el contenido de
+//! Preview): se dibujan con `draw_panel`, que solo toma prestados los campos que cada uno usa, y
+//! lo que piden se aplica después con `apply_panel_action`, con la app entera. `panel_flyout`
+//! hospeda los del dock flotando junto a su botón, con lo que dice su ficha del registro; las
+//! regiones fijas siguen en sus paneles de `editor_panels`.
 
 use eframe::egui;
 
@@ -11,7 +12,7 @@ use crate::dafont;
 use crate::panel_registry::{Body, Host, PanelId};
 use crate::{
     ChimpApp, dock, font_panel, groom, library_panel, lumen, model_panel, palette_ui, panels,
-    platform, view,
+    platform, tilemap_dialog, timeline, view,
 };
 
 /// Lo que pidió un panel de la app al dibujarse: se aplica con [`ChimpApp::apply_panel_action`].
@@ -27,31 +28,45 @@ pub(crate) enum PanelAction {
     Lospec(palette_ui::LospecAction),
     /// Abrir el diálogo Canvas Size (desde Artboards).
     OpenCanvasSize,
+    /// Lo pedido desde el encabezado de la paleta (Color).
+    Palette(panels::PaletteAction),
+    /// Se entró a una instancia desde Color: el zoom que pide el lienzo, calculado al entrar
+    /// (a un símbolo de la biblioteca se ajusta; a uno del lienzo, se centra).
+    InstanceZoom(view::ZoomRequest),
+    /// New Tilemap Layer, desde la línea de tiempo.
+    NewTilemap,
+    /// La × del Preview.
+    ClosePreview,
 }
 
 impl ChimpApp {
-    /// El contenido del panel `id` en `ui` y lo que pidió. Los que no son paneles flotantes
-    /// del dock no ponen nada.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "los hospedajes fijos (el panel 3D de la pestaña de un modelo) lo usarán"
-        )
-    )]
+    /// El contenido del panel `id` en `ui` y lo que pidió. Lo que lo rodea (el marco, el
+    /// tamaño, el scroll de la toolbar, lo que apaga un diálogo modal) es de su anfitrión.
     pub(crate) fn draw_panel(&mut self, ui: &mut egui::Ui, id: PanelId) -> Option<PanelAction> {
-        self.draw_panel_in(ui, id, None)
+        self.draw_panel_in(ui, id, None, false)
     }
 
-    /// Como [`Self::draw_panel`]; `lospec_bottom` es hasta dónde llega la lista de Lospec (abajo
-    /// de la columna del dock). Va como parámetro privado y no en un campo de la app: solo
-    /// Lospec lo usa y solo `panel_flyout` lo sabe; sin él, la lista se mide como en Palette
-    /// Presets.
+    /// Como [`Self::draw_panel`], con un diálogo modal abierto (`modal`): Color no lo apaga
+    /// entero (la paleta sigue viva), solo los menús de la paleta y la instancia.
+    pub(crate) fn draw_panel_modal(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: PanelId,
+        modal: bool,
+    ) -> Option<PanelAction> {
+        self.draw_panel_in(ui, id, None, modal)
+    }
+
+    /// Como [`Self::draw_panel_modal`]; `lospec_bottom` es hasta dónde llega la lista de Lospec
+    /// (abajo de la columna del dock). Va como parámetro privado y no en un campo de la app:
+    /// solo Lospec lo usa y solo `panel_flyout` lo sabe; sin él, la lista se mide como en
+    /// Palette Presets.
     fn draw_panel_in(
         &mut self,
         ui: &mut egui::Ui,
         id: PanelId,
         lospec_bottom: Option<f32>,
+        modal: bool,
     ) -> Option<PanelAction> {
         // Solo préstamos de campos sueltos: el skin junto al editor y al estado de cada panel.
         let skin = self.pixel.skin();
@@ -103,9 +118,72 @@ impl ChimpApp {
                 }
                 None
             }
-            // Los demás no son paneles flotantes.
-            PanelId::Tools | PanelId::Color | PanelId::Timeline | PanelId::Preview => None,
+            PanelId::Tools => {
+                panels::toolbar(ui, &mut self.doc.editor, skin);
+                None
+            }
+            PanelId::Color => self.draw_color(ui, modal),
+            PanelId::Timeline => {
+                timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin);
+                std::mem::take(&mut self.doc.timeline.new_tilemap)
+                    .then_some(PanelAction::NewTilemap)
+            }
+            PanelId::Preview => {
+                // La textura del lienzo, si muestra el frame del editor tal cual.
+                let canvas = self.doc.canvas.plain_texture(&self.doc.editor);
+                self.preview.contents(ui, &self.doc.editor, skin, canvas);
+                None
+            }
         }
+    }
+
+    /// La columna de colores: la paleta (con Pixel UI, arriba y fuera del scroll, con el editor
+    /// de color siempre entero), o en modo tiles el tileset y el selector de color, y la
+    /// instancia. Con un diálogo modal (`modal`), los menús de la paleta no abren otro encima y
+    /// la instancia queda apagada.
+    fn draw_color(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<PanelAction> {
+        let skin = self.pixel.skin();
+        let tiles = self.doc.editor.tiles_mode();
+        let editor = &mut self.doc.editor;
+        let height = &mut self.view.palette_height;
+        let palette = |ui: &mut egui::Ui, editor: &mut crate::editor::Editor, height: &mut f32| {
+            panels::palette(ui, editor, !modal, skin, height)
+                .filter(|_| !modal)
+                .map(PanelAction::Palette)
+        };
+        let mut action = None;
+        // Con Pixel UI, la paleta y el editor de color van arriba, fuera del scroll: el editor
+        // se ve siempre entero (si falta lugar, se achica la caja de la paleta).
+        let fixed = skin.is_some() && !tiles;
+        if fixed {
+            action = palette(ui, editor, height);
+        }
+        crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
+            if tiles {
+                panels::tileset(ui, editor, &mut self.doc.tile_thumbs);
+                // El selector de color sigue a mano (lo usa 2B).
+                ui.add_space(10.0);
+                panels::color_picker(ui, editor, skin);
+            } else if !fixed {
+                action = palette(ui, editor, height);
+            }
+            // Artboards y Slices van en el dock (a la izquierda de este panel).
+            ui.add_space(12.0);
+            let entered = ui
+                .add_enabled_ui(!modal, |ui| panels::instance(ui, editor))
+                .inner;
+            if entered {
+                // A un símbolo de la biblioteca: se ve solo él, ajustado; a uno del lienzo,
+                // se centra.
+                let zoom = if editor.in_symbol_mode() {
+                    view::ZoomRequest::Fit
+                } else {
+                    view::ZoomRequest::CenterActive
+                };
+                action = Some(PanelAction::InstanceZoom(zoom));
+            }
+        });
+        action
     }
 
     /// Lo que pidió un panel de la app: necesita la app entera, por eso va después de dibujarlo.
@@ -181,6 +259,12 @@ impl ChimpApp {
             }
             PanelAction::Lospec(action) => self.lospec_action(Some(action)),
             PanelAction::OpenCanvasSize => self.open_canvas_size(),
+            PanelAction::Palette(action) => self.palette_action(ctx, action),
+            PanelAction::InstanceZoom(zoom) => self.doc.canvas.request_zoom(zoom),
+            PanelAction::NewTilemap => {
+                self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
+            }
+            PanelAction::ClosePreview => self.view.preview = false,
         }
     }
 
@@ -269,7 +353,7 @@ impl ChimpApp {
                 palette_ui::lospec_band(ui, skin);
             }
             ui.add_enabled_ui(!modal, |ui| {
-                action = self.draw_panel_in(ui, id, Some(lospec_bottom));
+                action = self.draw_panel_in(ui, id, Some(lospec_bottom), modal);
             });
         };
         let width = spec.reference_width;
@@ -371,6 +455,84 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn the_fixed_regions_and_preview_draw_through_the_registry() {
+        use crate::panel_registry::PanelId;
+        for pixel_ui in [true, false] {
+            let mut app = test_app_with(pixel_ui);
+            let ctx = egui::Context::default();
+            for _ in 0..2 {
+                frame(&ctx, &mut app, |_, _| {});
+            }
+            for id in [
+                PanelId::Tools,
+                PanelId::Color,
+                PanelId::Timeline,
+                PanelId::Preview,
+            ] {
+                frame(&ctx, &mut app, |app, ui| {
+                    // Dibujarlos solos no pide nada, pero ponen su contenido.
+                    let drawn = ui.scope(|ui| assert!(app.draw_panel(ui, id).is_none()));
+                    let rect = drawn.response.rect;
+                    assert!(
+                        rect.width() > 0.0 && rect.height() > 0.0,
+                        "{id:?} pixel_ui={pixel_ui}: {rect:?}"
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn the_model_panel_draws_through_the_registry_in_a_model_tab() {
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        assert!(app.doc.editor.new_model("Ship", (32, 32)));
+        let id = app.doc.editor.workspace().expect("the workspace");
+        app.tabs.open_view(&mut app.doc, id);
+        assert!(app.doc.editor.model_edit_on());
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        frame(&ctx, &mut app, |app, ui| {
+            ui.set_width(PanelId::Model.spec().reference_width);
+            let drawn = ui.scope(|ui| assert!(app.draw_panel(ui, PanelId::Model).is_none()));
+            assert!(drawn.response.rect.height() > 0.0);
+        });
+    }
+
+    #[test]
+    fn the_fixed_region_actions_do_what_their_panels_did() {
+        use super::PanelAction;
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        // Entrar a una instancia: el lienzo pide el zoom que se calculó al dibujar.
+        app.apply_panel_action(
+            &ctx,
+            PanelAction::InstanceZoom(crate::view::ZoomRequest::CenterActive),
+        );
+        assert_eq!(
+            app.doc.canvas.pending_zoom(),
+            Some(crate::view::ZoomRequest::CenterActive)
+        );
+        // La × del Preview lo apaga.
+        app.view.preview = true;
+        app.apply_panel_action(&ctx, PanelAction::ClosePreview);
+        assert!(!app.view.preview);
+        // New Tilemap Layer desde la línea de tiempo abre su diálogo.
+        assert!(app.new_tilemap.is_none());
+        app.apply_panel_action(&ctx, PanelAction::NewTilemap);
+        assert!(app.new_tilemap.is_some());
+        // Lo del encabezado de la paleta va a `palette_action`.
+        assert!(app.presets_window.is_none());
+        app.apply_panel_action(
+            &ctx,
+            PanelAction::Palette(crate::panels::PaletteAction::OpenPresets),
+        );
+        assert!(app.presets_window.is_some());
     }
 
     #[test]

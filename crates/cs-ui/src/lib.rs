@@ -1379,7 +1379,12 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
-        let skin = self.pixel.skin();
+        use crate::app_panels::PanelAction;
+        use crate::panel_registry::PanelId;
+        // El skin compartido: el contenido de cada región toma prestada la app entera
+        // (`draw_panel`) mientras su panel se dibuja con el skin.
+        let shared_skin = self.pixel.shared_skin();
+        let skin = shared_skin.as_deref();
         // Nada de lo de arriba pinta sobre la barra de estado: si el contenido de un panel no
         // entra en una ventana baja, egui lo alarga hacia abajo (y con él su borde y el resalte
         // de redimensionar).
@@ -1440,16 +1445,15 @@ impl ChimpApp {
             .show(ui, |ui| {
                 // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
                 panels::tools_scroll_area().show(ui, |ui| {
-                    ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor, skin));
+                    ui.add_enabled_ui(!modal, |ui| self.draw_panel(ui, PanelId::Tools));
                 });
             });
         // El panel derecho antes que la línea de tiempo: va a todo el alto, hasta la barra de
         // estado, y la línea de tiempo termina a su izquierda.
         // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
-        let mut palette_action = None;
+        let mut color_action = None;
         // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
         self.doc.editor.palette_locked = self.view.palette_locked;
-        let tiles = self.doc.editor.tiles_mode();
         // El ancho guardado de la columna de colores; sin uno, el de fábrica.
         let saved_width = self
             .view
@@ -1486,42 +1490,9 @@ impl ChimpApp {
                 .show_separator_line(false);
         }
         let palette_panel = panel.show(ui, |ui| {
-            // Con un diálogo abierto, el menú de paleta no abre otro encima.
-            let palette = |ui: &mut egui::Ui, editor: &mut editor::Editor, height: &mut f32| {
-                panels::palette(ui, editor, !modal, skin, height).filter(|_| !modal)
-            };
-            // Con Pixel UI, la paleta y el editor de color van arriba, fuera del scroll: el
-            // editor se ve siempre entero (si falta lugar, se achica la caja de la paleta).
-            let fixed = skin.is_some() && !tiles;
-            if fixed {
-                palette_action = palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
-            }
-            crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
-                if tiles {
-                    panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
-                    // El selector de color sigue a mano (lo usa 2B).
-                    ui.add_space(10.0);
-                    panels::color_picker(ui, &mut self.doc.editor, skin);
-                } else if !fixed {
-                    palette_action =
-                        palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
-                }
-                // Artboards y Slices van en el dock (a la izquierda de este panel).
-                ui.add_space(12.0);
-                let entered = ui
-                    .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
-                    .inner;
-                if entered {
-                    // A un símbolo de la biblioteca: se ve solo él, ajustado; a uno del lienzo,
-                    // se centra.
-                    let zoom = if self.doc.editor.in_symbol_mode() {
-                        view::ZoomRequest::Fit
-                    } else {
-                        view::ZoomRequest::CenterActive
-                    };
-                    self.doc.canvas.request_zoom(zoom);
-                }
-            })
+            // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la
+            // instancia (lo decide el panel).
+            color_action = self.draw_panel_modal(ui, PanelId::Color, modal);
         });
         // Lo que el usuario arrastró se guarda con la vista (el panel ya respetó su mínimo).
         let width = palette_panel.response.rect.width();
@@ -1559,8 +1530,6 @@ impl ChimpApp {
         let model_tab = self.doc.editor.model_edit_on();
         let mut model_action = None;
         let dock_out = if model_tab {
-            let editor = &mut self.doc.editor;
-            let state = &mut self.model_panel;
             egui::Panel::right("model_panel")
                 .resizable(false)
                 .exact_size(dock::fixed_panel_width(model_panel::REFERENCE_WIDTH))
@@ -1569,7 +1538,7 @@ impl ChimpApp {
                 .show(ui, |ui| {
                     dock::fixed_panel(ui, skin, model_panel::REFERENCE_WIDTH, |ui| {
                         ui.add_enabled_ui(!modal, |ui| {
-                            model_action = model_panel::show(ui, editor, skin, state);
+                            model_action = self.draw_panel(ui, PanelId::Model);
                         });
                     });
                 });
@@ -1603,20 +1572,24 @@ impl ChimpApp {
                     .frame(timeline::pixel_panel_frame(skin))
                     .show_separator_line(false);
             }
-            panel.show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin)
-                });
-            });
-        }
-        if std::mem::take(&mut self.doc.timeline.new_tilemap) {
-            self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
+            let timeline_action = panel
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!modal, |ui| self.draw_panel(ui, PanelId::Timeline))
+                        .inner
+                })
+                .inner;
+            // New Tilemap Layer: su diálogo.
+            if let Some(action) = timeline_action {
+                self.apply_panel_action(ui.ctx(), action);
+            }
         }
         // Después de los paneles: lo pedido desde el derecho necesita `self` entero.
-        if let Some(action) = palette_action {
-            self.palette_action(ui.ctx(), action);
+        if let Some(action) = color_action {
+            self.apply_panel_action(ui.ctx(), action);
         }
-        self.model_action(model_action);
+        if let Some(action) = model_action {
+            self.apply_panel_action(ui.ctx(), action);
+        }
         let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
         // En la pestaña de un modelo no está su botón (no hay dock): la ventana se esconde sin
         // apagarse y vuelve con el lienzo.
@@ -1629,7 +1602,7 @@ impl ChimpApp {
                 canvas_texture,
             )
         {
-            self.view.preview = false;
+            self.apply_panel_action(ui.ctx(), PanelAction::ClosePreview);
         }
         if self.undo_history
             && undo_history::show(ui.ctx(), &mut self.doc.editor, self.pixel.skin())
