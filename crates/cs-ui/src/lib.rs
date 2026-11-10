@@ -3,6 +3,7 @@
 mod anim_ops;
 mod app_actions;
 mod app_menus;
+mod app_panels;
 mod appearance;
 mod artboard_sheets;
 mod artboard_window;
@@ -534,54 +535,6 @@ impl ChimpApp {
         }
     }
 
-    /// El panel Groom del dock y lo que pide.
-    fn groom_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
-        let primary = self.doc.editor.resolve(self.doc.editor.primary);
-        let mut action = None;
-        // Las paletas para ajustar el resultado: la del documento y las de la biblioteca.
-        let current = groom::PaletteChoice {
-            name: groom::CURRENT_PALETTE.into(),
-            colors: self.doc.editor.sprite().palette.colors().to_vec(),
-        };
-        let library = self.palettes.user().iter().chain(self.palettes.builtin());
-        let palettes: Vec<groom::PaletteChoice> = std::iter::once(current)
-            .chain(library.map(|p| groom::PaletteChoice {
-                name: p.name.clone(),
-                colors: p.palette.colors().to_vec(),
-            }))
-            .collect();
-        let groom = &mut self.groom;
-        let width = groom::REFERENCE_WIDTH;
-        dock::flyout(
-            ctx,
-            dock::DockPanel::Groom,
-            anchor,
-            self.pixel.skin(),
-            width,
-            true,
-            |ui| {
-                ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary, &palettes));
-            },
-        );
-        match action {
-            Some(groom::GroomAction::Import) => {
-                self.platform
-                    .open_file(groom::FILTER, platform::OpenPurpose::GroomImage, ctx);
-            }
-            Some(groom::GroomAction::BrowseLospec) => {
-                dock::set_open(ctx, Some(dock::DockPanel::Lospec));
-            }
-            Some(groom::GroomAction::UseLayer) => {
-                let (name, image) = self.current_layer_image();
-                self.groom.load(name, image);
-            }
-            Some(groom::GroomAction::NewSprite(g)) => self.bitmap_to_sprite(&g.name, &g.image),
-            Some(groom::GroomAction::AddArtboard(g)) => self.bitmap_to_artboard(g.name, &g.image),
-            Some(groom::GroomAction::AddLayer(g)) => self.bitmap_to_layer(&g.name, &g.image),
-            None => {}
-        }
-    }
-
     /// La capa actual en el frame actual, como imagen, y su nombre.
     fn current_layer_image(&self) -> (String, cs_io::export::Bitmap) {
         let editor = &self.doc.editor;
@@ -628,110 +581,6 @@ impl ChimpApp {
         }
     }
 
-    /// El panel Lumen del dock y lo que pide.
-    fn lumen_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
-        let mut action = None;
-        let lumen = &mut self.lumen;
-        dock::flyout(
-            ctx,
-            dock::DockPanel::Lumen,
-            anchor,
-            self.pixel.skin(),
-            lumen::REFERENCE_WIDTH,
-            true,
-            |ui| {
-                ui.add_enabled_ui(!modal, |ui| action = lumen.ui(ui));
-            },
-        );
-        match action {
-            Some(lumen::LumenAction::Browse(kind)) => {
-                let purpose = platform::OpenPurpose::LumenMap(kind);
-                self.platform.open_file(groom::FILTER, purpose, ctx);
-            }
-            Some(lumen::LumenAction::UseLayer) => {
-                let (name, image) = self.current_layer_image();
-                self.lumen.load(name, image);
-            }
-            Some(lumen::LumenAction::Export(file_name, image)) => {
-                let png = match image.to_png() {
-                    Ok(png) => png,
-                    Err(e) => return self.show_message("Could not export", e.to_string()),
-                };
-                let filters = [platform::FileFilter {
-                    name: "PNG",
-                    extensions: &["png"],
-                }];
-                if let Some(target) = self.platform.choose_save(&file_name, &filters)
-                    && let Err(e) = self.platform.write(&target, &png)
-                {
-                    self.show_message("Could not export", e);
-                }
-            }
-            Some(lumen::LumenAction::NewSprite(name, image)) => {
-                self.bitmap_to_sprite(&name, &image)
-            }
-            Some(lumen::LumenAction::AddArtboard(name, image)) => {
-                self.bitmap_to_artboard(name, &image)
-            }
-            Some(lumen::LumenAction::AddLayer(name, image)) => self.bitmap_to_layer(&name, &image),
-            None => {}
-        }
-    }
-
-    /// El panel Font del dock y lo que pide.
-    fn font_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
-        let mut action = None;
-        let skin = self.pixel.skin();
-        let editor = &mut self.doc.editor;
-        let state = &mut self.font_panel;
-        dock::flyout_fixed(
-            ctx,
-            dock::DockPanel::Font,
-            anchor,
-            skin,
-            font_panel::REFERENCE_WIDTH,
-            |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    action = font_panel::show(ui, editor, skin, state);
-                });
-            },
-        );
-        match action {
-            Some(font_panel::FontAction::NewFont) => self.new_font = Some(Default::default()),
-            Some(font_panel::FontAction::Build(format)) => self.open_build_font(Some(format)),
-            Some(font_panel::FontAction::AutoBuildAccents) => self.auto_build_accents(),
-            Some(font_panel::FontAction::FillFromTtf) => self.choose_fill_ttf(ctx),
-            Some(font_panel::FontAction::GlyphsFromImage) => self.choose_glyph_sheet(ctx),
-            Some(font_panel::FontAction::OpenFont(id)) => {
-                self.tabs.open_view(&mut self.doc, id);
-                self.show_font_beside_panel(ctx);
-            }
-            Some(font_panel::FontAction::NewVariant) => self.open_new_variant(),
-            None => {}
-        }
-    }
-
-    /// El panel 3D del dock y lo que pide.
-    fn model_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
-        let mut action = None;
-        let skin = self.pixel.skin();
-        let editor = &mut self.doc.editor;
-        let state = &mut self.model_panel;
-        dock::flyout_fixed(
-            ctx,
-            dock::DockPanel::Model,
-            anchor,
-            skin,
-            model_panel::REFERENCE_WIDTH,
-            |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    action = model_panel::show(ui, editor, skin, state);
-                });
-            },
-        );
-        self.model_action(action);
-    }
-
     /// Lo que pidió el panel 3D.
     fn model_action(&mut self, action: Option<model_panel::ModelAction>) {
         match action {
@@ -750,111 +599,6 @@ impl ChimpApp {
                 self.palette_confirm = Some(palette_ui::Confirm::TextureSize(side));
             }
             _ => {}
-        }
-    }
-
-    /// El panel Library del dock y lo que pide.
-    fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
-        let mut action = None;
-        let skin = self.pixel.skin();
-        let editor = &mut self.doc.editor;
-        let state = &mut self.doc.library;
-        dock::flyout(
-            ctx,
-            dock::DockPanel::Library,
-            anchor,
-            skin,
-            library_panel::REFERENCE_WIDTH,
-            true,
-            |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    action = library_panel::show(ui, editor, skin, state);
-                });
-            },
-        );
-        let Some(action) = action else {
-            return;
-        };
-        let editor = &mut self.doc.editor;
-        match action {
-            library_panel::LibraryAction::Rename(id, name) => {
-                editor.rename_artboard(id, name);
-            }
-            library_panel::LibraryAction::Duplicate(id) => {
-                if let Some(new) = editor.duplicate_library_item(id) {
-                    editor.library_selected = Some(new);
-                }
-            }
-            library_panel::LibraryAction::PlaceOnCanvas(id)
-                if editor
-                    .document
-                    .artboard(id)
-                    .is_some_and(|a| a.model.is_some()) =>
-            {
-                // Un modelo no sale de la biblioteca: pone una instancia en el centro del
-                // artboard activo del lienzo (o el primero), como al arrastrarlo.
-                let target = editor
-                    .document
-                    .artboard(editor.active)
-                    .filter(|a| a.on_canvas())
-                    .or_else(|| editor.document.canvas_artboards().next());
-                if let Some(a) = target {
-                    let ((x0, y0), (x1, y1)) = a.rect();
-                    let at = ((x0 + x1) / 2, (y0 + y1) / 2);
-                    let _ = editor.drop_symbol(id, at);
-                }
-            }
-            library_panel::LibraryAction::PlaceOnCanvas(id) => {
-                if editor.place_on_canvas(id) {
-                    self.doc
-                        .canvas
-                        .request_zoom(view::ZoomRequest::CenterActive);
-                }
-            }
-            library_panel::LibraryAction::Delete(id) => {
-                if editor.execute_doc(cs_commands::DocCommand::RemoveArtboard { id })
-                    && editor.library_selected == Some(id)
-                {
-                    editor.library_selected = None;
-                }
-            }
-            library_panel::LibraryAction::Open(id) => {
-                self.tabs.open_view(&mut self.doc, id);
-                if self.doc.editor.workspace() == Some(id) {
-                    self.show_workspace_panel(ctx);
-                }
-            }
-            library_panel::LibraryAction::ImportFont => self.choose_font_file(ctx),
-            library_panel::LibraryAction::Edit(id) => {
-                if editor.enter_symbol(id) {
-                    self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
-                }
-            }
-        }
-    }
-
-    /// El panel Dafont del dock, junto a su botón (`anchor`). La fuente elegida queda en la
-    /// herramienta de texto, a su tamaño y nítida.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn dafont_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
-        let mut picked = None;
-        let dafont = &mut self.dafont;
-        dock::flyout(
-            ctx,
-            dock::DockPanel::Dafont,
-            anchor,
-            self.pixel.skin(),
-            dafont::REFERENCE_WIDTH,
-            true,
-            |ui| {
-                ui.add_enabled_ui(!modal, |ui| picked = dafont.ui(ui));
-            },
-        );
-        if let Some(picked) = picked {
-            let style = &mut self.doc.editor.text_style;
-            style.font = picked.font;
-            style.size = picked.size_px.unwrap_or(16);
-            style.antialias = false;
         }
     }
 
@@ -1903,16 +1647,8 @@ impl ChimpApp {
             self.undo_history = false;
         }
         // Los paneles del dock que son de la app.
-        match dock_out.app_panel {
-            Some((dock::DockPanel::Lospec, anchor)) => self.lospec_panel(ui.ctx(), anchor, modal),
-            #[cfg(not(target_arch = "wasm32"))]
-            Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
-            Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
-            Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
-            Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
-            Some((dock::DockPanel::Font, anchor)) => self.font_panel(ui.ctx(), anchor, modal),
-            Some((dock::DockPanel::Model, anchor)) => self.model_panel(ui.ctx(), anchor, modal),
-            _ => {}
+        if let Some((id, anchor)) = dock_out.app_panel {
+            self.panel_flyout(ui.ctx(), id, anchor, modal);
         }
         // En la pestaña del modelo, el de Lospec queda abierto para cuando se vuelva al lienzo.
         if !model_tab && !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {

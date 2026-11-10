@@ -64,7 +64,7 @@ pub enum PanelId {
 #[derive(Clone, Copy, Debug)]
 #[expect(
     dead_code,
-    reason = "los anchos, `closable` y `host` los leerá el dibujo de paneles de las siguientes tareas"
+    reason = "`min_width` y `closable` los leerá el dibujo de paneles de las siguientes tareas"
 )]
 pub(crate) struct PanelSpec {
     /// El título: el rótulo de su botón y su identidad en la memoria de egui.

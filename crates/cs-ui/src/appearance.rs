@@ -221,6 +221,12 @@ impl PixelUi {
         }
     }
 
+    /// Como [`Self::skin`], pero compartido: para dibujar con él algo que necesita la app entera
+    /// (`&mut self`) al mismo tiempo, como los paneles flotantes del dock.
+    pub fn shared_skin(&self) -> Option<Arc<Skin>> {
+        self.skin().and(self.skin.clone())
+    }
+
     /// Una vez por frame, antes de dibujar: aplica el interruptor y la escala si cambiaron, y
     /// mantiene `pixels_per_point` entero aunque cambie la escala del sistema.
     pub fn update(&mut self, ctx: &egui::Context, view: &ViewSettings) {
