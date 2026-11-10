@@ -291,8 +291,13 @@ fn header(
                     );
                     let rect = Rect::from_min_size(slot.min + LOGO_AT, size);
                     let ppp = ui.ctx().pixels_per_point();
-                    ui.painter()
-                        .extend(pixel_ui::piece_shapes(piece, rect, ppp));
+                    // Sube y sale sobre el margen del panel, por encima del recorte del scroll:
+                    // con él se perdía su fila de arriba. (`with_clip_rect` intersecta con el
+                    // recorte de ahora; `set_clip_rect` lo cambia y deja lo demás del painter:
+                    // invisible en la pasada que mide, apagado con un modal.)
+                    let mut painter = ui.painter().clone();
+                    painter.set_clip_rect(ui.clip_rect().union(rect));
+                    painter.extend(pixel_ui::piece_shapes(piece, rect, ppp));
                 }
                 None => {
                     let galley = ui.painter().layout_no_wrap(
@@ -1451,6 +1456,47 @@ mod tests {
                 probe.rect("New Sprite");
             }
         }
+    }
+
+    /// El logo sube 1 por encima del contenido (sobre el margen del panel): el recorte del scroll
+    /// del dock, que empieza en el contenido, no le quita su fila de arriba.
+    #[test]
+    fn the_logo_keeps_its_top_row_above_the_scroll_clip() {
+        let ctx = egui::Context::default();
+        let skin = crate::skin::Skin::embedded(&ctx);
+        let piece = skin.piece("groom.logo", crate::skin::WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        ctx.set_fonts(crate::appearance::font_definitions(true));
+        crate::appearance::apply_style(&ctx, Some(skin.colors()));
+        crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
+        let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(REFERENCE_WIDTH, 500.0));
+        let logo = Rect::from_min_size(content.min + LOGO_AT, size);
+        let mut panel = GroomPanel::default();
+        let mut clip = None;
+        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                    ui.set_clip_rect(content);
+                    panel.ui(ui, Rgba::rgb(0, 0, 0), &[]);
+                });
+            });
+            output.textures_delta.clear();
+            clip = output.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) => {
+                    let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
+                    (Rect::from_points(&points) == logo).then_some(c.clip_rect)
+                }
+                _ => None,
+            });
+        }
+        let clip = clip.expect("the logo");
+        assert!(clip.contains_rect(logo), "{logo:?} clipped by {clip:?}");
     }
 
     /// 4×3 celdas de 5 px (rojo sobre blanco), agrandado.
