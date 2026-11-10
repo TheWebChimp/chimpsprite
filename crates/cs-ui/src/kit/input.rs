@@ -448,9 +448,14 @@ fn field(
     let area = text_area(ui, rect, affixes);
     let probe = galley(ui, "H", colors.text);
     let top = tab_bar::text_pos(&probe, 0.0, rect.top() + CAPS_TOP, ppp).y;
+    // Sin ancho negativo: en el primer frame de una forma de `forms` el campo mide 0.
+    let left = area.left() + TEXT_LEFT - OUTLINE;
     let inner = Rect::from_min_max(
-        pos2(area.left() + TEXT_LEFT - OUTLINE, top),
-        pos2(area.right() - TEXT_LEFT + OUTLINE, top + probe.size().y),
+        pos2(left, top),
+        pos2(
+            (area.right() - TEXT_LEFT + OUTLINE).max(left),
+            top + probe.size().y,
+        ),
     );
     let mut child = ui.new_child(
         UiBuilder::new()
@@ -524,7 +529,11 @@ fn field(
         }
         _ => {}
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, enabled, label));
+    // Para los lectores de pantalla (y los tests de layout) el campo es toda la caja, no solo el
+    // texto de adentro.
+    let mut named = response.clone();
+    named.rect = rect;
+    named.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, enabled, label));
     response
 }
 

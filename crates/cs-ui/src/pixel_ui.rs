@@ -788,6 +788,25 @@ fn frame_skin_id() -> Id {
     Id::new("pixel_frame_skin")
 }
 
+/// De la fila de una etiqueta a la caja de su texto: el texto de egui tiene sus mayúsculas 4
+/// abajo de su caja, y las de los controles del mockup 6 abajo de la fila.
+const SMALL_TEXT_DROP: f32 = 2.0;
+
+/// Una etiqueta de la UI con su tinta en la esquina de `rect` y sus mayúsculas a la altura de las
+/// de los campos de su fila (sin el centrado de las filas de egui).
+pub(crate) fn small_text_at(ui: &Ui, rect: Rect, text: &str) {
+    let color = ui.visuals().text_color();
+    let font = TextStyle::Body.resolve(ui.style());
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    // La tinta en `x`: sin el aire de la primera letra (el del 1 de "1 bit").
+    let bearing = galley.rows.first().and_then(|row| {
+        let g = row.glyphs.first()?;
+        Some((row.pos.x + g.pos.x + g.uv_rect.offset.x).round())
+    });
+    let at = rect.min + vec2(-bearing.unwrap_or(0.0), SMALL_TEXT_DROP);
+    ui.painter().galley(at, galley, color);
+}
+
 /// El skin de este frame (ver [`set_bubble`]); `None` sin Pixel UI.
 pub fn frame_skin(ctx: &egui::Context) -> Option<std::sync::Arc<Skin>> {
     ctx.data(|d| d.get_temp::<std::sync::Arc<Skin>>(frame_skin_id()))
@@ -852,7 +871,7 @@ pub fn icon_button(
 }
 
 /// El botón con ícono: 25×16, como los de la barra.
-const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
+pub(crate) const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
 
 /// La norma de los controles con Pixel UI (botones, campos, combos, grupos de opciones): 17 de
 /// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos y los botones la luz

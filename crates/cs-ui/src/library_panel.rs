@@ -13,13 +13,24 @@ use cs_io::export::Bitmap;
 use eframe::egui::{self, Color32, Rect, Sense, TextureHandle, Ui, pos2, vec2};
 
 use crate::editor::Editor;
+use crate::forms::{self, TuiBuilderLogic as _};
 use crate::menus;
-use crate::panel_kit::{box_color, child, label_with_hint, notched_outline};
+use crate::panel_kit::{box_color, child, label_with_hint, notched_outline, text_wrapped};
 use crate::pixel_ui;
 use crate::skin::Skin;
 
-/// Ancho del contenido: el mismo que Groom y Lumen.
-pub const WIDTH: f32 = crate::groom::WIDTH;
+/// El ancho del diseño (el de Groom y Lumen, el del panel flotante): el dock abre el panel de este
+/// ancho; adentro todo sale del ancho disponible.
+pub const REFERENCE_WIDTH: f32 = 434.0;
+/// Lo más angosto en que se ve bien (medido): la pregunta de borrar un símbolo con 99 usos en una
+/// línea (147) y, en la fila de una familia (corrida, con su miniatura y ×99), un estilo largo
+/// como Bold Italic Condensed entero (152). Más angosto, los nombres se cortan con "…" y los
+/// textos se parten en líneas.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+)]
+pub const MIN_WIDTH: f32 = 160.0;
 /// Alto de la caja de la vista previa.
 const PREVIEW_HEIGHT: f32 = 96.0;
 /// Alto de cada fila de la lista.
@@ -295,7 +306,18 @@ fn paint_fitted(ui: &Ui, texture: &TextureHandle, size: (u32, u32), area: Rect) 
         .image(texture.id(), rect, full, Color32::WHITE);
 }
 
-/// Dibuja el panel; devuelve lo que el usuario pidió.
+/// Una hoja de todo el ancho del panel y `h` de alto (una fila, la vista previa).
+fn band(h: f32) -> forms::Style {
+    forms::min_height(h, forms::Style::default())
+}
+
+/// `style` con el aire de más que espera la próxima hoja (`air`, que vuelve a 0).
+fn after(air: &mut f32, style: forms::Style) -> forms::Style {
+    forms::air_above(std::mem::take(air), style)
+}
+
+/// Dibuja el panel, del ancho de `ui` (una columna: las filas siguen el ancho, los nombres que no
+/// caben terminan en "…" y los textos se parten en líneas); devuelve lo que el usuario pidió.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -313,10 +335,6 @@ pub fn show(
     {
         editor.library_selected = None;
     }
-    label_with_hint(ui, "Library", "");
-    ui.add_space(4.0);
-    preview(ui, editor, state);
-    ui.add_space(6.0);
     // F2 renombra la fila elegida (si nadie más tiene el foco del teclado).
     if state.renaming.is_none()
         && let Some(id) = editor.library_selected
@@ -345,63 +363,96 @@ pub fn show(
             "File → New Font…",
         ),
     ];
-    for (title, kind, count, help) in parts {
-        label_with_hint(ui, title, &count.to_string());
-        ui.add_space(2.0);
-        if count == 0 {
-            ui.add(egui::Label::new(help).wrap());
-        }
-        let mut show_row = |ui: &mut Ui, (id, name, uses): &Row, shown: &str, indent: f32| {
-            let look = (shown, indent);
-            if let Some(a) = row(ui, editor, skin, state, kind, (*id, name, *uses), look) {
-                action = Some(a);
+    // Entre las hojas, el espacio entre elementos de egui (lo que había entre ellas); `air` es el
+    // aire de más que lleva la próxima.
+    let spacing = ui.spacing().item_spacing;
+    forms::form(ui, "library", spacing.y, |tui| {
+        let mut air = 0.0;
+        tui.style(after(&mut air, forms::Style::default()))
+            .ui(|ui| label_with_hint(ui, "Library", ""));
+        air += 4.0;
+        forms::canvas(tui, after(&mut air, band(PREVIEW_HEIGHT)), |ui| {
+            preview(ui, editor, state);
+        });
+        air += 6.0;
+        for (title, kind, count, help) in parts {
+            tui.style(after(&mut air, forms::Style::default()))
+                .ui(|ui| label_with_hint(ui, title, &count.to_string()));
+            air += 2.0;
+            if count == 0 {
+                tui.style(after(&mut air, forms::Style::default()))
+                    .ui(|ui| text_wrapped(ui, help));
             }
-        };
-        match kind {
-            Kind::Symbol => sections
-                .symbols
-                .iter()
-                .for_each(|r| show_row(ui, r, &r.1, 0.0)),
-            Kind::Model => sections
-                .models
-                .iter()
-                .for_each(|r| show_row(ui, r, &r.1, 0.0)),
-            // Las fuentes de una familia, bajo su nombre y con el de su estilo.
-            Kind::Font => {
-                for entry in &sections.fonts {
-                    match entry {
-                        FontEntry::Font(r) => show_row(ui, r, &r.1, 0.0),
-                        FontEntry::Family(family, members) => {
-                            family_header(ui, skin, family);
-                            for (r, style) in members {
-                                show_row(ui, r, style, FAMILY_INDENT);
+            {
+                let mut show_row =
+                    |tui: &mut forms::Tui, air: &mut f32, r: &Row, shown: &str, indent: f32| {
+                        forms::canvas(tui, after(air, band(ROW_HEIGHT)), |ui| {
+                            let (id, name, uses) = r;
+                            let look = (shown, indent);
+                            let row = (*id, name.as_str(), *uses);
+                            if let Some(a) = self::row(ui, editor, skin, state, kind, row, look) {
+                                action = Some(a);
+                            }
+                        });
+                    };
+                match kind {
+                    Kind::Symbol => sections
+                        .symbols
+                        .iter()
+                        .for_each(|r| show_row(tui, &mut air, r, &r.1, 0.0)),
+                    Kind::Model => sections
+                        .models
+                        .iter()
+                        .for_each(|r| show_row(tui, &mut air, r, &r.1, 0.0)),
+                    // Las fuentes de una familia, bajo su nombre y con el de su estilo.
+                    Kind::Font => {
+                        for entry in &sections.fonts {
+                            match entry {
+                                FontEntry::Font(r) => show_row(tui, &mut air, r, &r.1, 0.0),
+                                FontEntry::Family(family, members) => {
+                                    let header = after(&mut air, band(FAMILY_HEIGHT));
+                                    forms::canvas(tui, header, |ui| {
+                                        family_header(ui, skin, family);
+                                    });
+                                    for (r, style) in members {
+                                        show_row(tui, &mut air, r, style, FAMILY_INDENT);
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        // Las fuentes también entran de afuera: TTF, OTF o el JSON de BitFontMaker2.
-        if kind == Kind::Font {
-            ui.add_space(2.0);
-            let import = match skin {
-                Some(skin) => crate::kit::button::button(ui, skin, "Import…"),
-                None => pixel_ui::text_button(ui, "Import…"),
-            };
-            if import
-                .on_hover_text("A TTF, OTF or BitFontMaker2 JSON font")
-                .clicked()
-            {
-                action = Some(LibraryAction::ImportFont);
+            // Las fuentes también entran de afuera: TTF, OTF o el JSON de BitFontMaker2.
+            if kind == Kind::Font {
+                air += 2.0;
+                tui.style(after(&mut air, forms::Style::default()))
+                    .ui(|ui| {
+                        let import = match skin {
+                            Some(skin) => crate::kit::button::button(ui, skin, "Import…"),
+                            None => pixel_ui::text_button(ui, "Import…"),
+                        };
+                        if import
+                            .on_hover_text("A TTF, OTF or BitFontMaker2 JSON font")
+                            .clicked()
+                        {
+                            action = Some(LibraryAction::ImportFont);
+                        }
+                    });
             }
+            air += 6.0;
         }
-        ui.add_space(6.0);
-    }
-    if let Some(id) = state.confirm_delete
-        && let Some(a) = confirm_delete(ui, editor, state, id)
-    {
-        action = Some(a);
-    }
+        if let Some(id) = state.confirm_delete
+            && let Some(a) = confirm_delete(tui, &mut air, spacing.x, editor, state, id)
+        {
+            action = Some(a);
+        }
+        // El aire de abajo de todo: el panel mide lo mismo que medía. Una hoja de ese alto (taffy
+        // no cuenta el margen de una hoja vacía en lo que mide la forma).
+        if air > 0.0 {
+            forms::canvas(tui, band(air), |_| ());
+        }
+    });
     action
 }
 
@@ -641,9 +692,13 @@ fn row(
     action
 }
 
-/// Abajo de la lista: borrar un símbolo con instancias pide confirmación.
+/// Abajo de la lista, en `tui` (con el aire de más que espera, `air`): borrar un símbolo con
+/// instancias pide confirmación. Delete y Cancel, a `gap` uno del otro (si no caben, uno debajo
+/// del otro).
 fn confirm_delete(
-    ui: &mut Ui,
+    tui: &mut forms::Tui,
+    air: &mut f32,
+    gap: f32,
     editor: &Editor,
     state: &mut LibraryState,
     id: ArtboardId,
@@ -653,18 +708,26 @@ fn confirm_delete(
         return None;
     }
     let uses = editor.document.instance_uses(id);
-    ui.add_space(6.0);
+    *air += 6.0;
     let noun = if uses == 1 { "object" } else { "objects" };
-    ui.add(egui::Label::new(format!("Used by {uses} {noun}. Delete anyway?")).wrap());
+    let question = format!("Used by {uses} {noun}. Delete anyway?");
+    tui.style(after(air, forms::Style::default()))
+        .ui(|ui| text_wrapped(ui, &question));
     let mut action = None;
-    ui.horizontal(|ui| {
-        if pixel_ui::text_button(ui, "Delete").clicked() {
-            action = Some(LibraryAction::Delete(id));
-            state.confirm_delete = None;
-        }
-        if pixel_ui::text_button(ui, "Cancel").clicked() {
-            state.confirm_delete = None;
-        }
+    // Los botones (de 17) abajo de su fila de 18, como los ponía `ui.horizontal`.
+    let button = forms::air_above(1.0, forms::natural());
+    tui.style(forms::row(gap)).add(|tui| {
+        tui.style(button.clone()).ui(|ui| {
+            if pixel_ui::text_button(ui, "Delete").clicked() {
+                action = Some(LibraryAction::Delete(id));
+                state.confirm_delete = None;
+            }
+        });
+        tui.style(button).ui(|ui| {
+            if pixel_ui::text_button(ui, "Cancel").clicked() {
+                state.confirm_delete = None;
+            }
+        });
     });
     action
 }
@@ -800,6 +863,203 @@ mod tests {
         state.prune(&[(ArtboardId(3), "Coin".into(), 0)]);
         assert_eq!(state.renaming, None);
         assert_eq!(state.confirm_delete, None);
+    }
+
+    /// El panel con `editor` en un `Ui` de `width` (con la pregunta de borrar `confirm`).
+    fn probe_at(
+        width: f32,
+        editor: &mut Editor,
+        confirm: Option<ArtboardId>,
+    ) -> crate::forms::testing::Probe {
+        let mut state = LibraryState {
+            confirm_delete: confirm,
+            ..Default::default()
+        };
+        crate::forms::testing::run_at(width, |ui| {
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            show(ui, editor, skin.as_deref(), &mut state);
+        })
+    }
+
+    /// A cualquier ancho (de `MIN_WIDTH` a 600, y aun más angosto), con símbolos, un modelo, una
+    /// familia de fuentes y la pregunta de borrar un símbolo usado, todo entra en el ancho, en
+    /// puntos enteros y sin que nada tape a nada. Las filas siguen el ancho: el nombre largo se
+    /// corta con "…" donde no cabe (entero donde cabe) y los usos van a la derecha. Más angosto
+    /// que el mínimo, la pregunta se parte en líneas y Cancel baja debajo de Delete. En el ancho
+    /// de referencia, todo queda donde estaba.
+    #[test]
+    fn the_library_panel_reflows_at_any_width() {
+        const LONG: &str = "A symbol with a rather long name to truncate";
+        for width in [80.0, MIN_WIDTH, 300.0, REFERENCE_WIDTH, 600.0] {
+            let mut editor = stocked_editor();
+            let probe = probe_at(width, &mut editor, Some(ArtboardId(900)));
+            let at = format!("at {width}");
+            probe.assert_whole_px();
+            probe.assert_within(width);
+            probe.assert_no_overlap();
+            for name in ["Coin", LONG, "Ship", "Mine Bold", "Pixie"] {
+                let row = probe.rect(name);
+                assert_eq!((row.left(), row.width()), (0.0, width), "{name} {at}");
+                assert_eq!(row.height(), ROW_HEIGHT, "{name} {at}");
+            }
+            let (long, rect) = probe.text("A symb");
+            assert!(rect.right() <= width - ROW_PAD, "{long:?} {rect:?} {at}");
+            assert_eq!(long.ends_with('…'), width <= MIN_WIDTH, "{long:?} {at}");
+            let (_, uses) = probe.text("×1");
+            assert_eq!(uses.right(), width - ROW_PAD, "the uses on the right {at}");
+            let question = probe.rect("Used by 1 object. Delete anyway?");
+            let (delete, cancel) = (probe.rect("Delete"), probe.rect("Cancel"));
+            assert!(delete.top() >= question.bottom(), "{at}");
+            if width >= MIN_WIDTH {
+                assert_eq!(question.height(), 14.0, "one line {at}");
+                assert_eq!(cancel.top(), delete.top(), "{at}");
+            } else {
+                assert!(question.height() > 14.0, "wrapped {at}");
+                assert!(cancel.top() > delete.bottom(), "Cancel under Delete {at}");
+            }
+        }
+        // En el ancho de referencia, donde estaba antes de forms (los botones de la pregunta,
+        // donde ya se pintaban: su rect estaba medio punto arriba).
+        let mut editor = stocked_editor();
+        let probe = probe_at(REFERENCE_WIDTH, &mut editor, Some(ArtboardId(900)));
+        let rect =
+            |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+        let expected = [
+            (
+                "A symbol with a rather long name to truncate",
+                rect(0.0, 158.0, 434.0, 178.0),
+            ),
+            ("Coin", rect(0.0, 181.0, 434.0, 201.0)),
+            ("Ship", rect(0.0, 233.0, 434.0, 253.0)),
+            ("Mine Bold", rect(0.0, 325.0, 434.0, 345.0)),
+            ("Pixie", rect(0.0, 348.0, 434.0, 368.0)),
+            ("Import…", rect(0.0, 373.0, 48.0, 390.0)),
+            (
+                "Used by 1 object. Delete anyway?",
+                rect(0.0, 405.0, 137.0, 419.0),
+            ),
+            ("Delete", rect(0.0, 423.0, 38.0, 440.0)),
+            ("Cancel", rect(46.0, 423.0, 85.0, 440.0)),
+        ];
+        for (name, r) in expected {
+            assert_eq!(probe.rect(name), r, "{name}");
+        }
+        let texts = [
+            ("Library", pos2(0.0, 2.0)),
+            ("Symbols", pos2(0.0, 137.0)),
+            ("Models", pos2(0.0, 212.0)),
+            ("Fonts", pos2(0.0, 264.0)),
+            ("Mine", pos2(4.0, 285.0)),
+            ("Regular", pos2(34.0, 305.0)),
+            ("Pixie", pos2(26.0, 351.0)),
+        ];
+        for (text, pos) in texts {
+            assert_eq!(probe.text(text).1.min, pos, "{text}");
+        }
+    }
+
+    /// Lo que mide a lo alto el panel con `editor` en el ancho de referencia (con la pregunta de
+    /// borrar `confirm`).
+    fn height_with(editor: &mut Editor, confirm: Option<ArtboardId>) -> f32 {
+        let mut state = LibraryState {
+            confirm_delete: confirm,
+            ..Default::default()
+        };
+        let mut height = 0.0;
+        crate::forms::testing::run_at(REFERENCE_WIDTH, |ui| {
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            show(ui, editor, skin.as_deref(), &mut state);
+            height = ui.min_rect().height();
+        });
+        height
+    }
+
+    /// El panel mide a lo alto lo que medía antes de forms (lo que el scroll del dock desplaza):
+    /// con el aire de abajo de la última sección (el espacio entre elementos y 6) y, con la
+    /// pregunta de borrar, hasta el pie de sus botones.
+    #[test]
+    fn the_library_panel_keeps_its_height() {
+        let doc = Document::with_sprite("host", Sprite::new(8, 8, ColorMode::Rgba));
+        assert_eq!(height_with(&mut Editor::new(doc), None), 295.0);
+        assert_eq!(height_with(&mut stocked_editor(), None), 399.0);
+        let coin = Some(ArtboardId(900));
+        assert_eq!(height_with(&mut stocked_editor(), coin), 440.0);
+    }
+
+    /// Un documento vacío: las ayudas de cómo crear cada cosa, en una línea desde el mínimo y en
+    /// varias más angosto.
+    #[test]
+    fn the_empty_library_hints_wrap_only_below_its_minimum() {
+        for width in [80.0, MIN_WIDTH, REFERENCE_WIDTH] {
+            let doc = Document::with_sprite("host", Sprite::new(8, 8, ColorMode::Rgba));
+            let probe = probe_at(width, &mut Editor::new(doc), None);
+            probe.assert_whole_px();
+            probe.assert_within(width);
+            probe.assert_no_overlap();
+            let hint = probe.rect("File → New 3D Model…");
+            assert_eq!(hint.height() > 14.0, width < MIN_WIDTH, "at {width}");
+            assert!(probe.rect("Import…").top() > probe.rect("File → New Font…").bottom());
+        }
+    }
+
+    /// `MIN_WIDTH` es lo que dice: la pregunta con 99 usos entra en una línea y una fila de
+    /// familia (corrida a la derecha, con sus usos) muestra entero un estilo largo.
+    #[test]
+    fn the_minimum_width_fits_the_question_and_a_long_style() {
+        crate::forms::testing::run_at(MIN_WIDTH, |ui| {
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let width = |t: &str| {
+                let galley = ui
+                    .painter()
+                    .layout_no_wrap(t.into(), font.clone(), Color32::WHITE);
+                galley.size().x
+            };
+            let question = width("Used by 99 objects. Delete anyway?");
+            assert!(question <= MIN_WIDTH, "{question}");
+            let row = FAMILY_INDENT + 2.0 * ROW_PAD + THUMB + 2.0 + 3.0 * ROW_PAD;
+            let style = row + width("Bold Italic Condensed") + width("×99");
+            assert!(style <= MIN_WIDTH, "{style}");
+        });
+    }
+
+    /// Un editor con los símbolos Coin (900, con un uso) y uno de nombre largo (901), el modelo Ship,
+    /// la familia Mine (Regular y Bold) y la fuente Pixie, con Coin elegido.
+    fn stocked_editor() -> Editor {
+        let mut doc = Document::with_sprite("host", Sprite::new(8, 8, ColorMode::Rgba));
+        for (id, name) in [
+            (900, "Coin"),
+            (901, "A symbol with a rather long name to truncate"),
+        ] {
+            let mut a = doc.artboards[0].clone();
+            a.id = ArtboardId(id);
+            a.name = name.into();
+            a.in_library = true;
+            doc.artboards.push(a);
+        }
+        let cmd = cs_commands::ops::new_object_layer(
+            &doc.artboards[0].sprite,
+            None,
+            0,
+            ArtboardId(900),
+            "c",
+            (0, 0),
+        );
+        cmd.apply(&mut doc.artboards[0].sprite).unwrap();
+        let mut editor = Editor::new(doc);
+        assert!(editor.new_model("Ship", (32, 32)));
+        editor.exit_workspace();
+        assert!(editor.new_font("Mine", (8, 8), cs_core::FontMode::OneBit));
+        let style = cs_core::FontStyle {
+            name: "Bold".into(),
+            weight: 700,
+            ..Default::default()
+        };
+        let recipe = cs_core::VariantRecipe::new(cs_core::VariantKind::Bold);
+        assert!(editor.add_variant(&recipe, style));
+        assert!(editor.new_font("Pixie", (8, 8), cs_core::FontMode::OneBit));
+        editor.exit_workspace();
+        editor.library_selected = Some(ArtboardId(900));
+        editor
     }
 
     #[test]

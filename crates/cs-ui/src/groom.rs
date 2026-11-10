@@ -10,9 +10,10 @@ use eframe::egui::{
     self, Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2,
 };
 
+use crate::forms::{self, TuiBuilderLogic as _};
 use crate::panel_kit::{
     HINT_GAP, box_color, child, double_box, hint, hint_on_baseline, label_with_hint,
-    notched_outline,
+    notched_outline, row_bottom,
 };
 use crate::{pixel_ui, widgets};
 
@@ -26,8 +27,16 @@ pub const FILTER: &[crate::platform::FileFilter] = &[crate::platform::FileFilter
     },
 }];
 
-/// El panel (del diseño, desde la esquina de su contenido): su ancho y el alto más chico.
-pub const WIDTH: f32 = 434.0;
+/// El panel (del diseño, desde la esquina de su contenido): el ancho del mockup (el del panel
+/// flotante; adentro todo sale del ancho disponible) y el alto más chico.
+pub const REFERENCE_WIDTH: f32 = 434.0;
+/// Lo más angosto en que se ve bien (medido): los tres botones del pie en una fila (New Sprite,
+/// Add as Layer y Add as Artboard miden 216 con su aire). Las columnas, una debajo de otra.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+)]
+pub const MIN_WIDTH: f32 = 216.0;
 const MIN_HEIGHT: f32 = 391.0;
 /// La ilustración del panel sin imagen (los changos), del usuario, a 1x.
 const EMPTY_ART: &[u8] = include_bytes!("../../../assets/ui/groom_empty.aseprite");
@@ -35,34 +44,48 @@ const EMPTY_ART: &[u8] = include_bytes!("../../../assets/ui/groom_empty.aseprite
 const EMPTY_GAP: f32 = 8.0;
 /// Lo más ancho de la frase del panel sin imagen.
 const EMPTY_TEXT_WIDTH: f32 = 300.0;
-/// El logo, sobre el margen del panel, y la línea grabada debajo del encabezado.
+/// El encabezado: el logo (sobre el margen del panel) y, a la derecha, los botones para traer la
+/// imagen (con `HEADER_GAP` entre ellos; si no caben, debajo del logo). La línea grabada va
+/// `HEADER_LINE` debajo y las columnas empiezan `BODY_AIR` debajo.
 const LOGO_AT: egui::Vec2 = vec2(-3.0, -1.0);
-const HEADER_LINE: f32 = 21.0;
-/// Donde empiezan las columnas.
-const COLUMNS_TOP: f32 = 24.0;
-/// La columna de la izquierda (los pasos y la vista previa), la línea entre las dos y la de la
-/// derecha (los colores).
-const LEFT: egui::Rangef = egui::Rangef {
-    min: 0.0,
-    max: 181.0,
-};
-const DIVIDER: f32 = 185.0;
-const RIGHT: egui::Rangef = egui::Rangef {
-    min: 209.0,
-    max: 430.0,
-};
+const HEADER_HEIGHT: f32 = 19.0;
+const HEADER_GAP: f32 = 4.0;
+const HEADER_LINE: f32 = 2.0;
+const BODY_AIR: f32 = 5.0;
+/// Las columnas: la de la izquierda (los pasos y la vista previa) y la de la derecha (los colores
+/// y las sugerencias), de su ancho en el mockup; se achican hasta lo más ancho que no se parte
+/// (medido: los campos del offset, `OFFSET_LEFT` y dos campos de 37 con 3 entre ellos, 167; la
+/// fila de "Colors" con "Brightness" y la de "+n more groups" con "Merge All Suggested", 157 más
+/// los dígitos) y crecen parejas con lo que sobre.
+const LEFT_WIDTH: f32 = 181.0;
+const LEFT_MIN: f32 = 167.0;
+const RIGHT_WIDTH: f32 = 221.0;
+const RIGHT_MIN: f32 = 167.0;
+/// Entre las dos columnas (con la línea grabada `DIVIDER_AIR` a la derecha de la de la
+/// izquierda) y, a la derecha de la de los colores, aire.
+const COLUMN_GAP: f32 = 28.0;
+const DIVIDER_AIR: f32 = 4.0;
+const RIGHT_AIR: f32 = 4.0;
+/// Lo más angosto en que las columnas van lado a lado; más angosto, la de los colores baja
+/// debajo de la de los pasos, `STACK_GAP` debajo.
+const SIDE_BY_SIDE: f32 = LEFT_MIN + COLUMN_GAP + RIGHT_MIN + RIGHT_AIR;
+const STACK_GAP: f32 = 8.0;
 /// La columna de "Offset" en la fila de la cuadrícula.
 const OFFSET_LEFT: f32 = 90.0;
-/// Las cajas de la vista previa y de las sugerencias, a la misma altura: llegan hasta lo que va
-/// debajo de ellas (el tamaño y la nota; "Merge All Suggested"), sin bajar de un mínimo.
+/// Las cajas de la vista previa y de las sugerencias, `BOXES_AIR` debajo de lo de arriba de la
+/// columna más alta y a la misma altura: llegan hasta lo que va debajo de ellas (el tamaño y la
+/// nota; "Merge All Suggested"), sin bajar de un mínimo. Una debajo de otra, la vista previa
+/// tiene su alto y la de las sugerencias llega hasta abajo.
+const BOXES_AIR: f32 = 4.0;
 const BELOW_BOXES: f32 = 38.0;
 const MIN_BOX_HEIGHT: f32 = 60.0;
+const STACKED_PREVIEW: f32 = 120.0;
 /// Del borde de una caja a lo de adentro: las dos líneas y 2 de aire.
 const BOX_PAD: f32 = 5.0;
-/// La línea de abajo y los botones, desde el fondo del panel (los botones, enteros dentro del
-/// contenido: lo de afuera lo recorta el scroll).
-const FOOTER_LINE: f32 = 22.0;
+/// Abajo del todo, los botones (enteros dentro del contenido: lo de afuera lo recorta el
+/// scroll) y, `FOOTER_AIR` arriba de ellos, la línea grabada.
 const FOOTER_BUTTONS: f32 = pixel_ui::CONTROL_HEIGHT;
+const FOOTER_AIR: f32 = 5.0;
 /// Una sugerencia por fila.
 const SUGGESTION_ROW: f32 = 15.0;
 /// La lupa sobre la vista previa: su lado y cuántos píxeles del resultado se ven en ella.
@@ -249,14 +272,66 @@ impl Default for GroomPanel {
     }
 }
 
-/// Importar una imagen o tomar la capa actual, de derecha a izquierda.
-fn import_buttons(ui: &mut Ui, action: &mut Option<GroomAction>) {
-    if pixel_ui::text_button(ui, "Use Layer").clicked() {
-        *action = Some(GroomAction::UseLayer);
-    }
-    if pixel_ui::text_button(ui, "Import Image…").clicked() {
-        *action = Some(GroomAction::Import);
-    }
+/// El encabezado en `tui`: el logo (sin Pixel UI, el título) y, a la derecha, importar una
+/// imagen o tomar la capa actual (debajo del logo si no caben). Devuelve su rect.
+fn header(
+    tui: &mut forms::Tui,
+    logo: Option<&crate::skin::Piece>,
+    action: &mut Option<GroomAction>,
+) -> Rect {
+    tui.style(forms::row(0.0)).add(|tui| {
+        let natural = forms::air_right(HEADER_GAP, forms::natural());
+        let title = tui.style(natural).ui(|ui| {
+            match logo {
+                Some(piece) => {
+                    let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+                    let (slot, _) = ui.allocate_exact_size(
+                        vec2(size.x + LOGO_AT.x, HEADER_HEIGHT),
+                        Sense::hover(),
+                    );
+                    let rect = Rect::from_min_size(slot.min + LOGO_AT, size);
+                    let ppp = ui.ctx().pixels_per_point();
+                    // Sube y sale sobre el margen del panel, por encima del recorte del scroll:
+                    // con él se perdía su fila de arriba. El recorte crece solo eso (1 arriba,
+                    // 3 a la izquierda): con el contenido desplazado, el logo se recorta como lo
+                    // demás y no se pinta sobre el marco. (`with_clip_rect` intersecta con el
+                    // recorte de ahora; `set_clip_rect` lo cambia y deja lo demás del painter:
+                    // invisible en la pasada que mide, apagado con un modal.)
+                    let clip = ui.clip_rect();
+                    let mut painter = ui.painter().clone();
+                    painter.set_clip_rect(
+                        clip.with_min_x(clip.min.x + LOGO_AT.x)
+                            .with_min_y(clip.min.y + LOGO_AT.y),
+                    );
+                    painter.extend(pixel_ui::piece_shapes(piece, rect, ppp));
+                }
+                None => {
+                    let galley = ui.painter().layout_no_wrap(
+                        "Pixel Groom".into(),
+                        egui::TextStyle::Heading.resolve(ui.style()),
+                        ui.visuals().strong_text_color(),
+                    );
+                    let size = vec2(galley.size().x.ceil(), HEADER_HEIGHT);
+                    let (slot, _) = ui.allocate_exact_size(size, Sense::hover());
+                    ui.painter()
+                        .galley(slot.min, galley, ui.visuals().strong_text_color());
+                }
+            }
+            ui.max_rect()
+        });
+        let buttons = tui.style(forms::push_right(forms::natural())).ui(|ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                if pixel_ui::text_button(ui, "Import Image…").clicked() {
+                    *action = Some(GroomAction::Import);
+                }
+                if pixel_ui::text_button(ui, "Use Layer").clicked() {
+                    *action = Some(GroomAction::UseLayer);
+                }
+            });
+            ui.max_rect()
+        });
+        title.union(buttons)
+    })
 }
 
 impl GroomPanel {
@@ -307,10 +382,12 @@ impl GroomPanel {
         }
     }
 
-    /// Sin imagen: la ilustración de los changos y, debajo, la frase, centradas en `area`.
-    fn empty_ui(&mut self, ui: &mut Ui, area: Rect) {
+    /// Sin imagen: la ilustración de los changos y, debajo, la frase (de lo más ancha
+    /// `EMPTY_TEXT_WIDTH`), centradas en `ui`.
+    fn empty_ui(&mut self, ui: &mut Ui) {
         const TEXT: &str = "Bring an image that looks like pixel art (blurry, scaled up) to make \
                             it real pixel art.";
+        let area = ui.max_rect();
         if self.empty_texture.is_none()
             && let Some(art) = empty_art()
         {
@@ -322,7 +399,7 @@ impl GroomPanel {
         let galley = egui::WidgetText::from(TEXT).into_galley(
             ui,
             Some(egui::TextWrapMode::Wrap),
-            EMPTY_TEXT_WIDTH,
+            EMPTY_TEXT_WIDTH.min(area.width()),
             egui::TextStyle::Body,
         );
         let art_size = self
@@ -338,12 +415,14 @@ impl GroomPanel {
                 Color32::WHITE,
             );
         }
+        // Del ancho de la frase (con las líneas centradas), en puntos enteros.
+        let text_width = galley.size().x.ceil();
         let text = Rect::from_min_size(
             pos2(
-                area.center().x - EMPTY_TEXT_WIDTH / 2.0,
+                (area.center().x - text_width / 2.0).round(),
                 art.bottom() + EMPTY_GAP,
             ),
-            vec2(EMPTY_TEXT_WIDTH, galley.size().y),
+            vec2(text_width, galley.size().y),
         );
         let centered = egui::Layout::top_down(egui::Align::Center);
         child(ui, text, centered).add(egui::Label::new(TEXT).wrap());
@@ -358,9 +437,11 @@ impl GroomPanel {
         (self.picked.len() >= 2).then(|| merge_order(self.picked.clone(), groomed))
     }
 
-    /// El panel, como en el diseño: arriba el logo y los botones para traer la imagen; a la
-    /// izquierda los pasos y la vista previa, a la derecha los colores y las sugerencias (las dos
-    /// cajas de abajo a la misma altura), y abajo, lo que se hace con el resultado.
+    /// El panel, como en el diseño, del ancho de `ui`: arriba el logo y los botones para traer la
+    /// imagen; a la izquierda los pasos y la vista previa, a la derecha los colores y las
+    /// sugerencias (las dos cajas de abajo a la misma altura, hasta el pie), y abajo, lo que se
+    /// hace con el resultado. Si las columnas no caben lado a lado (`SIDE_BY_SIDE`), la de los
+    /// colores va debajo de la de los pasos.
     pub fn ui(
         &mut self,
         ui: &mut Ui,
@@ -373,7 +454,7 @@ impl GroomPanel {
             .flatten()
             .map(|p| p.colors.clone());
         let origin = ui.cursor().min;
-        let at = |x: f32, y: f32| origin + vec2(x, y);
+        let width = ui.available_width().floor();
         let available = ui.available_height();
         let height = if available.is_finite() {
             available.max(MIN_HEIGHT)
@@ -381,123 +462,183 @@ impl GroomPanel {
             MIN_HEIGHT
         };
         let skin = pixel_ui::frame_skin(ui.ctx());
-        let ppp = ui.ctx().pixels_per_point();
-        // El encabezado: el logo y, a la derecha, los botones.
         let logo = skin.as_ref().and_then(|s| {
             s.piece("groom.logo", crate::skin::WidgetState::Normal)
                 .cloned()
         });
-        match logo {
-            Some(piece) => {
-                let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-                let rect = Rect::from_min_size(origin + LOGO_AT, size);
-                ui.painter()
-                    .extend(pixel_ui::piece_shapes(&piece, rect, ppp));
-            }
-            None => {
-                ui.painter().text(
-                    at(0.0, 0.0),
-                    egui::Align2::LEFT_TOP,
-                    "Pixel Groom",
-                    egui::TextStyle::Heading.resolve(ui.style()),
-                    ui.visuals().strong_text_color(),
-                );
-            }
-        }
-        // Desde el borde del contenido (más arriba, el scroll recortaría su línea de arriba).
-        let header = Rect::from_min_max(at(0.0, 0.0), at(WIDTH, HEADER_LINE - 2.0));
-        let right_to_left = egui::Layout::right_to_left(egui::Align::Min);
-        import_buttons(&mut child(ui, header, right_to_left), &mut action);
-        // Las líneas grabadas: debajo del encabezado y, con imagen, entre las columnas y arriba
-        // de los botones de abajo. De borde a borde del panel.
-        let margin = f32::from(crate::dock::FLYOUT_MARGIN) - 1.0;
-        let across = egui::Rangef::new(origin.x - margin, origin.x + WIDTH + margin);
-        let footer_line = height - FOOTER_LINE;
-        if let Some(skin) = &skin {
-            let colors = skin.colors();
-            let mut lines = vec![pixel_ui::etched_hline(
-                across,
-                origin.y + HEADER_LINE,
-                colors,
-                ppp,
-            )];
-            if self.source.is_some() {
-                lines.push(pixel_ui::etched_vline(
-                    origin.x + DIVIDER,
-                    egui::Rangef::new(origin.y + HEADER_LINE, origin.y + footer_line),
-                    colors,
-                    ppp,
-                ));
-                lines.push(pixel_ui::etched_hline(
-                    across,
-                    origin.y + footer_line,
-                    colors,
-                    ppp,
-                ));
-            }
-            ui.painter().extend(lines);
-        }
-        let top_down = egui::Layout::top_down(egui::Align::Min);
-        if self.source.is_none() {
-            let area = Rect::from_min_max(at(0.0, COLUMNS_TOP), at(WIDTH, footer_line));
-            self.empty_ui(ui, area);
-            ui.allocate_rect(
-                Rect::from_min_size(origin, vec2(WIDTH, height)),
-                Sense::hover(),
-            );
-            return action;
-        }
-        // Lo de arriba de cada columna: los pasos; los colores y "Suggested".
-        let column = |range: egui::Rangef, top: f32| {
-            Rect::from_min_max(at(range.min, top), at(range.max, footer_line))
-        };
-        let mut left = child(ui, column(LEFT, COLUMNS_TOP), top_down);
-        if self.settings_ui(&mut left, palettes) {
+        // Las líneas grabadas van detrás de todo: su lugar, antes; se dibujan al final, cuando se
+        // sabe dónde quedó cada cosa.
+        let lines = ui.painter().add(egui::Shape::Noop);
+        let side_by_side = width >= SIDE_BY_SIDE;
+        let mut top = Rect::NOTHING;
+        let mut steps = None;
+        let mut footer = None;
+        let mut lospec = false;
+        forms::form(ui, "groom", 0.0, |tui| {
+            let panel = forms::min_height(height, forms::column(0.0));
+            tui.style(panel).add(|tui| {
+                top = header(tui, logo.as_ref(), &mut action);
+                if self.source.is_none() {
+                    // Los changos y la frase, en lo que queda hasta donde iría el pie.
+                    let area = forms::fill_height(0.0, forms::Style::default());
+                    forms::canvas(tui, forms::air_above(BODY_AIR, area), |ui| {
+                        self.empty_ui(ui);
+                    });
+                    tui.style(forms::fixed(0.0, FOOTER_AIR + FOOTER_BUTTONS))
+                        .add_empty();
+                    return;
+                }
+                let left = forms::grow_auto(LEFT_MIN, LEFT_WIDTH);
+                let right = forms::grow_auto(RIGHT_MIN, RIGHT_WIDTH);
+                let groomed;
+                if side_by_side {
+                    // Arriba, los pasos y los colores; abajo, las dos cajas, hasta el pie.
+                    let columns = forms::air_above(BODY_AIR, forms::row_nowrap(COLUMN_GAP));
+                    groomed = tui.style(columns).add(|tui| {
+                        let (rect, browse) = self.steps_ui(tui, left.clone(), palettes);
+                        (steps, lospec) = (Some(rect), browse);
+                        let groomed = self.groomed(primary).cloned();
+                        if let Some(groomed) = &groomed {
+                            let right = forms::air_right(RIGHT_AIR, right.clone());
+                            self.colors_ui(tui, right, groomed);
+                        }
+                        groomed
+                    });
+                    if let Some(groomed) = &groomed {
+                        let boxes = MIN_BOX_HEIGHT + BELOW_BOXES;
+                        let row = forms::fill_height(boxes, forms::row_nowrap(COLUMN_GAP));
+                        tui.style(forms::air_above(BOXES_AIR, row)).add(|tui| {
+                            self.preview_ui(tui, forms::full_height(left), groomed);
+                            let right = forms::air_right(RIGHT_AIR, forms::full_height(right));
+                            self.suggestions_ui(tui, right, groomed);
+                        });
+                    }
+                } else {
+                    // Una debajo de otra: los pasos y la vista previa; los colores y las
+                    // sugerencias, hasta el pie.
+                    let row = |air| forms::air_above(air, forms::row_nowrap(0.0));
+                    groomed = tui.style(row(BODY_AIR)).add(|tui| {
+                        let (rect, browse) = self.steps_ui(tui, left.clone(), palettes);
+                        (steps, lospec) = (Some(rect), browse);
+                        self.groomed(primary).cloned()
+                    });
+                    if let Some(groomed) = &groomed {
+                        let h = STACKED_PREVIEW + BELOW_BOXES;
+                        let preview = forms::grow(LEFT_MIN, LEFT_WIDTH, None, h);
+                        tui.style(row(BOXES_AIR))
+                            .add(|tui| self.preview_ui(tui, preview, groomed));
+                        tui.style(row(STACK_GAP))
+                            .add(|tui| self.colors_ui(tui, right.clone(), groomed));
+                        let boxes = MIN_BOX_HEIGHT + BELOW_BOXES;
+                        tui.style(forms::fill_height(boxes, row(BOXES_AIR)))
+                            .add(|tui| {
+                                self.suggestions_ui(tui, forms::full_height(right), groomed)
+                            });
+                    }
+                }
+                // Abajo, a la derecha: lo que se hace con el resultado.
+                let buttons = forms::min_height(FOOTER_BUTTONS, forms::natural());
+                let row = forms::air_above(FOOTER_AIR, forms::row_nowrap(0.0));
+                footer = Some(tui.style(row).add(|tui| {
+                    tui.style(forms::push_right(buttons)).ui(|ui| {
+                        let Some(groomed) = &groomed else {
+                            return ui.max_rect();
+                        };
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                            if pixel_ui::text_button(ui, "New Sprite").clicked() {
+                                action = Some(GroomAction::NewSprite(groomed.clone()));
+                            }
+                            if pixel_ui::text_button(ui, "Add as Layer").clicked() {
+                                action = Some(GroomAction::AddLayer(groomed.clone()));
+                            }
+                            if pixel_ui::text_button(ui, "Add as Artboard").clicked() {
+                                action = Some(GroomAction::AddArtboard(groomed.clone()));
+                            }
+                        });
+                        ui.max_rect()
+                    })
+                }));
+            });
+        });
+        if lospec {
             action = Some(GroomAction::BrowseLospec);
         }
-        let groomed = self.groomed(primary).cloned();
-        let Some(groomed) = groomed else {
-            ui.allocate_rect(
-                Rect::from_min_size(origin, vec2(WIDTH, height)),
-                Sense::hover(),
-            );
-            return action;
-        };
-        let mut right = child(ui, column(RIGHT, COLUMNS_TOP), top_down);
-        right.spacing_mut().item_spacing.y = 2.0;
-        self.swatches(&mut right, &groomed);
-        right.add_space(2.0);
-        right.horizontal(|ui| {
-            ui.add_space(5.0);
-            ui.label("Suggested");
-            widgets::number(ui, &mut self.similar, 1..=255, "");
-            ui.label("tolerance");
-        });
-        // Las dos cajas, a la altura de la que llegue más abajo.
-        let boxes = left.cursor().top().max(right.cursor().top()) + 4.0;
-        let boxes = boxes - origin.y;
-        let box_height = (footer_line - boxes - BELOW_BOXES).max(MIN_BOX_HEIGHT);
-        let mut left = child(ui, column(LEFT, boxes), top_down);
-        self.preview(&mut left, &groomed, box_height);
-        let mut right = child(ui, column(RIGHT, boxes), top_down);
-        self.hovered_group = self.suggestions(&mut right, &groomed, box_height);
-        // Abajo, a la derecha: lo que se hace con el resultado.
-        let footer = Rect::from_min_max(at(0.0, height - FOOTER_BUTTONS), at(WIDTH, height));
-        let mut footer = child(ui, footer, right_to_left);
-        if pixel_ui::text_button(&mut footer, "Add as Artboard").clicked() {
-            action = Some(GroomAction::AddArtboard(groomed.clone()));
+        // Las líneas grabadas: debajo del encabezado y, con imagen, entre las columnas (si van
+        // lado a lado) y arriba de los botones de abajo. De borde a borde del panel.
+        if let Some(skin) = &skin {
+            let colors = skin.colors();
+            let ppp = ui.ctx().pixels_per_point();
+            let margin = f32::from(crate::dock::FLYOUT_MARGIN) - 1.0;
+            let across = egui::Rangef::new(origin.x - margin, origin.x + width + margin);
+            let header_line = top.bottom() + HEADER_LINE;
+            let mut shapes = vec![pixel_ui::etched_hline(across, header_line, colors, ppp)];
+            if let Some(footer) = footer {
+                let footer_line = footer.top() - FOOTER_AIR;
+                if let Some(steps) = steps.filter(|_| side_by_side) {
+                    shapes.push(pixel_ui::etched_vline(
+                        steps.right() + DIVIDER_AIR,
+                        egui::Rangef::new(header_line, footer_line),
+                        colors,
+                        ppp,
+                    ));
+                }
+                shapes.push(pixel_ui::etched_hline(across, footer_line, colors, ppp));
+            }
+            ui.painter().set(lines, egui::Shape::Vec(shapes));
         }
-        if pixel_ui::text_button(&mut footer, "Add as Layer").clicked() {
-            action = Some(GroomAction::AddLayer(groomed.clone()));
-        }
-        if pixel_ui::text_button(&mut footer, "New Sprite").clicked() {
-            action = Some(GroomAction::NewSprite(groomed.clone()));
-        }
-        ui.allocate_rect(
-            Rect::from_min_size(origin, vec2(WIDTH, height)),
-            Sense::hover(),
-        );
         action
+    }
+
+    /// Lo de arriba de la columna de la izquierda, en una hoja de `style` de `tui`: los pasos.
+    /// Devuelve su rect y si se pidió abrir Lospec.
+    fn steps_ui(
+        &mut self,
+        tui: &mut forms::Tui,
+        style: forms::Style,
+        palettes: &[PaletteChoice],
+    ) -> (Rect, bool) {
+        tui.style(style).ui(|ui| {
+            let lospec = self.settings_ui(ui, palettes);
+            // Con el aire de egui de abajo (lo que sigue va a su paso).
+            ui.add_space(0.0);
+            (ui.max_rect(), lospec)
+        })
+    }
+
+    /// Lo de arriba de la columna de la derecha, en una hoja de `style` de `tui`: los colores y
+    /// la tolerancia de las sugerencias.
+    fn colors_ui(&mut self, tui: &mut forms::Tui, style: forms::Style, groomed: &Groomed) {
+        tui.style(style).ui(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            self.swatches(ui, groomed);
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.add_space(5.0);
+                ui.label("Suggested");
+                widgets::number(ui, &mut self.similar, 1..=255, "");
+                ui.label("tolerance");
+            });
+            // Con el aire de egui de abajo (lo que sigue va a su paso).
+            ui.add_space(0.0);
+        });
+    }
+
+    /// La vista previa en una hoja de `style` de `tui` (su caja, lo que la hoja deja sin lo de
+    /// abajo).
+    fn preview_ui(&mut self, tui: &mut forms::Tui, style: forms::Style, groomed: &Groomed) {
+        forms::canvas(tui, style, |ui| {
+            let box_height = (ui.max_rect().height() - BELOW_BOXES).max(MIN_BOX_HEIGHT);
+            self.preview(ui, groomed, box_height);
+        });
+    }
+
+    /// Las sugerencias en una hoja de `style` de `tui` (su caja, lo que la hoja deja sin lo de
+    /// abajo).
+    fn suggestions_ui(&mut self, tui: &mut forms::Tui, style: forms::Style, groomed: &Groomed) {
+        forms::canvas(tui, style, |ui| {
+            let box_height = (ui.max_rect().height() - BELOW_BOXES).max(MIN_BOX_HEIGHT);
+            self.hovered_group = self.suggestions(ui, groomed, box_height);
+        });
     }
 
     /// Los pasos: la cuadrícula (el tamaño de cada píxel de verdad y dónde empieza), el fondo,
@@ -531,7 +672,7 @@ impl GroomPanel {
             widgets::prefixed_number(ui, &mut settings.grid.offset.1, -cy..=cy, "Y");
         });
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
+        row_bottom(ui, |ui| {
             if pixel_ui::text_button(ui, "Detect Grid").clicked() {
                 settings.grid = cs_raster::detect_grid(&source.pixels, width, height);
             }
@@ -540,14 +681,14 @@ impl GroomPanel {
                 .on_hover_text("Let each cell snap to the real edges (for pixels of uneven sizes)");
         });
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        row_bottom(ui, |ui| {
             widgets::checkbox(ui, &mut settings.background, "Remove Background");
             ui.add_enabled_ui(settings.background, |ui| {
                 widgets::number(ui, &mut settings.tolerance, 0..=255, "");
             });
         });
         widgets::checkbox(ui, &mut settings.clean, "Clean Outline");
-        ui.horizontal(|ui| {
+        row_bottom(ui, |ui| {
             // La casilla pone sus mayúsculas `kit::check::CAPS_TOP` debajo de la fila.
             let caps = ui.cursor().top().round() + crate::kit::check::CAPS_TOP;
             let check = widgets::checkbox(ui, &mut settings.ring, "Add Outline");
@@ -559,7 +700,7 @@ impl GroomPanel {
                 caps + crate::tab_bar::CAP_HEIGHT,
             );
         });
-        ui.horizontal(|ui| {
+        row_bottom(ui, |ui| {
             widgets::checkbox(ui, &mut settings.reduce, "Reduce Colors");
             ui.add_enabled_ui(settings.reduce, |ui| {
                 widgets::number(ui, &mut settings.colors, 2..=256, "");
@@ -616,7 +757,8 @@ impl GroomPanel {
         box_height: f32,
     ) -> Option<Vec<Rgba>> {
         let groups = cs_raster::suggest_merges(&groomed.colors, self.similar as u32);
-        let (frame, _) = ui.allocate_exact_size(vec2(RIGHT.span(), box_height), Sense::hover());
+        let width = ui.max_rect().width();
+        let (frame, _) = ui.allocate_exact_size(vec2(width, box_height), Sense::hover());
         double_box(ui, frame);
         let inner = frame.shrink(BOX_PAD);
         if groups.is_empty() {
@@ -727,14 +869,15 @@ impl GroomPanel {
         let shown = groomed.colors.len().min(MAX_SWATCHES);
         let ordered = sorted_colors(&groomed.colors[..shown], self.sort);
         let pitch = SWATCH + SWATCH_GAP;
-        let per_row = ((RIGHT.span() - 2.0 * BOX_PAD + SWATCH_GAP) / pitch)
+        let width = ui.max_rect().width();
+        let per_row = ((width - 2.0 * BOX_PAD + SWATCH_GAP) / pitch)
             .floor()
             .max(1.0) as usize;
         let rows = shown.div_ceil(per_row).max(1);
         let more = groomed.colors.len() > shown;
         let text_row = if more { 12.0 } else { 0.0 };
         let height = 2.0 * BOX_PAD + rows as f32 * pitch - SWATCH_GAP + text_row;
-        let (frame, _) = ui.allocate_exact_size(vec2(RIGHT.span(), height), Sense::hover());
+        let (frame, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
         double_box(ui, frame);
         let inner = frame.shrink(BOX_PAD);
         let border = pixel_ui::control_border(ui.ctx());
@@ -774,7 +917,7 @@ impl GroomPanel {
         }
         ui.add_space(3.0);
         ui.allocate_ui_with_layout(
-            vec2(RIGHT.span(), 16.0),
+            vec2(width, 16.0),
             egui::Layout::right_to_left(egui::Align::Min),
             |ui| {
                 let can_merge = self.picked.len() >= 2;
@@ -843,7 +986,8 @@ impl GroomPanel {
             return;
         };
         // La caja: una línea y, adentro, el damero con la imagen al centro.
-        let (frame, _) = ui.allocate_exact_size(vec2(LEFT.span(), box_height), Sense::hover());
+        let width = ui.max_rect().width();
+        let (frame, _) = ui.allocate_exact_size(vec2(width, box_height), Sense::hover());
         ui.painter()
             .extend(notched_outline(frame, box_color(ui), 1.0));
         let well = frame.shrink(2.0);
@@ -1219,15 +1363,15 @@ mod tests {
 
     #[test]
     fn the_empty_art_and_its_text_are_centered_in_the_empty_panel() {
-        let area = Rect::from_min_size(pos2(10.0, 30.0), vec2(WIDTH, 300.0));
+        let area = Rect::from_min_size(pos2(10.0, 30.0), vec2(REFERENCE_WIDTH, 300.0));
         let art = empty_art_rect(area, vec2(117.0, 68.0), 20.0);
         assert_eq!(art.size(), vec2(117.0, 68.0));
         // Centrada a lo ancho (en puntos enteros) y, con la frase de 20 debajo, a lo alto.
-        assert_eq!(art.left(), (10.0 + (WIDTH - 117.0) / 2.0).round());
+        assert_eq!(art.left(), (10.0 + (REFERENCE_WIDTH - 117.0) / 2.0).round());
         let total = 68.0 + EMPTY_GAP + 20.0;
         assert_eq!(art.top(), (30.0 + (300.0 - total) / 2.0).round());
         // Si no cabe, arriba del todo.
-        let short = Rect::from_min_size(pos2(0.0, 0.0), vec2(WIDTH, 50.0));
+        let short = Rect::from_min_size(pos2(0.0, 0.0), vec2(REFERENCE_WIDTH, 50.0));
         assert_eq!(empty_art_rect(short, vec2(117.0, 68.0), 20.0).top(), 0.0);
     }
 
@@ -1267,6 +1411,179 @@ mod tests {
             (text.center().x - art.center().x).abs() <= 1.0,
             "{art:?} {text:?}"
         );
+    }
+
+    /// De `MIN_WIDTH` para arriba, con imagen o sin ella, todo entra en el ancho del panel, en
+    /// puntos enteros y sin que nada tape a nada. Con imagen, las dos columnas van lado a lado
+    /// desde `SIDE_BY_SIDE` (a 400, la de los pasos en su mínimo) y, más angosto, la de los
+    /// colores baja debajo de la de los pasos.
+    #[test]
+    fn the_groom_panel_reflows_at_any_width() {
+        use crate::forms::testing::run_at;
+        for width in [MIN_WIDTH, 300.0, 400.0, REFERENCE_WIDTH, 600.0] {
+            for with_image in [false, true] {
+                let mut panel = GroomPanel::default();
+                if with_image {
+                    panel.load("big".into(), big());
+                }
+                let probe = run_at(width, |ui| {
+                    panel.ui(ui, Rgba::rgb(0, 0, 0), &[]);
+                });
+                probe.assert_whole_px();
+                probe.assert_within(width);
+                probe.assert_no_overlap();
+                // El encabezado en una fila desde 282 (logo, aire y botones); más angosto, los
+                // botones bajan debajo del logo.
+                let import = probe.rect("Import Image…");
+                assert_eq!(import.top() == 0.0, width >= 300.0, "{import:?} at {width}");
+                if !with_image {
+                    continue;
+                }
+                // Lo último de los pasos (la paleta) y lo primero de los colores (su orden).
+                let (palette, sort) = (probe.rect("Original Colors"), probe.rect("Most Used"));
+                if width < SIDE_BY_SIDE {
+                    assert!(
+                        sort.top() > palette.bottom(),
+                        "one under the other at {width}: {palette:?} {sort:?}"
+                    );
+                } else {
+                    assert!(
+                        sort.left() > palette.right() && sort.top() < palette.top(),
+                        "side by side at {width}: {palette:?} {sort:?}"
+                    );
+                    // La paleta llega al borde de la columna de los pasos: en su mínimo a 400.
+                    if width == 400.0 {
+                        assert_eq!(palette.right(), LEFT_MIN, "at {width}");
+                    }
+                }
+                probe.rect("New Sprite");
+            }
+        }
+    }
+
+    /// Lo que pinta `panel` en `content` (con el skin y las fuentes de la app, escala 1) visto
+    /// por un scroll que muestra `viewport` (más abajo que `content`: desplazado): sus shapes,
+    /// cada uno con su recorte.
+    fn painted(
+        panel: &mut GroomPanel,
+        content: Rect,
+        viewport: Rect,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let ctx = egui::Context::default();
+        let skin = crate::skin::Skin::embedded(&ctx);
+        ctx.set_fonts(crate::appearance::font_definitions(true));
+        crate::appearance::apply_style(&ctx, Some(skin.colors()));
+        crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
+        let mut shapes = Vec::new();
+        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                    ui.set_width(content.width());
+                    ui.set_clip_rect(viewport);
+                    panel.ui(ui, Rgba::rgb(0, 0, 0), &[]);
+                });
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        shapes
+    }
+
+    /// El rect de una malla.
+    fn mesh_rect(shape: &egui::Shape) -> Option<Rect> {
+        match shape {
+            egui::Shape::Mesh(m) => {
+                let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
+                Some(Rect::from_points(&points))
+            }
+            _ => None,
+        }
+    }
+
+    /// Con el contenido desplazado `scrolled` hacia arriba: el rect del logo, su recorte y lo que
+    /// se ve del scroll.
+    fn logo_clip(scrolled: f32) -> (Rect, Rect, Rect) {
+        let skin = crate::skin::Skin::embedded(&egui::Context::default());
+        let piece = skin.piece("groom.logo", crate::skin::WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(REFERENCE_WIDTH, 500.0));
+        let viewport = content.with_min_y(content.min.y + scrolled);
+        let logo = Rect::from_min_size(content.min + LOGO_AT, size);
+        let shapes = painted(&mut GroomPanel::default(), content, viewport);
+        let clip = shapes
+            .iter()
+            .find(|c| mesh_rect(&c.shape) == Some(logo))
+            .map(|c| c.clip_rect)
+            .expect("the logo");
+        (logo, clip, viewport)
+    }
+
+    /// El logo sube 1 por encima del contenido (sobre el margen del panel): el recorte del scroll
+    /// del dock, que empieza en el contenido, no le quita su fila de arriba.
+    #[test]
+    fn the_logo_keeps_its_top_row_above_the_scroll_clip() {
+        let (logo, clip, _) = logo_clip(0.0);
+        assert!(clip.contains_rect(logo), "{logo:?} clipped by {clip:?}");
+    }
+
+    /// Con el contenido desplazado, el logo se recorta como lo demás: su recorte sube solo lo que
+    /// el logo sale del contenido (1), no se pinta sobre el marco del panel.
+    #[test]
+    fn a_scrolled_logo_is_clipped_like_the_rest() {
+        let (logo, clip, viewport) = logo_clip(5.0);
+        assert!(
+            clip.top() >= viewport.top() + LOGO_AT.y,
+            "{logo:?} clipped by {clip:?}, viewport {viewport:?}"
+        );
+    }
+
+    /// La línea grabada entre las columnas: una, a 4 de la de los pasos, solo si van lado a lado.
+    #[test]
+    fn the_divider_is_drawn_only_side_by_side() {
+        for width in [MIN_WIDTH, 300.0, 400.0, REFERENCE_WIDTH, 600.0] {
+            let mut panel = GroomPanel::default();
+            panel.load("big".into(), big());
+            let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(width, 600.0));
+            let shapes = painted(&mut panel, content, content);
+            // Las líneas grabadas de pie: mallas sin textura de 2 de ancho (oscura y clara).
+            fn plain_meshes(shape: &egui::Shape, out: &mut Vec<Rect>) {
+                match shape {
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| plain_meshes(s, out)),
+                    egui::Shape::Mesh(m) if m.texture_id == egui::TextureId::default() => {
+                        out.extend(mesh_rect(shape));
+                    }
+                    _ => {}
+                }
+            }
+            let mut meshes = Vec::new();
+            shapes
+                .iter()
+                .for_each(|c| plain_meshes(&c.shape, &mut meshes));
+            let dividers: Vec<Rect> = meshes
+                .into_iter()
+                .filter(|r| r.width() == 2.0 && r.height() > 20.0)
+                .collect();
+            if width >= SIDE_BY_SIDE {
+                assert_eq!(dividers.len(), 1, "one at {width}: {dividers:?}");
+                // La columna de los pasos: en su mínimo a 400, de su ancho en la referencia y,
+                // a 600, con la mitad de lo que sobra.
+                let left = match width as u32 {
+                    400 => LEFT_MIN,
+                    434 => LEFT_WIDTH,
+                    _ => LEFT_WIDTH + (width - REFERENCE_WIDTH) / 2.0,
+                };
+                let x = dividers[0].left() - content.left();
+                assert_eq!(x, left + DIVIDER_AIR, "at {width}");
+            } else {
+                assert!(dividers.is_empty(), "none at {width}: {dividers:?}");
+            }
+        }
     }
 
     /// 4×3 celdas de 5 px (rojo sobre blanco), agrandado.

@@ -10,39 +10,89 @@ use eframe::egui::{
     self, Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2,
 };
 
-use crate::panel_kit::{box_color, child, double_box, hint, label_with_hint, notched_outline};
+use crate::forms::{self, TuiBuilderLogic as _};
+use crate::panel_kit::{
+    box_color, child, double_box, hint, hint_galley, hint_wrapped, label_with_hint,
+    notched_outline, row_bottom,
+};
 use crate::pixel_ui::Tip as _;
 use crate::skin::WidgetState;
 use crate::{kit, pixel_ui, widgets};
 
-/// El panel, desde la esquina de su contenido: su ancho (el de Groom) y el alto más chico.
-pub const WIDTH: f32 = 434.0;
+/// El panel, desde la esquina de su contenido: el ancho del diseño (el de Groom, el del panel
+/// flotante; adentro todo sale del ancho disponible) y el alto más chico.
+pub const REFERENCE_WIDTH: f32 = 434.0;
+/// Lo más angosto en que se ve bien (medido): los tres botones del pie en una fila (New Sprite,
+/// Add as Layer y Add as Artboard miden 216 con su aire). Los mapas, los controles y la vista
+/// previa, uno debajo de otro.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+)]
+pub const MIN_WIDTH: f32 = 216.0;
 /// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno) y abrir y
 /// quitar van en la caja de cada mapa (sin su fila de botones).
 const MIN_HEIGHT: f32 = 391.0;
-/// La línea grabada debajo del encabezado y donde empieza lo de abajo.
-const HEADER_LINE: f32 = 21.0;
-const TOP: f32 = 25.0;
-/// Las tres columnas (los mapas, los sliders): su ancho y la separación.
+/// El encabezado: el logo (sobre el margen del panel) y, a la derecha, el crédito del algoritmo
+/// (con `HEADER_GAP` entre ellos; si no cabe, debajo del logo). La línea grabada va
+/// `HEADER_LINE` debajo y los mapas empiezan `BODY_AIR` debajo.
+const LOGO_AT: egui::Vec2 = vec2(-3.0, -1.0);
+const HEADER_HEIGHT: f32 = 19.0;
+const HEADER_GAP: f32 = 4.0;
+const HEADER_LINE: f32 = 2.0;
+const BODY_AIR: f32 = 6.0;
+/// El crédito del algoritmo de las normales.
+const CREDIT: &str = "normals: sprite fusion";
+/// Las tres columnas de los mapas: su ancho en el diseño (también el de los controles, debajo de
+/// Albedo) y la separación. Se achican hasta `MAP_MIN` (medido: Generate con su ancho justo, 50,
+/// y Modify y Export de 41, el justo de Export, con 2 entre ellos) y crecen parejas. Más angosto
+/// que `MAPS_ACROSS`, van una debajo de otra, `MAPS_STACK_GAP` entre ellas.
 const COLUMN: f32 = 140.0;
+const MAP_MIN: f32 = 136.0;
 const COLUMN_GAP: f32 = 7.0;
+const MAPS_ACROSS: f32 = 3.0 * MAP_MIN + 2.0 * COLUMN_GAP;
+const MAPS_STACK_GAP: f32 = 6.0;
 /// La caja de la miniatura de cada mapa.
 const THUMB_BOX: f32 = 40.0;
 /// Entre los botones de una fila.
 const BUTTON_GAP: f32 = 2.0;
+/// Debajo de los mapas (y del aviso): el aviso, `NOTICE_AIR` debajo; la línea grabada,
+/// `CONTROLS_LINE` debajo, y lo de abajo, `CONTROLS_AIR` debajo de ella.
+const NOTICE_AIR: f32 = 3.0;
+const CONTROLS_LINE: f32 = 8.0;
+const CONTROLS_AIR: f32 = 6.0;
+/// Lo de abajo: a la izquierda los controles (de la columna de Albedo, desde lo más ancho que no
+/// se parte, medido: la fila del fondo, 129) y a la derecha la vista previa (de las otras dos
+/// columnas, desde lo que entra la frase de la caja vacía, 184), que crece el doble para que los
+/// controles sigan del ancho de Albedo. Más angosto que `SIDE_BY_SIDE`, la vista previa va
+/// `STACK_GAP` debajo de los controles, de `STACKED_PREVIEW` de alto por lo menos.
+const LEFT_MIN: f32 = 129.0;
+const PREVIEW: f32 = 2.0 * COLUMN + COLUMN_GAP;
+const PREVIEW_MIN: f32 = 184.0;
+const SIDE_BY_SIDE: f32 = LEFT_MIN + COLUMN_GAP + PREVIEW_MIN;
+const STACK_GAP: f32 = 8.0;
+const STACKED_PREVIEW: f32 = 120.0;
 
-/// El ancho de cada uno de `n` botones parejos en una columna.
-fn button_width(n: usize) -> f32 {
-    ((COLUMN - (n - 1) as f32 * BUTTON_GAP) / n as f32).floor()
+/// Los anchos de los botones de una columna de `width`: cada uno de `n` parejos.
+fn button_width(width: f32, n: usize) -> f32 {
+    ((width - (n - 1) as f32 * BUTTON_GAP) / n as f32).floor()
 }
 /// Del borde de una caja a lo de adentro: las dos líneas y 2 de aire.
 const BOX_PAD: f32 = 5.0;
 /// Debajo de la vista previa: el tamaño y el zoom.
 const BELOW_PREVIEW: f32 = 26.0;
 const MIN_PREVIEW: f32 = 40.0;
-/// La línea de abajo y los botones, desde el fondo del panel.
-const FOOTER_LINE: f32 = 22.0;
+/// Cómo se usa la vista previa (al lado del tamaño si cabe; si no, en su tooltip).
+const PREVIEW_HELP: &str = "drag: light · wheel: zoom · right drag: pan";
+/// El botón de que entre la imagen y, entre él y lo de su lado, aire.
+const FIT_WIDTH: f32 = 26.0;
+const ZOOM_GAP: f32 = 2.0;
+/// Abajo del todo, los botones (enteros dentro del contenido: lo de afuera lo recorta el
+/// scroll) y, `FOOTER_AIR` arriba de ellos, la línea grabada; la vista previa termina
+/// `PREVIEW_AIR` arriba de la línea.
 const FOOTER_BUTTONS: f32 = pixel_ui::CONTROL_HEIGHT;
+const FOOTER_AIR: f32 = 5.0;
+const PREVIEW_AIR: f32 = 3.0;
 /// El zoom más grande de la vista previa.
 const MAX_ZOOM: f32 = 32.0;
 /// El gris del albedo en "Light Only".
@@ -246,6 +296,82 @@ impl Default for LumenPanel {
             notice: None,
         }
     }
+}
+
+/// El encabezado en `tui`: el logo (sin Pixel UI, el título) y, a la derecha, el crédito del
+/// algoritmo de las normales (debajo del logo si no cabe). Devuelve su rect.
+fn header(tui: &mut forms::Tui, logo: Option<&crate::skin::Piece>) -> Rect {
+    tui.style(forms::row(0.0)).add(|tui| {
+        let natural = forms::air_right(HEADER_GAP, forms::natural());
+        let title = tui.style(natural).ui(|ui| {
+            match logo {
+                Some(piece) => {
+                    let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+                    let (slot, _) = ui.allocate_exact_size(
+                        vec2(size.x + LOGO_AT.x, HEADER_HEIGHT),
+                        Sense::hover(),
+                    );
+                    let rect = Rect::from_min_size(slot.min + LOGO_AT, size);
+                    let ppp = ui.ctx().pixels_per_point();
+                    // Sube y sale sobre el margen del panel, por encima del recorte del scroll:
+                    // con él se perdían su fila de arriba y sus columnas de la izquierda. El
+                    // recorte crece solo eso (1 arriba, 3 a la izquierda): con el contenido
+                    // desplazado, el logo se recorta como lo demás y no se pinta sobre el marco.
+                    // (`with_clip_rect` intersecta con el recorte de ahora; `set_clip_rect` lo
+                    // cambia y deja lo demás del painter: invisible en la pasada que mide,
+                    // apagado con un modal.)
+                    let clip = ui.clip_rect();
+                    let mut painter = ui.painter().clone();
+                    painter.set_clip_rect(
+                        clip.with_min_x(clip.min.x + LOGO_AT.x)
+                            .with_min_y(clip.min.y + LOGO_AT.y),
+                    );
+                    painter.extend(pixel_ui::piece_shapes(piece, rect, ppp));
+                }
+                None => {
+                    let galley = ui.painter().layout_no_wrap(
+                        "Lumen".into(),
+                        egui::TextStyle::Heading.resolve(ui.style()),
+                        ui.visuals().strong_text_color(),
+                    );
+                    let size = vec2(galley.size().x.ceil(), HEADER_HEIGHT);
+                    let (slot, _) = ui.allocate_exact_size(size, Sense::hover());
+                    ui.painter()
+                        .galley(slot.min, galley, ui.visuals().strong_text_color());
+                }
+            }
+            ui.max_rect()
+        });
+        let credit = tui.style(forms::push_right(forms::natural())).ui(|ui| {
+            // A la derecha y centrado a lo alto en la fila del encabezado.
+            let size = vec2(hint_galley(ui, CREDIT).size().x.ceil(), HEADER_HEIGHT);
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.allocate_ui_with_layout(size, right_to_left, |ui| hint(ui, CREDIT));
+            ui.max_rect()
+        });
+        title.union(credit)
+    })
+}
+
+/// Modify en la columna del diseño (la de 140): el ancho del mockup.
+const MODIFY: f32 = 45.0;
+
+/// Los anchos de Generate, Modify y Export en una columna de `width`. Generate, con su ancho justo
+/// (o un tercio, si cabe); Modify, la mitad de lo que queda sin bajar de `MODIFY`, y Export, el
+/// resto, sin bajar de su ancho justo (en la columna del diseño: 50, 45 y 41, como el mockup;
+/// en la más angosta, Modify cede lo que le falta a Export).
+fn map_button_widths(ui: &Ui, width: f32) -> (f32, f32, f32) {
+    let third = button_width(width, 3);
+    let (generate, export_min) = match pixel_ui::frame_skin(ui.ctx()) {
+        Some(_) => (
+            kit::button::width(ui, "Generate").max(third),
+            kit::button::width(ui, "Export"),
+        ),
+        None => (third, 0.0),
+    };
+    let rest = width - generate - 2.0 * BUTTON_GAP;
+    let modify = (rest / 2.0).floor().max(MODIFY).min(rest - export_min);
+    (generate, modify, rest - modify)
 }
 
 impl LumenPanel {
@@ -457,12 +583,15 @@ impl LumenPanel {
             .map_or_else(|| "lumen".into(), |(n, _)| n.clone())
     }
 
-    /// El panel: arriba el logo; los tres mapas; los ajustes del generador que se modifica; la
-    /// vista y los sliders; la vista previa y, abajo, lo que se hace con lo que se ve.
+    /// El panel, del ancho de `ui`: arriba el logo; los tres mapas; a la izquierda (debajo de
+    /// Albedo) la vista y los sliders, o los ajustes del generador que se modifica, y a la derecha
+    /// la vista previa (hasta el pie); abajo, lo que se hace con lo que se ve. Si los mapas no
+    /// caben lado a lado (`MAPS_ACROSS`), van uno debajo de otro; si los controles y la vista
+    /// previa no caben (`SIDE_BY_SIDE`), la vista previa va debajo.
     pub fn ui(&mut self, ui: &mut Ui) -> Option<LumenAction> {
         let mut action = None;
         let origin = ui.cursor().min;
-        let at = |x: f32, y: f32| origin + vec2(x, y);
+        let width = ui.available_width().floor();
         let available = ui.available_height();
         let height = if available.is_finite() {
             available.max(MIN_HEIGHT)
@@ -470,223 +599,256 @@ impl LumenPanel {
             MIN_HEIGHT
         };
         let skin = pixel_ui::frame_skin(ui.ctx());
-        let ppp = ui.ctx().pixels_per_point();
-        // El encabezado: el logo y, a la derecha, el crédito del algoritmo.
         let logo = skin.as_ref().and_then(|s| {
             s.piece("lumen.logo", crate::skin::WidgetState::Normal)
                 .cloned()
         });
-        match logo {
-            Some(piece) => {
-                let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-                let rect = Rect::from_min_size(origin + vec2(-3.0, -1.0), size);
-                ui.painter()
-                    .extend(pixel_ui::piece_shapes(&piece, rect, ppp));
-            }
-            None => {
-                ui.painter().text(
-                    at(0.0, 0.0),
-                    egui::Align2::LEFT_TOP,
-                    "Lumen",
-                    egui::TextStyle::Heading.resolve(ui.style()),
-                    ui.visuals().strong_text_color(),
-                );
-            }
-        }
-        let header = Rect::from_min_max(at(0.0, 0.0), at(WIDTH, HEADER_LINE - 2.0));
-        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-        // El crédito del algoritmo de las normales.
-        hint(
-            &mut child(ui, header, right_to_left),
-            "normals: sprite fusion",
-        );
-        let footer_line = height - FOOTER_LINE;
-        let mut lines = Vec::new();
-        let margin = f32::from(crate::dock::FLYOUT_MARGIN) - 1.0;
-        let across = egui::Rangef::new(origin.x - margin, origin.x + WIDTH + margin);
-        let top_down = egui::Layout::top_down(egui::Align::Min);
-        let body = Rect::from_min_max(at(0.0, TOP), at(WIDTH, footer_line));
-        let mut body = child(ui, body, top_down);
-        self.maps(&mut body, &mut action);
-        body.add_space(5.0);
-        let controls_line = body.cursor().top();
-        // Debajo: a la izquierda (bajo Albedo) la vista y la luz, o con Modify los ajustes del
-        // generador; a la derecha, la vista previa con el zoom abajo.
-        let below = controls_line + 6.0;
-        let left = Rect::from_min_max(
-            pos2(origin.x, below),
-            pos2(origin.x + COLUMN, origin.y + footer_line),
-        );
-        let mut left = child(ui, left, top_down);
-        left.spacing_mut().item_spacing.y = 3.0;
-        match self.modify {
-            Some(kind) => self.generator_settings(&mut left, kind),
-            None => {
-                self.view_controls(&mut left);
-                left.add_space(2.0);
-                self.sliders(&mut left);
-            }
-        }
-        let right = Rect::from_min_max(
-            pos2(origin.x + COLUMN + COLUMN_GAP, below),
-            pos2(origin.x + WIDTH, origin.y + footer_line - 3.0),
-        );
-        let mut right = child(ui, right, top_down);
-        let preview_height = (right.max_rect().height() - BELOW_PREVIEW).max(MIN_PREVIEW);
-        self.preview(&mut right, preview_height);
+        // Las líneas grabadas van detrás de todo: su lugar, antes; se dibujan al final, cuando se
+        // sabe dónde quedó cada cosa.
+        let lines = ui.painter().add(egui::Shape::Noop);
+        let mut top = Rect::NOTHING;
+        let mut controls = Rect::NOTHING;
+        let mut footer = Rect::NOTHING;
+        forms::form(ui, "lumen", 0.0, |tui| {
+            let panel = forms::min_height(height, forms::column(0.0));
+            tui.style(panel).add(|tui| {
+                top = header(tui, logo.as_ref());
+                self.maps_ui(tui, width >= MAPS_ACROSS, &mut action);
+                if let Some(notice) = self.notice.clone() {
+                    let row = forms::air_above(NOTICE_AIR, forms::Style::default());
+                    tui.style(row).ui(|ui| self.notice_ui(ui, &notice));
+                }
+                controls = self.below_maps(tui, width >= SIDE_BY_SIDE);
+                // Abajo, a la derecha: lo que muestra View, a un sprite, una capa o un artboard.
+                let buttons = forms::min_height(FOOTER_BUTTONS, forms::natural());
+                let row = forms::air_above(FOOTER_AIR, forms::row_nowrap(0.0));
+                footer = tui.style(row).add(|tui| {
+                    tui.style(forms::push_right(buttons)).ui(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                            self.footer_buttons(ui, &mut action);
+                        });
+                        ui.max_rect()
+                    })
+                });
+            });
+        });
+        // Las líneas grabadas: debajo del encabezado, entre los mapas y lo de abajo y arriba de
+        // los botones de abajo. De borde a borde del panel.
         if let Some(skin) = &skin {
             let colors = skin.colors();
-            lines.push(pixel_ui::etched_hline(
-                across,
-                origin.y + HEADER_LINE,
-                colors,
-                ppp,
-            ));
-            lines.push(pixel_ui::etched_hline(across, controls_line, colors, ppp));
-            lines.push(pixel_ui::etched_hline(
-                across,
-                origin.y + footer_line,
-                colors,
-                ppp,
-            ));
-            ui.painter().extend(lines);
+            let ppp = ui.ctx().pixels_per_point();
+            let margin = f32::from(crate::dock::FLYOUT_MARGIN) - 1.0;
+            let across = egui::Rangef::new(origin.x - margin, origin.x + width + margin);
+            let shapes = [
+                top.bottom() + HEADER_LINE,
+                controls.top() - CONTROLS_AIR,
+                footer.top() - FOOTER_AIR,
+            ]
+            .map(|y| pixel_ui::etched_hline(across, y, colors, ppp));
+            ui.painter().set(lines, egui::Shape::Vec(shapes.into()));
         }
-        // Abajo, a la derecha: lo que muestra View, a un sprite, una capa o un artboard.
-        let footer = Rect::from_min_max(at(0.0, height - FOOTER_BUTTONS), at(WIDTH, height));
-        let mut footer = child(ui, footer, egui::Layout::right_to_left(egui::Align::Min));
-        footer.add_enabled_ui(self.albedo.is_some(), |ui| {
-            let name = format!("{} ({})", self.name(), self.view.label());
-            if pixel_ui::text_button(ui, "Add as Artboard").clicked() {
-                action = self
-                    .shown()
-                    .map(|b| LumenAction::AddArtboard(name.clone(), b));
-            }
-            if pixel_ui::text_button(ui, "Add as Layer").clicked() {
-                action = self.shown().map(|b| LumenAction::AddLayer(name.clone(), b));
-            }
-            if pixel_ui::text_button(ui, "New Sprite").clicked() {
-                action = self
-                    .shown()
-                    .map(|b| LumenAction::NewSprite(name.clone(), b));
-            }
-        });
-        ui.allocate_rect(
-            Rect::from_min_size(origin, vec2(WIDTH, height)),
-            Sense::hover(),
-        );
         action
     }
 
-    /// Los tres mapas en columnas: título y tamaño, miniatura y botones.
-    fn maps(&mut self, ui: &mut Ui, action: &mut Option<LumenAction>) {
+    /// New Sprite, Add as Layer y Add as Artboard con lo que muestra View (apagados sin albedo).
+    fn footer_buttons(&mut self, ui: &mut Ui, action: &mut Option<LumenAction>) {
+        ui.add_enabled_ui(self.albedo.is_some(), |ui| {
+            let name = format!("{} ({})", self.name(), self.view.label());
+            if pixel_ui::text_button(ui, "New Sprite").clicked() {
+                *action = self
+                    .shown()
+                    .map(|b| LumenAction::NewSprite(name.clone(), b));
+            }
+            if pixel_ui::text_button(ui, "Add as Layer").clicked() {
+                *action = self.shown().map(|b| LumenAction::AddLayer(name.clone(), b));
+            }
+            if pixel_ui::text_button(ui, "Add as Artboard").clicked() {
+                *action = self
+                    .shown()
+                    .map(|b| LumenAction::AddArtboard(name.clone(), b));
+            }
+        });
+    }
+
+    /// Los tres mapas en `tui`, `BODY_AIR` debajo del encabezado: lado a lado (`across`), del
+    /// mismo ancho, o uno debajo de otro.
+    fn maps_ui(&mut self, tui: &mut forms::Tui, across: bool, action: &mut Option<LumenAction>) {
+        let kinds = [MapKind::Albedo, MapKind::Normal, MapKind::Luminance];
+        let column = forms::grow_auto(MAP_MIN, COLUMN);
+        if across {
+            let row = forms::air_above(BODY_AIR, forms::row_nowrap(COLUMN_GAP));
+            tui.style(row).add(|tui| {
+                for kind in kinds {
+                    tui.style(column.clone())
+                        .ui(|ui| self.map(ui, kind, action));
+                }
+            });
+            return;
+        }
+        for (i, kind) in kinds.into_iter().enumerate() {
+            let air = if i == 0 { BODY_AIR } else { MAPS_STACK_GAP };
+            let row = forms::air_above(air, forms::row_nowrap(0.0));
+            tui.style(row).add(|tui| {
+                tui.style(column.clone())
+                    .ui(|ui| self.map(ui, kind, action));
+            });
+        }
+    }
+
+    /// Un aviso (un mapa que no se pudo cargar) y la ✕ para quitarlo; si no cabe, en varias
+    /// líneas.
+    fn notice_ui(&mut self, ui: &mut Ui, notice: &str) {
+        ui.horizontal(|ui| {
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            let close = pixel_ui::ICON_BUTTON.x + ui.spacing().item_spacing.x;
+            hint_wrapped(ui, notice, ui.available_width() - close);
+            if crate::pixel_ui::icon_button(ui, skin.as_deref(), "icon.tab_close", "×", None)
+                .clicked()
+            {
+                self.notice = None;
+            }
+        });
+    }
+
+    /// Lo de debajo de los mapas en `tui`: a la izquierda (debajo de Albedo) la vista y la luz,
+    /// o con Modify los ajustes del generador; a la derecha, la vista previa con el zoom abajo,
+    /// hasta el pie. Si no caben lado a lado, la vista previa va debajo. Devuelve el rect de los
+    /// controles.
+    fn below_maps(&mut self, tui: &mut forms::Tui, side_by_side: bool) -> Rect {
+        let air = CONTROLS_LINE + CONTROLS_AIR;
+        let left = forms::grow_auto(LEFT_MIN, COLUMN);
+        if side_by_side {
+            // Del alto de los controles por lo menos (la vista previa no se mide).
+            let row = forms::fill_height_auto(forms::row_nowrap(COLUMN_GAP));
+            return tui.style(forms::air_above(air, row)).add(|tui| {
+                let rect = tui.style(left).ui(|ui| self.controls(ui));
+                // Crece el doble que los controles: siguen del ancho de la columna de Albedo.
+                let right = forms::grow_auto(PREVIEW_MIN, PREVIEW);
+                let right = forms::full_height(forms::weight(2.0, right));
+                // Los controles pueden llegar a su aire de abajo; la vista previa, no.
+                self.preview_ui(tui, forms::air_below(PREVIEW_AIR, right));
+                rect
+            });
+        }
+        let row = forms::air_above(air, forms::row_nowrap(0.0));
+        let rect = tui
+            .style(row)
+            .add(|tui| tui.style(left).ui(|ui| self.controls(ui)));
+        let preview = forms::fill_height(STACKED_PREVIEW + BELOW_PREVIEW, forms::Style::default());
+        let preview = forms::air_below(PREVIEW_AIR, preview);
+        self.preview_ui(tui, forms::air_above(STACK_GAP, preview));
+        rect
+    }
+
+    /// Los controles de la columna de la izquierda en `ui`: la vista y los sliders de la luz o,
+    /// con Modify, los ajustes del generador. Devuelve su rect.
+    fn controls(&mut self, ui: &mut Ui) -> Rect {
+        ui.spacing_mut().item_spacing.y = 3.0;
+        match self.modify {
+            Some(kind) => self.generator_settings(ui, kind),
+            None => {
+                self.view_controls(ui);
+                ui.add_space(2.0);
+                self.sliders(ui);
+            }
+        }
+        ui.max_rect()
+    }
+
+    /// La vista previa en una hoja de `style` de `tui` (su caja, lo que la hoja deja sin lo de
+    /// abajo).
+    fn preview_ui(&mut self, tui: &mut forms::Tui, style: forms::Style) {
+        forms::canvas(tui, style, |ui| {
+            let box_height = (ui.max_rect().height() - BELOW_PREVIEW).max(MIN_PREVIEW);
+            self.preview(ui, box_height);
+        });
+    }
+
+    /// Un mapa en `ui` (una columna): título y tamaño, miniatura y botones.
+    fn map(&mut self, ui: &mut Ui, kind: MapKind, action: &mut Option<LumenAction>) {
+        ui.spacing_mut().item_spacing.y = 3.0;
+        let width = ui.max_rect().width();
         let size = self
             .albedo
             .as_ref()
             .map(|(_, b)| format!("{}×{}", b.width, b.height));
-        let top = ui.cursor().top();
-        let left = ui.cursor().left();
-        let mut bottom = top;
-        for (i, kind) in [MapKind::Albedo, MapKind::Normal, MapKind::Luminance]
-            .into_iter()
-            .enumerate()
-        {
-            let x = left + i as f32 * (COLUMN + COLUMN_GAP);
-            let rect = Rect::from_min_size(pos2(x, top), vec2(COLUMN, 200.0));
-            let mut column = child(ui, rect, egui::Layout::top_down(egui::Align::Min));
-            column.spacing_mut().item_spacing.y = 3.0;
-            let present = match kind {
-                MapKind::Albedo => self.albedo.is_some(),
-                MapKind::Normal => self.albedo.is_some() && self.normal != Source::None,
-                MapKind::Luminance => self.albedo.is_some() && self.luminance != Source::None,
-            };
-            let note = match (&size, kind) {
-                (None, _) => "none".to_string(),
-                (Some(_), _) if !present => "none".to_string(),
-                (Some(s), MapKind::Albedo) => s.clone(),
-                (Some(_), MapKind::Normal) => self.source_note(&self.normal).into(),
-                (Some(_), MapKind::Luminance) => self.source_note(&self.luminance).into(),
-            };
-            label_with_hint(&mut column, kind.label(), &note);
-            // Con Pixel UI, abrir y quitar son íconos en la caja de la miniatura (así no hace
-            // falta el scroll); sin él, la fila de botones de siempre.
-            let icons = self.thumbnail(&mut column, kind, present);
-            if icons.browse {
-                *action = Some(LumenAction::Browse(kind));
-            }
-            if icons.remove && present {
-                self.remove(kind);
-            }
-            if !icons.shown {
-                column.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-                    if pixel_ui::text_button_sized(ui, "Browse", button_width(2)).clicked() {
-                        *action = Some(LumenAction::Browse(kind));
-                    }
-                    let remove = ui.add_enabled_ui(present, |ui| {
-                        pixel_ui::text_button_sized(ui, "Remove", button_width(2))
-                    });
-                    if remove.inner.clicked() && present {
-                        self.remove(kind);
-                    }
-                });
-            }
-            column.horizontal(|ui| {
+        let present = match kind {
+            MapKind::Albedo => self.albedo.is_some(),
+            MapKind::Normal => self.albedo.is_some() && self.normal != Source::None,
+            MapKind::Luminance => self.albedo.is_some() && self.luminance != Source::None,
+        };
+        let note = match (&size, kind) {
+            (None, _) => "none".to_string(),
+            (Some(_), _) if !present => "none".to_string(),
+            (Some(s), MapKind::Albedo) => s.clone(),
+            (Some(_), MapKind::Normal) => self.source_note(&self.normal).into(),
+            (Some(_), MapKind::Luminance) => self.source_note(&self.luminance).into(),
+        };
+        label_with_hint(ui, kind.label(), &note);
+        // Con Pixel UI, abrir y quitar son íconos en la caja de la miniatura (así no hace falta
+        // el scroll); sin él, la fila de botones de siempre.
+        let icons = self.thumbnail(ui, kind, present);
+        if icons.browse {
+            *action = Some(LumenAction::Browse(kind));
+        }
+        if icons.remove && present {
+            self.remove(kind);
+        }
+        if !icons.shown {
+            row_bottom(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-                if kind == MapKind::Albedo {
-                    if pixel_ui::text_button_sized(ui, "Use Layer", COLUMN).clicked() {
-                        *action = Some(LumenAction::UseLayer);
-                    }
-                    return;
+                let half = button_width(width, 2);
+                if pixel_ui::text_button_sized(ui, "Browse", half).clicked() {
+                    *action = Some(LumenAction::Browse(kind));
                 }
-                let third = button_width(3);
-                ui.add_enabled_ui(self.albedo.is_some(), |ui| {
-                    if pixel_ui::text_button_sized(ui, "Generate", third).clicked() {
-                        self.generate(kind);
-                    }
-                    let open = self.modify == Some(kind);
-                    let modify = pixel_ui::text_button_sized(ui, "Modify", third)
-                        .on_hover_text("Settings to generate this map");
-                    if modify.clicked() {
-                        self.modify = if open { None } else { Some(kind) };
-                    }
-                    if open {
-                        ui.painter().rect_filled(
-                            Rect::from_min_size(
-                                modify.rect.left_bottom() + vec2(2.0, 1.0),
-                                vec2(modify.rect.width() - 4.0, 1.0),
-                            ),
-                            0.0,
-                            crate::theme::ACCENT,
-                        );
-                    }
+                let remove = ui.add_enabled_ui(present, |ui| {
+                    pixel_ui::text_button_sized(ui, "Remove", half)
                 });
-                ui.add_enabled_ui(present, |ui| {
-                    if pixel_ui::text_button_sized(ui, "Export", third).clicked()
-                        && let Some(image) = self.map_image(kind)
-                    {
-                        let file = format!("{}{}.png", self.name(), kind.suffix());
-                        *action = Some(LumenAction::Export(file, image));
-                    }
-                });
+                if remove.inner.clicked() && present {
+                    self.remove(kind);
+                }
             });
-            bottom = bottom.max(column.min_rect().bottom());
         }
-        ui.allocate_rect(
-            Rect::from_min_max(pos2(left, top), pos2(left + WIDTH, bottom)),
-            Sense::hover(),
-        );
-        if let Some(notice) = &self.notice {
-            let notice = notice.clone();
-            ui.horizontal(|ui| {
-                hint(ui, &notice);
-                let skin = crate::pixel_ui::frame_skin(ui.ctx());
-                if crate::pixel_ui::icon_button(ui, skin.as_deref(), "icon.tab_close", "×", None)
-                    .clicked()
+        // Los botones (de 17) abajo de su fila, en puntos enteros.
+        row_bottom(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+            if kind == MapKind::Albedo {
+                if pixel_ui::text_button_sized(ui, "Use Layer", width).clicked() {
+                    *action = Some(LumenAction::UseLayer);
+                }
+                return;
+            }
+            let (generate, modify_w, export_w) = map_button_widths(ui, width);
+            ui.add_enabled_ui(self.albedo.is_some(), |ui| {
+                if pixel_ui::text_button_sized(ui, "Generate", generate).clicked() {
+                    self.generate(kind);
+                }
+                let open = self.modify == Some(kind);
+                let modify = pixel_ui::text_button_sized(ui, "Modify", modify_w)
+                    .on_hover_text("Settings to generate this map");
+                if modify.clicked() {
+                    self.modify = if open { None } else { Some(kind) };
+                }
+                if open {
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(
+                            modify.rect.left_bottom() + vec2(2.0, 1.0),
+                            vec2(modify.rect.width() - 4.0, 1.0),
+                        ),
+                        0.0,
+                        crate::theme::ACCENT,
+                    );
+                }
+            });
+            ui.add_enabled_ui(present, |ui| {
+                if pixel_ui::text_button_sized(ui, "Export", export_w).clicked()
+                    && let Some(image) = self.map_image(kind)
                 {
-                    self.notice = None;
+                    let file = format!("{}{}.png", self.name(), kind.suffix());
+                    *action = Some(LumenAction::Export(file, image));
                 }
             });
-        }
+        });
     }
 
     fn source_note<T>(&self, source: &Source<T>) -> &'static str {
@@ -700,7 +862,8 @@ impl LumenPanel {
     /// La miniatura de un mapa en su caja doble (vacía si no hay) y, con Pixel UI, abajo a la
     /// derecha los íconos de abrir (la carpeta) y quitar (la ✕, apagada si no hay mapa).
     fn thumbnail(&mut self, ui: &mut Ui, kind: MapKind, present: bool) -> MapIcons {
-        let (frame, _) = ui.allocate_exact_size(vec2(COLUMN, THUMB_BOX), Sense::hover());
+        let (frame, _) =
+            ui.allocate_exact_size(vec2(ui.max_rect().width(), THUMB_BOX), Sense::hover());
         double_box(ui, frame);
         let well = frame.shrink(BOX_PAD);
         if present {
@@ -836,7 +999,8 @@ impl LumenPanel {
                     })
                     .on_hover_text("OpenGL: Godot, Unity, Bevy. DirectX: Unreal");
                 });
-                ui.horizontal(|ui| {
+                // Las casillas (de 17) abajo de su fila, en puntos enteros.
+                row_bottom(ui, |ui| {
                     widgets::checkbox(ui, &mut s.invert_x, "Invert X");
                     widgets::checkbox(ui, &mut s.invert_y, "Invert Y");
                 });
@@ -884,14 +1048,18 @@ impl LumenPanel {
             if color_button(ui, &mut bg) {
                 self.background = Some(bg);
             }
-            if pixel_ui::text_button_sized(ui, "Detect BG", 50.0).clicked()
-                && let Some((_, image)) = &self.albedo
-            {
-                self.background =
-                    cs_render::detect_background(&image.pixels, image.width, image.height);
-            }
-            widgets::checkbox(ui, &mut self.hide_background, "Hide BG")
-                .tip("The background color counts as transparent");
+            // El botón y la casilla (de 17) abajo de la fila, en puntos enteros (centrados en la
+            // fila de 18 quedaban a medio punto); el nombre y el color, centrados como siempre.
+            row_bottom(ui, |ui| {
+                if pixel_ui::text_button_sized(ui, "Detect BG", 50.0).clicked()
+                    && let Some((_, image)) = &self.albedo
+                {
+                    self.background =
+                        cs_render::detect_background(&image.pixels, image.width, image.height);
+                }
+                widgets::checkbox(ui, &mut self.hide_background, "Hide BG")
+                    .tip("The background color counts as transparent");
+            });
         });
         ui.horizontal(|ui| {
             ui.label("Cursor");
@@ -1017,14 +1185,33 @@ impl LumenPanel {
         let light = self.light(image.width, image.height);
         let at = rect.min + vec2(light.x, light.y) * k;
         self.light_gizmo(&painter, at, k, &light);
-        // Debajo: el tamaño, la vista y el zoom.
+        // Debajo: el tamaño, cómo se usa (si cabe antes del zoom; si no, en el tooltip de la
+        // vista previa) y el zoom.
+        let size_text = format!("{}×{}", image.width, image.height);
+        let zoom_text = format!("{:.0}%", k * 100.0);
+        let gap = ui.spacing().item_spacing.x;
+        let help = hint_galley(ui, PREVIEW_HELP).size().x;
+        let row = body_width(ui, &size_text) + gap + help + gap + zoom_width(ui, &zoom_text);
+        let help_fits = row <= width;
+        if !help_fits {
+            response.tip(PREVIEW_HELP);
+        }
         ui.add_space(3.0);
         ui.horizontal(|ui| {
-            ui.label(format!("{}×{}", image.width, image.height));
-            hint(ui, "drag: light · wheel: zoom · right drag: pan");
+            ui.label(size_text);
+            if help_fits {
+                hint(ui, PREVIEW_HELP);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                if pixel_ui::text_button_sized(ui, "Fit", 26.0).clicked() {
+                ui.spacing_mut().item_spacing.x = ZOOM_GAP;
+                // El botón (de 17) abajo de la fila, en puntos enteros (centrado en la fila de
+                // 18 quedaba a medio punto); el zoom y el porcentaje, centrados como siempre.
+                let slot = vec2(FIT_WIDTH, ui.spacing().interact_size.y);
+                let bottom = egui::Layout::left_to_right(egui::Align::Max);
+                let fit = ui.allocate_ui_with_layout(slot, bottom, |ui| {
+                    pixel_ui::text_button_sized(ui, "Fit", FIT_WIDTH)
+                });
+                if fit.inner.clicked() {
                     self.zoom = None;
                     self.pan = egui::Vec2::ZERO;
                 }
@@ -1035,7 +1222,7 @@ impl LumenPanel {
                 if minus {
                     self.zoom = Some((k.floor() - 1.0).max(1.0));
                 }
-                ui.label(format!("{:.0}%", k * 100.0));
+                ui.label(zoom_text);
             });
         });
     }
@@ -1090,6 +1277,25 @@ impl LumenPanel {
 
 /// El foquito que marca la luz en la vista previa (el ícono de Lumen en el dock).
 const LIGHT_ICON: &str = "icon.dock.lumen";
+
+/// El ancho de `text` como lo pone `ui.label`.
+fn body_width(ui: &Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.into(), font, Color32::PLACEHOLDER);
+    galley.size().x
+}
+
+/// El ancho del zoom de debajo de la vista previa: el porcentaje `percent`, − y + y Fit.
+fn zoom_width(ui: &Ui, percent: &str) -> f32 {
+    let skin = pixel_ui::frame_skin(ui.ctx());
+    let buttons = skin
+        .as_ref()
+        .and_then(|s| s.piece("lumen.zoom", WidgetState::Normal))
+        .map_or(18.0 + ZOOM_GAP + 18.0, |p| p.size[0] as f32);
+    body_width(ui, percent) + ZOOM_GAP + buttons + ZOOM_GAP + FIT_WIDTH
+}
 
 /// − y + del zoom, juntos (la pieza `lumen.zoom` del skin; sin ella, dos botones). Devuelve si
 /// se tocó cada uno. Va en un layout de derecha a izquierda.
@@ -1196,7 +1402,12 @@ fn map_icons(ui: &mut Ui, kind: MapKind, frame: Rect, present: bool) -> MapIcons
         } else {
             Sense::hover()
         };
-        let response = ui.interact(rect.expand(1.0), id, sense);
+        // Con 1 de más alrededor; el pixel entre los dos es de quitar (no se pisan).
+        let hit = match label {
+            "Remove" => rect.expand(1.0),
+            _ => rect.expand(1.0).with_max_x(rect.right()),
+        };
+        let response = ui.interact(hit, id, sense);
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
         let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
@@ -1240,7 +1451,7 @@ fn stacked_slider(
     } else {
         SLIDER_HEIGHT
     };
-    let (rect, _) = ui.allocate_exact_size(vec2(COLUMN, height), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.max_rect().width(), height), Sense::hover());
     slider(ui, rect, title, value, range, default, format);
 }
 
@@ -1309,6 +1520,9 @@ pub(crate) fn texture_of(ui: &Ui, name: &str, image: &Bitmap) -> TextureHandle {
 mod tests {
     use super::*;
 
+    /// Un estado del panel para los tests: su nombre y cómo se llega a él.
+    type State = (&'static str, fn(&mut LumenPanel));
+
     /// Un cuadrado de 6×6 con un píxel claro en el centro, en un fondo verde de 10×10.
     fn sprite() -> Bitmap {
         let bg = Rgba::rgb(0, 200, 0);
@@ -1329,6 +1543,178 @@ mod tests {
             height: 10,
             pixels,
         }
+    }
+
+    /// De `MIN_WIDTH` para arriba, vacío, con imagen, con los ajustes del normal map o con un
+    /// aviso, todo entra en el ancho del panel, en puntos enteros y sin que nada tape a nada. Los
+    /// mapas van lado a lado desde `MAPS_ACROSS` (ahí, en su mínimo) y, más angosto, uno debajo
+    /// de otro; los controles y la vista previa, lado a lado desde `SIDE_BY_SIDE` (con los
+    /// controles del ancho de la columna de Albedo, si los mapas van lado a lado) y, más
+    /// angosto, la vista previa debajo.
+    #[test]
+    fn the_lumen_panel_reflows_at_any_width() {
+        use crate::forms::testing::run_at;
+        let states: [State; 4] = [
+            ("empty", |_| {}),
+            ("image", |p| p.load("box".into(), sprite())),
+            ("normal", |p| {
+                p.load("box".into(), sprite());
+                p.open_settings(MapKind::Normal);
+            }),
+            ("notice", |p| {
+                p.load("box".into(), sprite());
+                p.notify("The normal map is 2×2; it must be 10×10 like the albedo.".into());
+            }),
+        ];
+        let widths = [
+            MIN_WIDTH,
+            300.0,
+            SIDE_BY_SIDE,
+            400.0,
+            MAPS_ACROSS,
+            REFERENCE_WIDTH,
+            600.0,
+        ];
+        for width in widths {
+            for (state, setup) in states {
+                let mut lumen = LumenPanel::default();
+                setup(&mut lumen);
+                let probe = run_at(width, |ui| {
+                    lumen.ui(ui);
+                });
+                let at = format!("{state} at {width}");
+                probe.assert_whole_px();
+                probe.assert_within(width);
+                probe.assert_no_overlap();
+                // Los mapas: Albedo (Use Layer) y Normal (su Generate: el primero, arriba a la
+                // izquierda; el de Luminance va a su derecha o debajo).
+                let albedo = probe.rect("Use Layer");
+                let normal = probe
+                    .widgets
+                    .iter()
+                    .filter(|(n, _)| n == "Generate")
+                    .map(|(_, r)| *r)
+                    .min_by(|a, b| {
+                        (a.top(), a.left())
+                            .partial_cmp(&(b.top(), b.left()))
+                            .unwrap()
+                    })
+                    .expect("Generate");
+                if width >= MAPS_ACROSS {
+                    assert_eq!(normal.top(), albedo.top(), "side by side {at}");
+                    let column = ((width - 2.0 * COLUMN_GAP) / 3.0).round();
+                    assert!((albedo.width() - column).abs() <= 1.0, "{albedo:?} {at}");
+                    assert_eq!(normal.left(), albedo.right() + COLUMN_GAP, "{at}");
+                } else {
+                    assert!(normal.top() > albedo.bottom(), "one under the other {at}");
+                    assert_eq!(albedo.width(), width, "{at}");
+                }
+                // El pie, a la derecha.
+                assert_eq!(probe.rect("Add as Artboard").right(), width, "{at}");
+                if state == "empty" || state == "normal" {
+                    continue;
+                }
+                // Los controles (Cursor) y, debajo de la vista previa, el tamaño de la imagen.
+                let (cursor, size) = (probe.rect("Cursor"), probe.rect("10×10"));
+                if width >= SIDE_BY_SIDE {
+                    assert!(size.left() > cursor.right(), "side by side {at}");
+                    if width >= MAPS_ACROSS {
+                        assert_eq!(size.left(), albedo.right() + COLUMN_GAP, "{at}");
+                    }
+                } else {
+                    assert_eq!(size.left(), 0.0, "under the controls {at}");
+                }
+                assert_eq!(probe.rect("Fit").right(), width, "{at}");
+            }
+        }
+    }
+
+    /// En `REFERENCE_WIDTH`, la fila de botones de cada mapa es la del mockup: Use Layer a todo
+    /// lo ancho de Albedo y, en Normal y Luminance, Generate de su ancho justo (50), Modify de 45
+    /// y Export con el resto (41), 2 entre ellos, hasta el borde de su columna de 140.
+    #[test]
+    fn the_map_buttons_match_the_mockup_at_the_reference_width() {
+        use crate::forms::testing::run_at;
+        let mut lumen = LumenPanel::default();
+        lumen.load("box".into(), sprite());
+        let probe = run_at(REFERENCE_WIDTH, |ui| {
+            lumen.ui(ui);
+        });
+        let all = |name: &str| {
+            let mut rects: Vec<(f32, f32)> = probe
+                .widgets
+                .iter()
+                .filter(|(n, _)| n == name)
+                .map(|(_, r)| (r.left(), r.width()))
+                .collect();
+            rects.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            rects
+        };
+        assert_eq!(all("Use Layer"), [(0.0, 140.0)]);
+        assert_eq!(all("Generate"), [(147.0, 50.0), (294.0, 50.0)]);
+        assert_eq!(all("Modify"), [(199.0, 45.0), (346.0, 45.0)]);
+        assert_eq!(all("Export"), [(246.0, 41.0), (393.0, 41.0)]);
+    }
+
+    /// Con el contenido de `REFERENCE_WIDTH` desplazado `scrolled` hacia arriba (pintado en
+    /// `content`, visto por un scroll que muestra desde más abajo): el rect del logo, su recorte y
+    /// lo que se ve del scroll.
+    fn logo_clip(scrolled: f32) -> (Rect, Rect, Rect) {
+        let ctx = egui::Context::default();
+        let skin = crate::skin::Skin::embedded(&ctx);
+        let piece = skin.piece("lumen.logo", WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        ctx.set_fonts(crate::appearance::font_definitions(true));
+        crate::appearance::apply_style(&ctx, Some(skin.colors()));
+        crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
+        let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(REFERENCE_WIDTH, 500.0));
+        let viewport = content.with_min_y(content.min.y + scrolled);
+        let logo = Rect::from_min_size(content.min + LOGO_AT, size);
+        let mut panel = LumenPanel::default();
+        let mut clip = None;
+        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                    ui.set_width(content.width());
+                    ui.set_clip_rect(viewport);
+                    panel.ui(ui);
+                });
+            });
+            output.textures_delta.clear();
+            clip = output.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) => {
+                    let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
+                    (Rect::from_points(&points) == logo).then_some(c.clip_rect)
+                }
+                _ => None,
+            });
+        }
+        (logo, clip.expect("the logo"), viewport)
+    }
+
+    /// El logo sale 1 arriba y 3 a la izquierda del contenido (sobre el margen del panel): el
+    /// recorte del scroll del dock, que empieza en el contenido, no le quita esas filas.
+    #[test]
+    fn the_logo_keeps_its_overhang_above_the_scroll_clip() {
+        let (logo, clip, _) = logo_clip(0.0);
+        assert!(clip.contains_rect(logo), "{logo:?} clipped by {clip:?}");
+    }
+
+    /// Con el contenido desplazado, el logo se recorta como lo demás: su recorte sube solo lo que
+    /// el logo sale del contenido (1), no se pinta sobre el marco del panel.
+    #[test]
+    fn a_scrolled_logo_is_clipped_like_the_rest() {
+        let (logo, clip, viewport) = logo_clip(5.0);
+        assert!(
+            clip.top() >= viewport.top() + LOGO_AT.y,
+            "{logo:?} clipped by {clip:?}, viewport {viewport:?}"
+        );
     }
 
     #[test]

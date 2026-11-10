@@ -24,6 +24,9 @@ log.workspace = true
 ehttp = "0.7"
 # Para saber qué glifos tiene la fuente pixel (la misma versión que usa cs-tools).
 fontdue = "0.9"
+# Formas responsivas (flexbox / grid de taffy) para los paneles: solo las usa `forms`. Versión
+# fija: es la que pide egui 0.36.
+egui_taffy = "=0.14.0"
 
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

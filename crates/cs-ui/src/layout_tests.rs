@@ -4255,6 +4255,36 @@ fn the_font_settings_are_the_mockup_layout() {
 }
 
 #[test]
+fn the_font_settings_reflow_at_any_width() {
+    use crate::font_panel::{CONFIG_MIN_WIDTH, REFERENCE_WIDTH, config_view};
+    use crate::forms::testing::run_at;
+    for width in [CONFIG_MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
+        let sprite = cs_core::Sprite::new(8, 8, cs_core::ColorMode::Rgba);
+        let mut editor = crate::editor::Editor::with_sprite(sprite);
+        editor.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+        let probe = run_at(width, |ui| {
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            config_view(ui, &mut editor, skin.as_deref());
+        });
+        probe.assert_whole_px();
+        probe.assert_within(width);
+        probe.assert_no_overlap();
+        // Lo que tiene que estar a cualquier ancho.
+        for name in [
+            "Family",
+            "Style",
+            "Ghost",
+            "Italic",
+            "Monospace",
+            "Baseline",
+            "New Variant…",
+        ] {
+            probe.rect(name);
+        }
+    }
+}
+
+#[test]
 fn hovering_a_font_number_highlights_its_line_in_the_preview() {
     let mut h = font_settings_open();
     // Una línea resaltada: roja, de 2 de alto y del ancho de la celda (16 × 7 = 112).
@@ -8374,6 +8404,17 @@ fn library_row(h: &LayoutHarness, name: &str) -> Rect {
         .unwrap_or_else(|| panic!("no {name:?} row in {:?}", h.nodes))
 }
 
+/// La pestaña `name` (el botón de más arriba con ese nombre: con Library abierto, su fila también
+/// es un botón con ese nombre, y el orden de los nodos de accesskit es el de un hash).
+fn tab_button(h: &LayoutHarness, name: &str) -> Rect {
+    h.buttons
+        .iter()
+        .filter(|(l, _)| l == name)
+        .map(|(_, r)| *r)
+        .min_by(|a, b| a.top().total_cmp(&b.top()))
+        .unwrap_or_else(|| panic!("no {name:?} tab in {:?}", h.buttons))
+}
+
 #[test]
 fn the_library_has_symbols_models_and_fonts_sections_with_their_counts() {
     let mut h = with_library_items();
@@ -8647,7 +8688,7 @@ fn opening_a_model_view_shows_the_3d_panel_without_the_dock() {
     assert!(!h.app.doc.editor.model_edit_on());
     assert!(dock_buttons(&h).contains(&"Library".to_string()));
     assert_eq!(crate::dock::open_panel(&h.ctx), Some(DockPanel::Library));
-    let tab = h.button("Ship");
+    let tab = tab_button(&h, "Ship");
     h.click(tab.center(), PointerButton::Primary);
     h.frame();
     assert!(model_panel_shown(&h), "clicking its tab shows the 3D panel");
@@ -8729,7 +8770,7 @@ fn the_3d_panel_of_the_model_tab_sits_between_the_workspace_and_the_colors() {
     assert_eq!(colors.left() - panel.right(), 3.0);
     assert_eq!(
         panel.width(),
-        crate::model_panel::WIDTH + 2.0 * crate::dock::FLYOUT_MARGIN as f32
+        crate::model_panel::REFERENCE_WIDTH + 2.0 * crate::dock::FLYOUT_MARGIN as f32
     );
     // Sin pestaña: la caja no pasa de su borde derecho.
     let boxes = union(&h.drawn("menu.side")).expect("the panel box");

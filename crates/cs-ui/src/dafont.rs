@@ -12,6 +12,7 @@ use std::io::Read as _;
 use eframe::egui::{self, Color32, Vec2, vec2};
 use eframe::emath::GuiRounding as _;
 
+use crate::forms::{self, TuiBuilderLogic as _};
 use crate::lospec_client::{self, FetchError, Pending};
 use crate::pixel_ui;
 
@@ -19,8 +20,19 @@ const SITE: &str = "https://www.dafont.com";
 /// Lo que se acepta de un zip y de una fuente (de sobra para una fuente pixel).
 const MAX_ZIP_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FONT_BYTES: u64 = 4 * 1024 * 1024;
-/// Ancho del panel: las tarjetas de 350 del diseño y la barra de scroll.
-pub const WIDTH: f32 = 364.0;
+/// Ancho de referencia del panel (el del diseño: las tarjetas de 350 y la barra de scroll); el
+/// dock lo abre de este ancho. Adentro todo sale del ancho disponible.
+pub const REFERENCE_WIDTH: f32 = 364.0;
+/// El ancho más chico en que el panel se ve bien (medido): el campo de la muestra (`SAMPLE_W`,
+/// 158) y, a su derecha, el lugar del logo (`logo_room`, 50 con el logo del skin), con "Sort by" y
+/// Submit debajo; en las tarjetas, las descargas en una línea y los botones debajo. Son 208, más
+/// 2: con la fila de los campos justo del ancho del campo, taffy 0.9 la mide como si cada campo
+/// fuera en su fila (y la deja más alta).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+)]
+pub const MIN_WIDTH: f32 = 210.0;
 /// Lo que queda debajo de la lista hasta el final de la pantalla (el borde del panel y la barra
 /// de estado).
 const LIST_BELOW: f32 = 40.0;
@@ -260,11 +272,30 @@ const CELL_GLYPH_TOP: f32 = 22.0;
 const SAMPLE_W: f32 = 158.0;
 const SORT_W: f32 = 89.0;
 const FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
+/// Entre los campos de arriba (y entre sus filas, si se parten) y entre los botones de una
+/// tarjeta.
+const FIELD_GAP: f32 = 5.0;
+/// Entre un error y Retry (lo que había entre los elementos de una fila de egui).
+const ROW_GAP: f32 = 8.0;
+/// En una fila de 18 (la de `ui.horizontal`), los botones de 17 van 1 abajo y los textos de 14, 2.
+const ROW_H: f32 = 18.0;
+const BUTTON_DROP: f32 = 1.0;
+const TEXT_DROP: f32 = 2.0;
 /// La frase y el abecedario del detalle.
 const PANGRAM: &str = "the quick brown fox jumps over the lazy dog";
 const CHARSET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789";
-/// El logo de dafont (un enlace al sitio).
+/// El logo de dafont (un enlace al sitio), en la esquina de arriba a la derecha del panel, contra
+/// su luz: sale del contenido `LOGO_OVERHANG` hacia arriba y hacia la derecha.
 const LOGO: &str = "dafont.logo";
+const LOGO_OVERHANG: f32 = PANEL_MARGIN - PANEL_EDGE;
+/// Entre los campos de arriba y el logo.
+const LOGO_AIR: f32 = 16.0;
+
+/// Lo que los campos de arriba le dejan al logo de `logo_w` a la derecha del contenido: lo que
+/// entra del logo y su aire.
+fn logo_room(logo_w: f32) -> f32 {
+    logo_w - LOGO_OVERHANG + LOGO_AIR
+}
 
 /// El orden de la lista ("Sort by" de dafont).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -474,14 +505,32 @@ impl DafontPanel {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
         let mut asked = Asked::default();
-        ui.set_width(WIDTH);
         self.top_row(ui, &mut asked);
         if let Some(error) = &self.error {
-            ui.horizontal(|ui| {
-                ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
-                if self.listing_failed && self.detail.is_none() {
-                    asked.retry = pixel_ui::text_button(ui, "Retry").clicked();
-                }
+            // El aviso (en líneas, si no cabe) y Retry a su lado, o debajo si no cabe. El aviso
+            // mide lo que su texto a lo ancho del panel.
+            let retry = self.listing_failed && self.detail.is_none();
+            let color = Color32::from_rgb(0xc0, 0x40, 0x40);
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let width = ui.available_width().floor();
+            let size = ui
+                .painter()
+                .layout(error.clone(), font, color, width)
+                .size();
+            forms::form(ui, "dafont_error", 0.0, |tui| {
+                tui.style(forms::min_height(ROW_H, forms::row(ROW_GAP)))
+                    .add(|tui| {
+                        let text = forms::fixed(size.x.ceil(), size.y.ceil());
+                        tui.style(forms::air_above(TEXT_DROP, text)).ui(|ui| {
+                            ui.colored_label(color, error);
+                        });
+                        if retry {
+                            let button = forms::air_above(BUTTON_DROP, forms::natural());
+                            tui.style(button).ui(|ui| {
+                                asked.retry = pixel_ui::text_button(ui, "Retry").clicked();
+                            });
+                        }
+                    });
             });
         }
         // Hasta abajo de la pantalla: se ven varias fuentes (o caracteres) a la vez.
@@ -511,7 +560,7 @@ impl DafontPanel {
                 |ui| {
                     ui.set_max_width(ui.available_width() - SCROLL_GAP);
                     for (k, font) in self.fonts.iter().enumerate() {
-                        if self.font_card(ui, font, &mut asked) {
+                        if self.font_card(ui, k, font, &mut asked) {
                             asked.visible.push(k);
                         }
                         ui.add_space(6.0);
@@ -696,73 +745,86 @@ impl DafontPanel {
         });
         let top = ui.cursor().top();
         let right = ui.max_rect().right();
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            // El campo de la muestra: en el detalle, hasta el logo (no hay orden ni Submit: la
-            // muestra cambia al escribir).
-            let field_w = if in_detail {
-                (WIDTH - logo_size.x - 10.0).max(SAMPLE_W)
-            } else {
-                SAMPLE_W
-            };
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label("Preview");
-                let response = match &skin {
-                    Some(skin) => crate::kit::input::text_input(
-                        ui,
-                        skin,
-                        &mut self.sample,
-                        field_w,
-                        "Custom preview",
-                        "Custom preview",
-                    ),
-                    None => ui.add(
-                        egui::TextEdit::singleline(&mut self.sample)
-                            .hint_text("Custom preview")
-                            .desired_width(field_w),
-                    ),
-                };
-                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    asked.submit = true;
-                }
-            });
-            if !in_detail {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label("Sort by");
-                    let before = self.sort;
-                    crate::widgets::combo_sized(
-                        ui,
-                        "dafont_sort",
-                        self.sort.label(),
-                        Some(SORT_W),
-                        FIELD_H,
-                        |ui| {
-                            for sort in Sort::ALL {
-                                crate::widgets::choice(ui, &mut self.sort, sort, sort.label());
+        // Los campos, cada uno con su etiqueta encima, a la izquierda del logo: si no caben en una
+        // fila, "Sort by" y Submit bajan debajo de Preview.
+        let sample = &mut self.sample;
+        let sort = &mut self.sort;
+        forms::form(ui, "dafont_top", 0.0, |tui| {
+            tui.style(forms::row_nowrap(0.0)).add(|tui| {
+                tui.style(forms::row(FIELD_GAP)).add(|tui| {
+                    // El campo de la muestra: en el detalle, hasta el logo (no hay orden ni
+                    // Submit: la muestra cambia al escribir).
+                    let field = if in_detail {
+                        forms::grow_auto(SAMPLE_W, SAMPLE_W)
+                    } else {
+                        forms::natural()
+                    };
+                    tui.style(field).ui(|ui| {
+                        let field_w = if in_detail {
+                            ui.available_width().floor()
+                        } else {
+                            SAMPLE_W
+                        };
+                        labeled(ui, "Preview", |ui| {
+                            let response = match &skin {
+                                Some(skin) => crate::kit::input::text_input(
+                                    ui,
+                                    skin,
+                                    sample,
+                                    field_w,
+                                    "Custom preview",
+                                    "Custom preview",
+                                ),
+                                None => ui.add(
+                                    egui::TextEdit::singleline(sample)
+                                        .hint_text("Custom preview")
+                                        .desired_width(field_w),
+                                ),
+                            };
+                            if response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                asked.submit = true;
                             }
-                        },
-                    );
-                    asked.sort = self.sort != before;
-                });
-            }
-            if !in_detail {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label(" ");
-                    if pixel_ui::text_button(ui, "Submit").clicked() {
-                        asked.submit = true;
+                        });
+                    });
+                    if in_detail {
+                        return;
                     }
+                    tui.style(forms::natural()).ui(|ui| {
+                        labeled(ui, "Sort by", |ui| {
+                            let before = *sort;
+                            crate::widgets::combo_sized(
+                                ui,
+                                "dafont_sort",
+                                sort.label(),
+                                Some(SORT_W),
+                                FIELD_H,
+                                |ui| {
+                                    for choice in Sort::ALL {
+                                        crate::widgets::choice(ui, sort, choice, choice.label());
+                                    }
+                                },
+                            );
+                            asked.sort = *sort != before;
+                        });
+                    });
+                    tui.style(forms::natural()).ui(|ui| {
+                        labeled(ui, " ", |ui| {
+                            if pixel_ui::text_button(ui, "Submit").clicked() {
+                                asked.submit = true;
+                            }
+                        });
+                    });
                 });
-            }
+                // El lugar del logo.
+                tui.style(forms::fixed(logo_room(logo_size.x), 0.0))
+                    .add_empty();
+            });
         });
         // El logo, arriba a la derecha: abre dafont.com.
         // En la esquina de arriba a la derecha del panel, contra su luz.
-        let corner = egui::pos2(
-            right + PANEL_MARGIN - PANEL_EDGE,
-            top - PANEL_MARGIN + PANEL_EDGE,
-        );
+        let corner = egui::pos2(right + LOGO_OVERHANG, top - LOGO_OVERHANG);
         let at = egui::Rect::from_min_size(corner - vec2(logo_size.x, 0.0), logo_size);
         let response = ui
             .interact(at, ui.id().with("dafont_logo"), egui::Sense::click())
@@ -772,10 +834,17 @@ impl DafontPanel {
             Some(piece) => {
                 let ppp = ui.ctx().pixels_per_point();
                 // Sube hasta el borde del panel, por encima del scroll: con su recorte se perdían
-                // sus primeras filas y quedaba un hueco arriba.
-                // (`with_clip_rect` intersecta con el recorte de ahora: un painter nuevo.)
-                let clip = ui.clip_rect().union(at);
-                let painter = egui::Painter::new(ui.ctx().clone(), ui.layer_id(), clip);
+                // sus primeras filas y quedaba un hueco arriba. El recorte crece solo lo que el
+                // logo sale del contenido (`LOGO_OVERHANG` arriba y a la derecha): con el
+                // contenido desplazado, se recorta como lo demás y no se pinta sobre el marco.
+                // (`with_clip_rect` intersecta con el recorte de ahora; `set_clip_rect` lo
+                // cambia y deja lo demás del painter: apagado con un modal.)
+                let clip = ui.clip_rect();
+                let clip = clip
+                    .with_min_y(clip.min.y - LOGO_OVERHANG)
+                    .with_max_x(clip.max.x.max(right + LOGO_OVERHANG));
+                let mut painter = ui.painter().clone();
+                painter.set_clip_rect(clip);
                 painter.extend(pixel_ui::piece_shapes(piece, at, ppp));
             }
             None => {
@@ -814,8 +883,15 @@ impl DafontPanel {
 
     /// Una fuente de la lista: su barra, su vista previa (la imagen de dafont a su tamaño; con
     /// el puntero encima se recorre a lo ancho) y debajo sus descargas, "Use font" y "View
-    /// more". Devuelve si se ve (para pedir su vista previa).
-    fn font_card(&self, ui: &mut egui::Ui, font: &DafontFont, asked: &mut Asked) -> bool {
+    /// more". Devuelve si se ve (para pedir su vista previa). `index`, su lugar en la lista: su
+    /// forma lleva un id que no se repite aunque dafont repita una fuente.
+    fn font_card(
+        &self,
+        ui: &mut egui::Ui,
+        index: usize,
+        font: &DafontFont,
+        asked: &mut Asked,
+    ) -> bool {
         header(ui, font);
         ui.add_space(HEADER_GAP - ui.spacing().item_spacing.y);
         let width = ui.available_width();
@@ -857,26 +933,38 @@ impl DafontPanel {
             None if !loading => card_text(ui, inner, &font.name),
             None => {}
         }
-        // Las descargas y los botones.
-        ui.horizontal(|ui| {
-            ui.label(&font.downloads);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                if pixel_ui::text_button(ui, "View more").clicked() {
-                    asked.view = Some(font.clone());
-                }
-                if self.downloading(&font.slug) {
-                    ui.weak("Downloading");
-                } else if ui
-                    .add_enabled_ui(self.download.is_none(), |ui| {
-                        pixel_ui::text_button(ui, "Use font")
-                    })
-                    .inner
-                    .clicked()
-                {
-                    asked.use_font = Some(font.clone());
-                }
-            });
+        // Las descargas y, a la derecha, los botones (debajo, si no caben al lado).
+        forms::form(ui, ("dafont_card", index, &font.slug), 0.0, |tui| {
+            tui.style(forms::min_height(ROW_H, forms::row_lines(FIELD_GAP)))
+                .add(|tui| {
+                    let downloads = forms::air_above(TEXT_DROP, forms::natural());
+                    tui.style(forms::air_right(FIELD_GAP, downloads))
+                        .ui(|ui| ui.add(egui::Label::new(&font.downloads).extend()));
+                    let buttons = forms::push_right(forms::natural());
+                    tui.style(forms::air_above(BUTTON_DROP, buttons)).ui(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.x = FIELD_GAP;
+                            if self.downloading(&font.slug) {
+                                // Un texto: 1 más abajo que los botones.
+                                ui.vertical(|ui| {
+                                    ui.add_space(TEXT_DROP - BUTTON_DROP);
+                                    ui.weak("Downloading");
+                                });
+                            } else if ui
+                                .add_enabled_ui(self.download.is_none(), |ui| {
+                                    pixel_ui::text_button(ui, "Use font")
+                                })
+                                .inner
+                                .clicked()
+                            {
+                                asked.use_font = Some(font.clone());
+                            }
+                            if pixel_ui::text_button(ui, "View more").clicked() {
+                                asked.view = Some(font.clone());
+                            }
+                        });
+                    });
+                });
         });
         shown
     }
@@ -905,9 +993,7 @@ fn detail_ui(
         } else {
             "Couldn't load this font"
         });
-        ui.horizontal(|ui| {
-            asked.back = pixel_ui::text_button(ui, "Back").clicked();
-        });
+        buttons_row(ui, "dafont_back", asked, None);
         return;
     };
     // La muestra: se dibuja otra vez si cambió el texto.
@@ -966,14 +1052,7 @@ fn detail_ui(
         }
         y += h + CARD_PAD;
     }
-    ui.horizontal(|ui| {
-        asked.back = pixel_ui::text_button(ui, "Back").clicked();
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if pixel_ui::text_button(ui, "Use font").clicked() {
-                asked.use_font = Some(detail.font.clone());
-            }
-        });
-    });
+    buttons_row(ui, "dafont_detail_buttons", asked, Some(&detail.font));
     // La cuadrícula: todos los caracteres de la fuente.
     let cell = vec2(
         CELL_W.max(px as f32 + 2.0 * CELL_PAD + 1.0),
@@ -991,6 +1070,37 @@ fn detail_ui(
             glyph_grid(ui, detail, &font, cell);
         },
     );
+}
+
+/// Debajo del detalle: "Back" y, con la fuente (`font`), "Use font" a la derecha (debajo, si no
+/// caben en una fila).
+fn buttons_row(ui: &mut egui::Ui, id: &str, asked: &mut Asked, font: Option<&DafontFont>) {
+    forms::form(ui, id, 0.0, |tui| {
+        tui.style(forms::row_lines(FIELD_GAP)).add(|tui| {
+            let button = forms::air_above(BUTTON_DROP, forms::natural());
+            tui.style(forms::air_right(FIELD_GAP, button.clone()))
+                .ui(|ui| {
+                    asked.back = pixel_ui::text_button(ui, "Back").clicked();
+                });
+            if let Some(font) = font {
+                tui.style(forms::push_right(button)).ui(|ui| {
+                    if pixel_ui::text_button(ui, "Use font").clicked() {
+                        asked.use_font = Some(font.clone());
+                    }
+                });
+            }
+        });
+    });
+}
+
+/// Un campo con su etiqueta encima, como los de arriba del panel.
+fn labeled(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
+        // En una línea: taffy mide las hojas también a lo más angosto.
+        ui.add(egui::Label::new(label).extend());
+        add(ui);
+    });
 }
 
 /// Los caracteres en celdas de `cell` (con la línea compartida): el carácter y su código en
@@ -1084,6 +1194,8 @@ fn header(ui: &mut egui::Ui, font: &DafontFont) {
         vec2(name.size().x, HEADER_H),
     );
     let mut x = name_rect.right() + 5.0;
+    // Hasta dónde llega lo de la izquierda (la licencia no lo tapa).
+    let mut end = name_rect.right();
     painter.galley(name_at, name, Color32::WHITE);
     let small_top = rect.top() + 4.0;
     if !font.author.is_empty() {
@@ -1094,6 +1206,7 @@ fn header(ui: &mut egui::Ui, font: &DafontFont) {
             by,
             Color32::WHITE,
         );
+        end = x + w;
         x += w + 4.0;
     }
     if let Some(px) = font.size_px {
@@ -1103,6 +1216,7 @@ fn header(ui: &mut egui::Ui, font: &DafontFont) {
             egui::pos2(x, small_top - 1.0),
             vec2(badge.size().x + 2.0 * BADGE_PAD - 1.0, caps + 2.0),
         );
+        end = back.right();
         // Las esquinas cortadas, como en el diseño.
         painter.rect_filled(back.shrink2(vec2(1.0, 0.0)), 0.0, BADGE);
         painter.rect_filled(back.shrink2(vec2(0.0, 1.0)), 0.0, BADGE);
@@ -1112,14 +1226,17 @@ fn header(ui: &mut egui::Ui, font: &DafontFont) {
             Color32::WHITE,
         );
     }
-    if !font.license.is_empty() {
-        let license = galley(font.license.to_uppercase(), &small);
-        let left = rect.right() - HEADER_PAD - license.size().x;
-        painter.galley(
-            crate::tab_bar::text_pos(&license, left.round(), small_top, ppp),
-            license,
-            Color32::WHITE,
-        );
+    let license = (!font.license.is_empty()).then(|| galley(font.license.to_uppercase(), &small));
+    if let Some(license) = license {
+        let left = (rect.right() - HEADER_PAD - license.size().x).round();
+        // Sin lugar sin encimarse (una barra angosta), no va: está en la página de la fuente.
+        if left >= end {
+            painter.galley(
+                crate::tab_bar::text_pos(&license, left, small_top, ppp),
+                license,
+                Color32::WHITE,
+            );
+        }
     }
     let response = ui
         .interact(
@@ -1204,6 +1321,7 @@ fn text_image(font: &cs_tools::text::FontChoice, text: &str, px: u32) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::Rect;
 
     /// Dos fuentes como las de la página de la categoría Bitmap (2026-10).
     const LISTING: &str = r#"<a name="36172"></a><div class="lv1left dfbg"><a href="minecraft.font"><strong>Minecraft</strong></a>&nbsp;<span title="Euro" class="contain">&euro;</span>  by <a href="craftron-gaming.d6128">Craftron Gaming</a></div><div class="lv1right dfbg">&nbsp;<span style="cursor:help" title="Use at 16 px (or multiple of 16), anti-alias off"> (16 px)</span></div><div class="lv2right">&nbsp;<span class="light">5,204,307 downloads (5,642 yesterday)</span> &nbsp; <a class="tdn help black" style="cursor:help" target="_blank" href="./faq.php#copyright">100% Free</a></div><div class="dlbox" style="height:88px" ><a class="dl" title="5 K" href="//dl.dafont.com/dl/?f=minecraft"  rel="nofollow">&nbsp;Download&nbsp;</a></div><div style="background-image:url(/img/preview/m/i/minecraft0.png)" class="preview"><a href="minecraft.font"></a></div><div class="dfxsmall">&nbsp;</div><a name="46880"></a><div class="lv1left dfbg"><a href="kiwisoda.font"><strong>Kiwi Soda</strong></a>&nbsp;<span title="Accents" class="contain">&agrave;</span>  by <a href="jeti.d1589">jeti</a></div><div class="lv2right">&nbsp;<a class="tdn help black" href="./faq.php#copyright">Public domain / GPL / OFL</a></div><div style="background-image:url(/img/preview/k/i/kiwisoda0.png)" class="preview"></div>"#;
@@ -1293,6 +1411,288 @@ mod tests {
                 "https://img.dafont.com/preview_bitmap.php?text=Hola+mono&ttf=minecraft0&ext=1&size=12"
             )
         );
+    }
+
+    /// Con el contenido desplazado `scrolled` hacia arriba (la fila de arriba pintada en
+    /// `content`, vista por un scroll que muestra desde más abajo): el rect del logo, su recorte y
+    /// lo que se ve del scroll.
+    fn logo_clip(scrolled: f32) -> (Rect, Rect, Rect) {
+        let ctx = egui::Context::default();
+        let skin = crate::skin::Skin::embedded(&ctx);
+        let piece = skin.piece(LOGO, crate::skin::WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        ctx.set_fonts(crate::appearance::font_definitions(true));
+        crate::appearance::apply_style(&ctx, Some(skin.colors()));
+        crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
+        let content = Rect::from_min_size(egui::pos2(20.0, 20.0), vec2(REFERENCE_WIDTH, 500.0));
+        let viewport = content.with_min_y(content.min.y + scrolled);
+        let corner = egui::pos2(
+            content.right() + LOGO_OVERHANG,
+            content.top() - LOGO_OVERHANG,
+        );
+        let logo = Rect::from_min_size(corner - vec2(size.x, 0.0), size);
+        let mut panel = DafontPanel::default();
+        let mut clip = None;
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 1000.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                    ui.set_clip_rect(viewport);
+                    panel.top_row(ui, &mut Asked::default());
+                });
+            });
+            output.textures_delta.clear();
+            clip = output.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) => {
+                    let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
+                    (Rect::from_points(&points) == logo).then_some(c.clip_rect)
+                }
+                _ => None,
+            });
+        }
+        (logo, clip.expect("the logo"), viewport)
+    }
+
+    /// El logo sube hasta la luz del panel, por encima del contenido: el recorte del scroll del
+    /// dock, que empieza en el contenido, no le quita sus filas de arriba.
+    #[test]
+    fn the_logo_reaches_the_panel_edge_above_the_scroll_clip() {
+        let (logo, clip, _) = logo_clip(0.0);
+        assert!(clip.contains_rect(logo), "{logo:?} clipped by {clip:?}");
+    }
+
+    /// Con el contenido desplazado, el logo se recorta como lo demás: su recorte sube solo lo que
+    /// el logo sale del contenido, no se pinta sobre el marco del panel.
+    #[test]
+    fn a_scrolled_logo_is_clipped_like_the_rest() {
+        let (logo, clip, viewport) = logo_clip(5.0);
+        assert!(
+            clip.top() >= viewport.top() - LOGO_OVERHANG,
+            "{logo:?} clipped by {clip:?}, viewport {viewport:?}"
+        );
+    }
+
+    /// El panel a `width`, sin red: la lista con las dos fuentes de `LISTING` (la primera con una
+    /// vista previa de 500 × 24, más ancha que las tarjetas; la segunda sin vista previa y con un
+    /// autor largo), con lo que haga `setup` (el detalle, un error). Devuelve lo medido y la textura
+    /// de la vista previa.
+    fn panel_with(
+        width: f32,
+        setup: impl FnOnce(&mut DafontPanel),
+    ) -> (crate::forms::testing::Probe, egui::TextureId) {
+        let mut panel = DafontPanel::default();
+        let mut fonts = parse_listing(LISTING);
+        fonts[1].author = "Somebody With A Long Name".into();
+        panel.fonts = fonts;
+        panel.previews.insert("kiwisoda".into(), Preview::Failed);
+        setup(&mut panel);
+        let mut preview = None;
+        let probe = crate::forms::testing::run_at(width, |ui| {
+            if !panel.previews.contains_key("minecraft") {
+                let image = egui::ColorImage::filled([500, 24], Color32::RED);
+                let texture =
+                    ui.ctx()
+                        .load_texture("test_preview", image, egui::TextureOptions::NEAREST);
+                preview = Some(texture.id());
+                panel
+                    .previews
+                    .insert("minecraft".into(), Preview::Ready(texture));
+            }
+            panel.ui(ui);
+        });
+        (probe, preview.expect("the preview"))
+    }
+
+    /// La lista o, con `detail`, el detalle de la fuente pixel de la app.
+    fn panel_at(width: f32, detail: bool) -> (crate::forms::testing::Probe, egui::TextureId) {
+        panel_with(width, |panel| {
+            if detail {
+                panel.demo_detail(cs_tools::text::FontChoice::Pixel);
+            }
+        })
+    }
+
+    /// El logo del skin a `width`: en la esquina de arriba a la derecha del panel, contra su luz.
+    fn logo_at(width: f32) -> Rect {
+        let skin = crate::skin::Skin::embedded(&egui::Context::default());
+        let piece = skin.piece(LOGO, crate::skin::WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        let corner = egui::pos2(width + LOGO_OVERHANG, -LOGO_OVERHANG);
+        Rect::from_min_size(corner - vec2(size.x, 0.0), size)
+    }
+
+    /// De `MIN_WIDTH` para arriba, la lista y el detalle entran en el ancho del panel, en puntos
+    /// enteros y sin taparse: la fila de arriba se parte ("Sort by" y Submit bajan debajo de
+    /// Preview) antes de llegar al logo, que sigue arriba a la derecha; las tarjetas son del ancho
+    /// del panel, con la vista previa recortada en ellas y los botones adentro (debajo de las
+    /// descargas si no caben al lado); la licencia de la barra no tapa al autor. En el detalle el
+    /// campo de la muestra llega hasta el logo.
+    #[test]
+    fn the_dafont_panel_reflows_at_any_width() {
+        for width in [MIN_WIDTH, 300.0, REFERENCE_WIDTH, 600.0] {
+            let (probe, preview) = panel_at(width, false);
+            probe.assert_whole_px();
+            probe.assert_within(width);
+            probe.assert_no_overlap();
+            // El logo, arriba a la derecha; nada de la fila de arriba lo toca.
+            let logo = logo_at(width);
+            assert!(
+                probe.images.iter().any(|(_, r)| *r == logo),
+                "the logo at {logo:?} ({width})"
+            );
+            let field = probe.rect("Custom preview");
+            let submit = probe.rect("Submit");
+            let sort = probe.rect("Sort by");
+            for (name, r) in [("field", field), ("submit", submit), ("sort", sort)] {
+                assert!(
+                    !r.intersects(logo),
+                    "{name} {r:?} under the logo at {width}"
+                );
+            }
+            assert_eq!(field.width(), SAMPLE_W, "at {width}");
+            if width >= REFERENCE_WIDTH {
+                // Como en el diseño: todo en una fila.
+                assert_eq!(submit.bottom(), field.bottom(), "at {width}");
+                assert_eq!(sort.top(), probe.rect("Preview").top(), "at {width}");
+            } else {
+                assert!(
+                    submit.top() > field.bottom() && sort.top() > field.bottom(),
+                    "Sort by {sort:?} and Submit {submit:?} below {field:?} at {width}"
+                );
+                assert_eq!(sort.left(), 0.0, "at {width}");
+            }
+            // La vista previa, recortada en su tarjeta (del ancho del panel, sin la barra).
+            let shown: Vec<Rect> = probe
+                .images
+                .iter()
+                .filter(|(id, _)| *id == preview)
+                .map(|(_, r)| *r)
+                .collect();
+            assert_eq!(shown.len(), 1, "at {width}");
+            let card = width - SCROLL_GAP;
+            assert_eq!(shown[0].left(), IMAGE_PAD, "at {width}");
+            assert_eq!(
+                shown[0].width(),
+                500.0_f32.min(card - 2.0 * IMAGE_PAD),
+                "at {width}"
+            );
+            // Los botones de cada tarjeta, a su derecha; debajo de las descargas si no caben.
+            let downloads = probe.rect("5,204,307 downloads (5,642 yesterday)");
+            let buttons: Vec<Rect> = probe
+                .widgets
+                .iter()
+                .filter(|(n, _)| n == "View more")
+                .map(|(_, r)| *r)
+                .collect();
+            assert_eq!(buttons.len(), 2, "at {width}");
+            for view in &buttons {
+                assert_eq!(view.right(), card, "at {width}");
+            }
+            // El de la primera tarjeta (la de las descargas).
+            let use_font = probe
+                .widgets
+                .iter()
+                .filter(|(n, _)| n == "Use font")
+                .map(|(_, r)| *r)
+                .min_by(|a, b| a.top().total_cmp(&b.top()))
+                .expect("Use font");
+            assert_eq!(
+                use_font.right() + FIELD_GAP,
+                buttons[0].left().min(buttons[1].left())
+            );
+            // Al lado de las descargas si caben (161, su aire de 5 y los botones, 106).
+            if width > MIN_WIDTH {
+                assert_eq!(use_font.top(), downloads.top() - 1.0, "at {width}");
+            } else {
+                assert!(use_font.top() > downloads.bottom(), "at {width}");
+            }
+            // La licencia de una barra no tapa al autor ni al tamaño (sin lugar, no se pinta);
+            // desde el ancho del diseño, las dos caben.
+            let licenses = [("PUBLIC", "BY SOMEBODY"), ("100% FREE", "16PX")];
+            for (license, left_of_it) in licenses {
+                let (_, before) = probe.text(left_of_it);
+                let shown = probe.texts.iter().find(|(t, _)| t.starts_with(license));
+                if width >= REFERENCE_WIDTH {
+                    assert!(shown.is_some(), "{license} at {width}");
+                }
+                if let Some((_, r)) = shown {
+                    assert!(r.left() >= before.right(), "{r:?} {before:?} at {width}");
+                }
+            }
+
+            let (probe, _) = panel_at(width, true);
+            probe.assert_whole_px();
+            probe.assert_within(width);
+            probe.assert_no_overlap();
+            assert!(probe.images.iter().any(|(_, r)| *r == logo), "at {width}");
+            // La muestra llega hasta el logo, con su aire (en el diseño, 314).
+            let field = probe.rect("Custom preview");
+            assert_eq!(field.right(), logo.left() - 16.0, "at {width}");
+            assert!(!field.intersects(logo));
+            assert_eq!(probe.rect("Back").left(), 0.0, "at {width}");
+            assert_eq!(probe.rect("Use font").right(), width, "at {width}");
+            // Lo dibujado con la fuente, recortado en el panel.
+            for (_, r) in &probe.images {
+                assert!(r.right() <= width || *r == logo, "{r:?} past {width}");
+            }
+        }
+    }
+
+    /// La licencia de una barra se pinta en cuanto cabe sin encimarse con el autor (aunque quede
+    /// pegada a él) y, si no cabe, no.
+    #[test]
+    fn a_license_that_fits_is_painted() {
+        let (wide, _) = panel_at(600.0, false);
+        let (_, license) = wide.text("PUBLIC");
+        let (_, by) = wide.text("BY SOMEBODY");
+        let card = 600.0 - SCROLL_GAP;
+        assert_eq!(license.right().round(), card - HEADER_PAD, "{license:?}");
+        // El ancho del panel en que la licencia llega justo al autor.
+        let just = by.right() + license.width() + HEADER_PAD + SCROLL_GAP;
+        let painted = |width: f32| {
+            let (probe, _) = panel_at(width, false);
+            probe.texts.iter().any(|(t, _)| t.starts_with("PUBLIC"))
+        };
+        assert!(painted(just.ceil() + 1.0), "at {}", just.ceil() + 1.0);
+        assert!(!painted(just.floor() - 1.0), "at {}", just.floor() - 1.0);
+    }
+
+    /// Un error que no cabe se parte en líneas y Retry baja debajo; uno corto lleva Retry al lado.
+    #[test]
+    fn errors_wrap_and_retry_follows_them() {
+        let long = "Minecraft: the download isn't a zip with a .ttf or .otf font.";
+        for width in [MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
+            for error in ["Couldn't reach dafont.com.", long] {
+                let (probe, _) = panel_with(width, |panel| {
+                    panel.error = Some(error.into());
+                    panel.listing_failed = true;
+                });
+                probe.assert_whole_px();
+                probe.assert_within(width);
+                probe.assert_no_overlap();
+                let text = probe.rect(error);
+                let retry = probe.rect("Retry");
+                // Debajo de la línea grabada (que va a 1 fila del logo).
+                assert!(text.top() > logo_at(width).bottom(), "at {width}");
+                let fits = probe.text(error).1.height() <= 14.0;
+                assert_eq!(
+                    fits,
+                    error != long || width > MIN_WIDTH,
+                    "{error} at {width}"
+                );
+                if text.width() + ROW_GAP + retry.width() <= width {
+                    assert_eq!(retry.left(), text.right() + ROW_GAP, "at {width}");
+                    assert_eq!(retry.top(), text.top() - 1.0, "at {width}");
+                } else {
+                    assert!(retry.top() > text.bottom(), "{error} at {width}");
+                }
+            }
+        }
     }
 
     #[test]

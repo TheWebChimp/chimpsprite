@@ -37,6 +37,7 @@ mod font_overlay;
 mod font_panel;
 mod font_sheet_dialog;
 mod font_variant_dialog;
+mod forms;
 mod frame_dialog;
 mod gif_dialog;
 mod iso_dialog;
@@ -549,7 +550,7 @@ impl ChimpApp {
             }))
             .collect();
         let groom = &mut self.groom;
-        let width = groom::WIDTH;
+        let width = groom::REFERENCE_WIDTH;
         dock::flyout(
             ctx,
             dock::DockPanel::Groom,
@@ -635,7 +636,7 @@ impl ChimpApp {
             dock::DockPanel::Lumen,
             anchor,
             self.pixel.skin(),
-            lumen::WIDTH,
+            lumen::REFERENCE_WIDTH,
             true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| action = lumen.ui(ui));
@@ -687,7 +688,7 @@ impl ChimpApp {
             dock::DockPanel::Font,
             anchor,
             skin,
-            font_panel::WIDTH,
+            font_panel::REFERENCE_WIDTH,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
                     action = font_panel::show(ui, editor, skin, state);
@@ -720,7 +721,7 @@ impl ChimpApp {
             dock::DockPanel::Model,
             anchor,
             skin,
-            model_panel::WIDTH,
+            model_panel::REFERENCE_WIDTH,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
                     action = model_panel::show(ui, editor, skin, state);
@@ -762,7 +763,7 @@ impl ChimpApp {
             dock::DockPanel::Library,
             anchor,
             skin,
-            library_panel::WIDTH,
+            library_panel::REFERENCE_WIDTH,
             true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
@@ -842,7 +843,7 @@ impl ChimpApp {
             dock::DockPanel::Dafont,
             anchor,
             self.pixel.skin(),
-            dafont::WIDTH,
+            dafont::REFERENCE_WIDTH,
             true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| picked = dafont.ui(ui));
@@ -906,7 +907,7 @@ impl ChimpApp {
         self.doc
             .canvas
             .request_zoom(view::ZoomRequest::FitActiveBeside {
-                right_inset: dock::flyout_reach(font_panel::WIDTH),
+                right_inset: dock::flyout_reach(font_panel::REFERENCE_WIDTH),
             });
     }
 
@@ -1810,11 +1811,11 @@ impl ChimpApp {
             let state = &mut self.model_panel;
             egui::Panel::right("model_panel")
                 .resizable(false)
-                .exact_size(dock::fixed_panel_width(model_panel::WIDTH))
+                .exact_size(dock::fixed_panel_width(model_panel::REFERENCE_WIDTH))
                 .frame(dock_frame)
                 .show_separator_line(skin.is_none())
                 .show(ui, |ui| {
-                    dock::fixed_panel(ui, skin, model_panel::WIDTH, |ui| {
+                    dock::fixed_panel(ui, skin, model_panel::REFERENCE_WIDTH, |ui| {
                         ui.add_enabled_ui(!modal, |ui| {
                             model_action = model_panel::show(ui, editor, skin, state);
                         });

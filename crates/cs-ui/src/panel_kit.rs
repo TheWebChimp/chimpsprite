@@ -1,7 +1,7 @@
 //! Piezas de dibujo de los paneles grandes del dock (Groom, Lumen): notas en small caps, cajas
 //! de doble línea con la esquina en escalón e hijos en un rectángulo.
 
-use eframe::egui::{self, Color32, Rect, Sense, Ui, pos2};
+use eframe::egui::{self, Color32, Rect, Sense, Ui, pos2, vec2};
 
 use crate::pixel_ui;
 
@@ -12,6 +12,47 @@ pub(crate) fn hint(ui: &mut Ui, text: &str) {
     let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
     let color = hint_color(ui);
     ui.painter().galley(rect.min, galley, color);
+}
+
+/// Una nota (`hint`) de lo más ancha `width`: si no cabe, en varias líneas.
+pub(crate) fn hint_wrapped(ui: &mut Ui, text: &str, width: f32) {
+    let one_line = hint_galley(ui, text);
+    let galley = if one_line.size().x <= width {
+        one_line
+    } else {
+        let mut job = egui::text::LayoutJob::simple(
+            text.to_uppercase(),
+            one_line.job.sections[0].format.font_id.clone(),
+            hint_color(ui),
+            width.max(1.0),
+        );
+        job.wrap.break_anywhere = false;
+        ui.painter().layout_job(job)
+    };
+    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    let color = hint_color(ui);
+    ui.painter().galley(rect.min, galley, color);
+}
+
+/// Un texto como el de `egui::Label` con `wrap` (en varias líneas si no cabe en el ancho de `ui`),
+/// pero en puntos enteros: su rect llega al punto de arriba (el de egui medía lo que mide el texto,
+/// con fracciones). A propósito no emite nodos `TextRun` ni se puede seleccionar: es texto de
+/// ayuda (los lectores de pantalla lo leen como una etiqueta).
+pub(crate) fn text_wrapped(ui: &mut Ui, text: &str) {
+    let color = ui.visuals().text_color();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = ui.available_width().max(1.0);
+    let galley = ui.painter().layout(text.to_string(), font, color, width);
+    let (rect, response) = ui.allocate_exact_size(galley.size().ceil(), Sense::hover());
+    let info = label_info(ui, text);
+    response.widget_info(|| info.clone());
+    ui.painter().galley(rect.min, galley, color);
+}
+
+/// Lo que los lectores de pantalla saben de una etiqueta con `text` en `ui`: deshabilitada si
+/// `ui` lo está.
+pub(crate) fn label_info(ui: &Ui, text: &str) -> egui::WidgetInfo {
+    egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text)
 }
 
 /// Entre la tinta de un texto y su nota.
@@ -125,4 +166,14 @@ pub(crate) fn double_box(ui: &Ui, rect: Rect) {
     let mut shapes = notched_outline(rect, color, 2.0);
     shapes.extend(notched_outline(rect.shrink(2.0), color, 1.0));
     ui.painter().extend(shapes);
+}
+
+/// Una fila como la de `ui.horizontal` (del alto de los campos de egui) con lo que tiene abajo:
+/// los controles del kit (de 17) quedan en puntos enteros, donde ya se pintaban (centrados en la
+/// fila de 18 quedaban a medio punto y el kit los pintaba redondeados hacia abajo). Los campos
+/// numéricos se ponen solos arriba, a la altura de los de la barra.
+pub(crate) fn row_bottom<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let size = vec2(ui.available_width(), ui.spacing().interact_size.y);
+    let bottom = egui::Layout::left_to_right(egui::Align::Max);
+    ui.allocate_ui_with_layout(size, bottom, add).inner
 }
