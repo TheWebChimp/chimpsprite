@@ -31,6 +31,23 @@ pub(crate) fn form(
         .show(add);
 }
 
+/// Una [`form`] en el flujo de `ui` (una fila entre títulos de egui), en puntos enteros aunque
+/// el cursor no lo esté: se arma desde el cursor redondeado y en `ui` ocupa su alto desde el
+/// cursor, como cualquier widget (lo que sigue queda donde quedaría).
+pub(crate) fn form_in_flow(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    gap: f32,
+    add: impl FnOnce(&mut Tui),
+) {
+    let mut rect = ui.available_rect_before_wrap();
+    rect.min = rect.min.round();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    form(&mut child, id, gap, add);
+    let size = vec2(rect.width().floor(), child.min_rect().height());
+    ui.allocate_exact_size(size, egui::Sense::hover());
+}
+
 /// El mismo `gap` entre filas y entre columnas.
 fn gap_of(gap: f32) -> Size<LengthPercentage> {
     Size {
@@ -53,6 +70,15 @@ pub(crate) fn row(gap: f32) -> Style {
     Style {
         flex_wrap: FlexWrap::Wrap,
         ..row_nowrap(gap)
+    }
+}
+
+/// Como [`row`], con los hijos al final (a la derecha) de su fila: una fila de botones que
+/// termina con el panel; si no caben, los que sobran siguen en la de abajo, también a la derecha.
+pub(crate) fn row_end(gap: f32) -> Style {
+    Style {
+        justify_content: Some(JustifyContent::FlexEnd),
+        ..row(gap)
     }
 }
 

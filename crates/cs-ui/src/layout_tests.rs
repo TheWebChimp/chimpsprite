@@ -8770,7 +8770,7 @@ fn the_3d_panel_of_the_model_tab_sits_between_the_workspace_and_the_colors() {
     assert_eq!(colors.left() - panel.right(), 3.0);
     assert_eq!(
         panel.width(),
-        crate::model_panel::WIDTH + 2.0 * crate::dock::FLYOUT_MARGIN as f32
+        crate::model_panel::REFERENCE_WIDTH + 2.0 * crate::dock::FLYOUT_MARGIN as f32
     );
     // Sin pestaña: la caja no pasa de su borde derecho.
     let boxes = union(&h.drawn("menu.side")).expect("the panel box");

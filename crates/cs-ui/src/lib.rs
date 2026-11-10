@@ -721,7 +721,7 @@ impl ChimpApp {
             dock::DockPanel::Model,
             anchor,
             skin,
-            model_panel::WIDTH,
+            model_panel::REFERENCE_WIDTH,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
                     action = model_panel::show(ui, editor, skin, state);
@@ -1811,11 +1811,11 @@ impl ChimpApp {
             let state = &mut self.model_panel;
             egui::Panel::right("model_panel")
                 .resizable(false)
-                .exact_size(dock::fixed_panel_width(model_panel::WIDTH))
+                .exact_size(dock::fixed_panel_width(model_panel::REFERENCE_WIDTH))
                 .frame(dock_frame)
                 .show_separator_line(skin.is_none())
                 .show(ui, |ui| {
-                    dock::fixed_panel(ui, skin, model_panel::WIDTH, |ui| {
+                    dock::fixed_panel(ui, skin, model_panel::REFERENCE_WIDTH, |ui| {
                         ui.add_enabled_ui(!modal, |ui| {
                             model_action = model_panel::show(ui, editor, skin, state);
                         });

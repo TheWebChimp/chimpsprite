@@ -17,6 +17,7 @@ use eframe::egui::{
 use crate::dock::FLYOUT_MARGIN;
 use crate::editor::{CadMode, Editor, Row, wrap_angle};
 use crate::font_panel::lit_line;
+use crate::forms::{self, TuiBuilderLogic as _};
 use crate::kit;
 use crate::menus;
 use crate::panel_kit::label_with_hint;
@@ -28,8 +29,18 @@ pub(crate) mod outliner;
 
 pub use outliner::OutlinerState;
 
-/// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
-pub const WIDTH: f32 = 227.0;
+/// Ancho de adentro del panel (sin su marco) del diseño: el contenido y la barra del scroll. Con
+/// él se abre (adentro todo sale del ancho disponible).
+pub const REFERENCE_WIDTH: f32 = 227.0;
+/// Lo más angosto en que se ve bien (medido): "Texture Size" todavía cabe en su columna (los 3/8
+/// de la derecha de la fila) y el select de la textura muestra su nombre. Más angosto que el de
+/// referencia se parten las filas: por debajo de 217, la de la cámara (los presets bajan), la de
+/// las ventanas y la de los botones del objeto; por debajo de 211, Pitch baja debajo de Yaw.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+)]
+pub const MIN_WIDTH: f32 = 200.0;
 /// El encabezado del outliner, 5 filas debajo de la línea que parte el panel (3 de aire después
 /// de sus dos filas), sobre su propia línea grabada a [`kit::tabs::HEIGHT`] (donde estaba la
 /// tira de pestañas).
@@ -46,11 +57,14 @@ const SPLIT: f32 = 197.0 / 408.0;
 /// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
 /// De la línea del encabezado del outliner a la fila de botones del objeto:
-/// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es media fila más alta
-/// que ellos y los centra: el botón cae (redondeado) una fila más abajo.
-const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - 1.0;
+/// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es una fila más alta
+/// que ellos ([`BUTTONS_DROP`] arriba de los botones).
+const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - BUTTONS_DROP;
+const BUTTONS_DROP: f32 = 1.0;
 /// Entre una cosa y otra del medio.
 const ITEM_GAP: f32 = 4.0;
+/// Entre las líneas de una fila que no cabe en una.
+const ROW_GAP: f32 = ITEM_GAP;
 /// Como el boceto: la fila de los modos, 12 filas debajo de lo alto de la caja (2 más que el
 /// aire de arriba), y de ella a la fila de la textura, 42.
 const MODE_ROW_AIR: f32 = 2.0;
@@ -78,6 +92,12 @@ const ROW_END_GAP: f32 = 4.0;
 /// El título se acerca a su fila: egui deja debajo de la letra su aire y el de [`ITEM_GAP`], y el
 /// boceto pone 4 filas de la letra a la fila (y 10 de la fila al título que sigue).
 const TITLE_PULL: f32 = 7.0;
+/// Los títulos de la textura van en la forma de su fila (cada uno arriba de su select): de lo alto
+/// de los títulos a la fila, lo mismo que deja un título de egui con [`TITLE_PULL`] (la letra, 2
+/// filas abajo de lo alto, y la fila 4 filas debajo de la letra, como el boceto).
+const TITLE_ROW: f32 = 16.0;
+/// Lo más angosto de un stepper de la luz: los botones y un valor de tres cifras.
+const STEPPER_MIN: f32 = 48.0;
 
 /// La fila de la luz (como el boceto): de la casilla Light a "Yaw", y de cada etiqueta a su
 /// stepper; entre el stepper de Yaw y "Pitch", [`PAIR_GAP`].
@@ -183,7 +203,13 @@ pub fn show(
     } else {
         let split = split_row(outer);
         let top = Rect::from_x_y_ranges(inner.x_range(), inner.top()..=split);
+        // Las filas de las dos mitades, del ancho del panel sin la barra del scroll y su aire
+        // (haya barra o no: así no saltan cuando aparece).
+        let rows = (inner.width() - pixel_ui::SCROLL_BAR - ROW_END_GAP)
+            .floor()
+            .max(0.0);
         let action = scrolled(ui, "model_panel_general", top, reopened, |ui| {
+            ui.set_max_width(rows);
             ui.spacing_mut().item_spacing.y = ITEM_GAP;
             general(ui, editor, skin)
         });
@@ -194,12 +220,12 @@ pub fn show(
             line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
         );
         scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
+            ui.set_max_width(rows);
             ui.spacing_mut().item_spacing.y = ITEM_GAP;
             // La fila de botones del objeto y, debajo, el outliner.
             object_buttons(ui, editor, skin);
             ui.add_space(ITEM_GAP);
-            let width = row_width(ui);
-            outliner::show(ui, editor, skin, &mut state.outliner, width);
+            outliner::show(ui, editor, skin, &mut state.outliner, rows);
         });
         action
     };
@@ -291,30 +317,61 @@ fn header(
         Some(skin) => {
             let top = split + TABS_TOP;
             let line = top + kit::tabs::HEIGHT;
-            // El +, al final de la fila, y antes New group y Duplicate (del mismo tamaño).
-            let plus = Rect::from_min_size(
-                pos2(inner.right() - PLUS_W, top + PLUS_TOP),
-                Vec2::splat(PLUS_W),
+            let id = ui.id();
+            let ids = (
+                id.with("model_new_group"),
+                id.with("model_duplicate_object"),
             );
-            let step = vec2(-(PLUS_W + PLUS_GAP), 0.0);
-            let folder = plus.translate(step);
-            let copy = folder.translate(step);
-            added = add_menu::plus_button(ui, skin, plus, state);
-            let id = ui.id().with("model_new_group");
-            let icon = "icon.outliner.new_group";
-            let response = kit::button::icon_button_at(ui, skin, folder, id, icon, "New group");
-            new_group = pixel_ui::bubble_tooltip(response, skin, "New group").clicked();
-            duplicate = duplicate_button(ui, skin, copy, can_duplicate, group);
-            // "Outliner", con las mayúsculas centradas con los botones.
             let colors = skin.colors();
             let font = egui::TextStyle::Body.resolve(ui.style());
-            let painter = ui.painter();
-            let galley = painter.layout_no_wrap("Outliner".to_owned(), font, colors.text);
+            let galley = ui
+                .painter()
+                .layout_no_wrap("Outliner".to_owned(), font, colors.text);
             let ppp = ui.ctx().pixels_per_point();
-            let at = crate::tab_bar::text_pos(&galley, inner.left(), top + HEADER_CAPS, ppp);
-            painter.galley(at, galley, colors.text);
+            // "Outliner" al principio de la fila y, al final, Duplicate, New group y el + (del
+            // mismo tamaño).
+            let row = Rect::from_x_y_ranges(inner.x_range(), top..=line);
+            let mut header = ui.new_child(UiBuilder::new().max_rect(row));
+            forms::form(&mut header, "model_outliner_header", 0.0, |tui| {
+                tui.style(forms::row_nowrap(0.0)).add(|tui| {
+                    let title = forms::fixed(galley.size().x.ceil(), kit::tabs::HEIGHT);
+                    forms::canvas(tui, title, |ui| {
+                        // Con las mayúsculas centradas con los botones.
+                        let left_top = ui.max_rect().min;
+                        let caps = left_top.y + HEADER_CAPS;
+                        let at = crate::tab_bar::text_pos(&galley, left_top.x, caps, ppp);
+                        ui.painter().galley(at, galley, colors.text);
+                    });
+                    let buttons = forms::group(PLUS_GAP);
+                    let buttons = forms::push_right(forms::air_above(PLUS_TOP, buttons));
+                    tui.style(buttons).add(|tui| {
+                        let button = || forms::fixed(PLUS_W, PLUS_W);
+                        duplicate = tui.style(button()).ui(|ui| {
+                            let rect = ui.max_rect();
+                            duplicate_button(ui, skin, rect, ids.1, can_duplicate, group)
+                        });
+                        new_group = tui.style(button()).ui(|ui| {
+                            let (rect, icon) = (ui.max_rect(), "icon.outliner.new_group");
+                            let response = kit::button::icon_button_at(
+                                ui,
+                                skin,
+                                rect,
+                                ids.0,
+                                icon,
+                                "New group",
+                            );
+                            pixel_ui::bubble_tooltip(response, skin, "New group").clicked()
+                        });
+                        added = tui.style(button()).ui(|ui| {
+                            let rect = ui.max_rect();
+                            add_menu::plus_button(ui, skin, rect, state)
+                        });
+                    });
+                });
+            });
             let x = outer.x_range().shrink(1.0);
-            painter.add(pixel_ui::etched_hline(x, line, colors, ppp));
+            ui.painter()
+                .add(pixel_ui::etched_hline(x, line, colors, ppp));
             line
         }
         None => {
@@ -346,11 +403,17 @@ fn header(
     line
 }
 
-/// Duplicate en `rect`, junto a New group: un botón del kit con el ícono de copiar (`icon.copy`)
-/// y su tooltip (con el atajo; "group" con un grupo activo); deshabilitado sin nada que
-/// duplicar. Devuelve si se apretó.
-fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool, group: bool) -> bool {
-    let id = ui.id().with("model_duplicate_object");
+/// Duplicate en `rect` (con el id `id`), junto a New group: un botón del kit con el ícono de
+/// copiar (`icon.copy`) y su tooltip (con el atajo; "group" con un grupo activo); deshabilitado
+/// sin nada que duplicar. Devuelve si se apretó.
+fn duplicate_button(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    id: egui::Id,
+    enabled: bool,
+    group: bool,
+) -> bool {
     let shortcut = crate::keymap::label(ui.ctx(), crate::keymap::Action::DuplicateObject);
     let what = if group {
         "Duplicate group"
@@ -389,32 +452,67 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let faces = !editor.selected_faces().is_empty();
     let packable = editor.can_pack_uvs();
     let locked = editor.texture_layers_locked();
-    let (mut rotate, mut flip_h, mut flip_v, mut pack) = (false, false, false, false);
-    ui.horizontal(|ui| {
-        ui.add_enabled_ui(faces, |ui| {
-            rotate = button(ui, skin, "Rotate 90°").clicked();
-            flip_h = button(ui, skin, "Flip H").clicked();
-            flip_v = button(ui, skin, "Flip V").clicked();
-        });
-        ui.add_enabled_ui(packable, |ui| {
-            let b = button(ui, skin, "Pack UVs");
-            let b = if locked {
-                b.on_disabled_hover_text("Unlock the texture layers to pack")
-            } else {
-                b
-            };
-            pack = b.clicked();
+    let unlock = locked.then_some("Unlock the texture layers to pack");
+    let buttons = [
+        ("Rotate 90°", faces, None),
+        ("Flip H", faces, None),
+        ("Flip V", faces, None),
+        ("Pack UVs", packable, unlock),
+    ];
+    match object_row(ui, skin, "model_uv_buttons", &buttons) {
+        Some(0) => {
+            editor.rotate_selected_uvs();
+        }
+        Some(i @ (1 | 2)) => {
+            editor.flip_selected_uvs(i == 1);
+        }
+        Some(3) => {
+            editor.pack_uvs();
+        }
+        _ => {}
+    }
+}
+
+/// Una fila de botones del objeto (cada uno con su texto, si está habilitado y lo que dice su
+/// tooltip deshabilitado), de izquierda a derecha con el aire de entre botones de egui; los que
+/// no caben siguen en la línea de abajo. Devuelve el que se apretó.
+fn object_row(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    id: &str,
+    buttons: &[(&str, bool, Option<&str>)],
+) -> Option<usize> {
+    let gap = ui.spacing().item_spacing.x;
+    let sizes: Vec<forms::Style> = buttons
+        .iter()
+        .map(|&(label, ..)| match skin {
+            Some(_) => forms::fixed(kit::button::width(ui, label), kit::button::HEIGHT),
+            None => forms::natural(),
+        })
+        .collect();
+    let mut clicked = None;
+    forms::form_in_flow(ui, id, 0.0, |tui| {
+        let row = forms::air_above(BUTTONS_DROP, forms::row_lines(ROW_GAP));
+        tui.style(row).add(|tui| {
+            for (i, (&(label, on, hint), size)) in buttons.iter().zip(sizes).enumerate() {
+                let pressed = tui.style(forms::air_right(gap, size)).ui(|ui| {
+                    ui.add_enabled_ui(on, |ui| {
+                        let b = button(ui, skin, label);
+                        match hint {
+                            Some(hint) => b.on_disabled_hover_text(hint),
+                            None => b,
+                        }
+                        .clicked()
+                    })
+                    .inner
+                });
+                if pressed {
+                    clicked = Some(i);
+                }
+            }
         });
     });
-    if rotate {
-        editor.rotate_selected_uvs();
-    }
-    if flip_h || flip_v {
-        editor.flip_selected_uvs(flip_h);
-    }
-    if pack {
-        editor.pack_uvs();
-    }
+    clicked
 }
 
 /// Lo del objeto elegido, en modo Model: Extrude, Subdivide, Merge y Delete (cada uno
@@ -430,19 +528,12 @@ fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
         editor.can_delete_from_panel(),
     ];
     let labels = ["Extrude", "Subdivide", "Merge", "Delete"];
-    let mut clicked = None;
-    ui.horizontal(|ui| {
-        for (i, (label, on)) in labels.into_iter().zip(enabled).enumerate() {
-            if ui
-                .add_enabled_ui(on, |ui| button(ui, skin, label))
-                .inner
-                .clicked()
-            {
-                clicked = Some(i);
-            }
-        }
-    });
-    match clicked {
+    let buttons: Vec<_> = labels
+        .into_iter()
+        .zip(enabled)
+        .map(|(l, on)| (l, on, None))
+        .collect();
+    match object_row(ui, skin, "model_topology_buttons", &buttons) {
         Some(0) => editor.request_extrude(),
         Some(1) => {
             editor.subdivide_model_selection();
@@ -457,39 +548,27 @@ fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes.
-fn row_width(ui: &Ui) -> f32 {
-    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - ROW_END_GAP).floor()
-}
-
-/// El lugar de una fila de selects (y botones) de `width`, en puntos enteros. Sin el aire de entre
-/// filas arriba (egui centra las filas en una más baja): queda a 4 filas de la letra de su título
-/// y a 10 del título que sigue, como el boceto.
-fn row_rect(ui: &mut Ui, width: f32) -> Rect {
+/// Una fila de lo general (la forma `id`, de lado a lado de las filas), en el lugar de un widget
+/// de [`kit::select::HEIGHT`] sin el aire de entre filas arriba (egui centra las filas en una más
+/// baja): queda a 4 filas de la letra de su título y a 10 del título que sigue, como el boceto.
+/// Si lo de adentro no cabe en una línea, es más alta.
+fn row_form(ui: &mut Ui, id: &str, add: impl FnOnce(&mut forms::Tui)) {
     ui.add_space(-ui.spacing().item_spacing.y);
-    let (slot, _) = ui.allocate_exact_size(vec2(width, kit::select::HEIGHT), Sense::hover());
-    Rect::from_min_size(slot.min.round(), slot.size())
+    forms::form_in_flow(ui, id, 0.0, add);
 }
 
-/// Lo que agregue `add_contents` de izquierda a derecha (centrado a lo alto) en una fila de
-/// [`row_rect`]: con el mismo ritmo que las de los selects, aunque lo de adentro sea más bajo o
-/// más alto.
-fn in_row<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
-    let row = row_rect(ui, row_width(ui));
-    let layout = egui::Layout::left_to_right(egui::Align::Center);
-    let mut child = ui.new_child(UiBuilder::new().max_rect(row).layout(layout));
-    add_contents(&mut child)
-}
-
-/// Dos títulos en una fila: `left` al principio (en `ui`, como cualquier título) y `right` a la
-/// misma altura en la columna `column` (desde el principio de la fila), en su propio `Ui`.
-fn pair_labels(ui: &mut Ui, (left, right): (&str, &str), column: f32) {
-    let at = ui.cursor().min + vec2(column, 0.0);
-    let rect = Rect::from_min_size(at, vec2((ui.available_width() - column).max(0.0), 0.0));
-    let mut second = ui.new_child(UiBuilder::new().max_rect(rect));
-    label_with_hint(&mut second, right, "");
-    label_with_hint(ui, left, "");
-    ui.add_space(-TITLE_PULL);
+/// Una etiqueta del alto de su hoja (la de `ui`), con la letra centrada a lo alto como la deja
+/// `ui.label` en una fila de egui.
+fn row_label(ui: &mut Ui, text: &str) {
+    let rect = ui.max_rect();
+    let response = ui.allocate_rect(rect, Sense::hover());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, enabled, text));
+    let color = ui.visuals().text_color();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+    ui.painter().galley(at, galley, color);
 }
 
 /// Lo que pide el select de Texture Size: achicar la textura dejando UVs fuera lo confirma la app
@@ -544,38 +623,52 @@ fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     match skin {
         Some(skin) => {
             ui.add_space(MODE_ROW_AIR);
-            let row = row_rect(ui, row_width(ui));
             let id = ui.id();
+            let label_w = label_width(ui, "Grid");
+            let tile = forms::fixed(kit::tile::SIZE.x, kit::tile::SIZE.y);
+            let tile = forms::air_right(MODE_PITCH - kit::tile::SIZE.x, tile);
+            let tile = forms::air_above(MODE_TOP, tile);
+            let h = kit::select::HEIGHT;
             ui.add_enabled_ui(enabled, |ui| {
-                for (k, mode) in cs_3d::SelectMode::ALL.into_iter().enumerate() {
-                    let at = pos2(row.left() + k as f32 * MODE_PITCH, row.top() + MODE_TOP);
-                    let tile = id.with(("model_select_mode", k));
-                    let on = current == mode;
-                    let icon = mode_icon(mode);
-                    if kit::tile::tile_toggle_at(ui, skin, at, tile, icon, mode.label(), on)
-                        .clicked()
-                    {
-                        picked = Some(mode);
-                    }
-                }
-                let field = Rect::from_min_max(pos2(row.right() - GRID_W, row.top()), row.max);
-                let w = label_width(ui, "Grid");
-                let label = Rect::from_min_max(
-                    pos2(field.left() - LABEL_GAP - w, row.top()),
-                    pos2(field.left() - LABEL_GAP, row.bottom()),
-                );
-                let layout = egui::Layout::left_to_right(egui::Align::Center);
-                ui.new_child(UiBuilder::new().max_rect(label).layout(layout))
-                    .label("Grid");
-                kit::select::select_at(
-                    ui,
-                    skin,
-                    field,
-                    id.with("model_grid"),
-                    grid_label(grid),
-                    list,
-                );
+                row_form(ui, "model_mode_row", |tui| {
+                    tui.style(forms::row_lines(ROW_GAP)).add(|tui| {
+                        for (k, mode) in cs_3d::SelectMode::ALL.into_iter().enumerate() {
+                            let clicked = tui.style(tile.clone()).ui(|ui| {
+                                let at = ui.max_rect().min;
+                                let tile_id = id.with(("model_select_mode", k));
+                                let (icon, on) = (mode_icon(mode), current == mode);
+                                let label = mode.label();
+                                kit::tile::tile_toggle_at(ui, skin, at, tile_id, icon, label, on)
+                                    .clicked()
+                            });
+                            if clicked {
+                                picked = Some(mode);
+                            }
+                        }
+                        // "Grid" y su select, al final de la fila.
+                        let field = forms::push_right(forms::group(LABEL_GAP));
+                        tui.style(field).add(|tui| {
+                            tui.style(forms::fixed(label_w, h))
+                                .ui(|ui| row_label(ui, "Grid"));
+                            tui.style(forms::fixed(GRID_W, h)).ui(|ui| {
+                                let rect = ui.max_rect();
+                                let shown = grid_label(grid);
+                                kit::select::select_at(
+                                    ui,
+                                    skin,
+                                    rect,
+                                    id.with("model_grid"),
+                                    shown,
+                                    list,
+                                );
+                            });
+                        });
+                    });
+                });
             });
+            // Y el aire de entre filas otra vez: de la fila de los modos a la de la textura, lo
+            // del boceto.
+            ui.add_space(ui.spacing().item_spacing.y);
         }
         None => {
             ui.add_enabled_ui(enabled, |ui| {
@@ -611,29 +704,42 @@ fn button(ui: &mut Ui, skin: Option<&Skin>, label: &str) -> egui::Response {
     }
 }
 
-/// Un ángulo de la luz: la etiqueta y, a [`LABEL_GAP`], el stepper de `width`. Un valor fuera de
-/// `range` se muestra en el borde pero solo se escribe si el usuario lo cambia (el stepper no lo
-/// recorta solo).
+/// Un ángulo de la luz en `tui` (una hoja que crece con su fila, con `air` a la derecha): la
+/// etiqueta (de `label_w`) y, a [`LABEL_GAP`], el stepper, que se lleva lo que sobre;
+/// deshabilitados si no `enabled`. Un valor fuera de `range` se muestra en el borde pero solo se escribe si el usuario
+/// lo cambia (el stepper no lo recorta solo).
 fn angle_cell(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    width: f32,
-    (label, value): (&str, &mut i32),
+    tui: &mut forms::Tui,
+    skin: &Skin,
+    (label, label_w, air): (&str, f32, f32),
+    enabled: bool,
+    value: &mut i32,
     range: std::ops::RangeInclusive<i32>,
 ) {
-    ui.label(label);
-    ui.add_space(LABEL_GAP);
-    let id = format!("light_{label}");
+    let h = kit::stepper::HEIGHT;
+    let cell = forms::grow_auto(label_w + LABEL_GAP + STEPPER_MIN, label_w + LABEL_GAP);
+    let cell = forms::air_right(air, cell);
+    tui.style(cell).add(|tui| {
+        tui.style(forms::air_right(LABEL_GAP, forms::fixed(label_w, h)))
+            .ui(|ui| ui.add_enabled_ui(enabled, |ui| row_label(ui, label)));
+        tui.style(forms::grow(STEPPER_MIN, 0.0, None, h)).ui(|ui| {
+            let width = ui.max_rect().width();
+            ui.add_enabled_ui(enabled, |ui| {
+                let id = format!("light_{label}");
+                edit_angle(value, range.clone(), |v| {
+                    kit::stepper::stepper(ui, skin, width, &id, v, range, 1, None);
+                });
+            });
+        });
+    });
+}
+
+/// Un ángulo de `value` en `range` que se edita con `edit`: un valor fuera se muestra en el borde
+/// pero solo se escribe si el usuario lo cambia.
+fn edit_angle(value: &mut i32, range: std::ops::RangeInclusive<i32>, edit: impl FnOnce(&mut i32)) {
     let shown = (*value).clamp(*range.start(), *range.end());
     let mut v = shown;
-    match skin {
-        Some(skin) => {
-            kit::stepper::stepper(ui, skin, width, &id, &mut v, range, 1, None);
-        }
-        None => {
-            ui.add(egui::DragValue::new(&mut v).range(range));
-        }
-    }
+    edit(&mut v);
     if v != shown {
         *value = v;
     }
@@ -675,9 +781,6 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     let current = editor.edited_model().map(|m| m.texture)?;
     ui.add_space(TEXTURE_AIR);
-    let row_w = row_width(ui);
-    let column = (row_w * RIGHT_COLUMN).round();
-    pair_labels(ui, ("Texture", "Texture Size"), column);
     let options: Vec<(cs_core::ArtboardId, String)> = editor
         .document
         .artboards
@@ -728,33 +831,65 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
     };
     let new = match skin {
         Some(skin) => {
-            let row = row_rect(ui, row_w);
             let id = ui.id();
-            // New, pegado al select: comparten la columna del borde. Va primero, así el borde del
-            // select queda encima (como en el boceto).
-            let end = row.left() + column - COLUMN_GAP;
+            // La columna de la derecha, a 5/8 de la fila.
+            let column = (ui.available_width().floor() * RIGHT_COLUMN).round();
             let new_w = kit::button::width(ui, "New");
-            let new_rect =
-                Rect::from_min_max(pos2(end - new_w, row.top()), pos2(end, row.bottom()));
-            let new_id = id.with("model_texture_new");
-            let new = kit::button::button_at(ui, skin, new_rect, new_id, "New").clicked();
-            let field = Rect::from_min_max(row.min, pos2(new_rect.left() + 1.0, row.bottom()));
-            kit::select::select_at(ui, skin, field, id.with("model_texture"), &shown, list);
-            let size_rect = Rect::from_min_max(pos2(row.left() + column, row.top()), row.max);
-            // En su propio `Ui` (deshabilitado sin textura), que no ocupa lugar en la columna.
-            let mut column_ui = ui.new_child(UiBuilder::new().max_rect(size_rect));
-            column_ui.add_enabled_ui(size.is_some(), |ui| {
-                let size_id = id.with("model_texture_size");
-                kit::select::select_at(ui, skin, size_rect, size_id, &size_shown, sides);
+            let left = |h| forms::fixed(column - COLUMN_GAP, h);
+            let right = |h| forms::grow(0.0, 0.0, None, h);
+            let h = kit::select::HEIGHT;
+            let mut new = false;
+            forms::form_in_flow(ui, "model_texture_row", 0.0, |tui| {
+                // Cada título arriba de su select.
+                tui.style(forms::row_nowrap(COLUMN_GAP)).add(|tui| {
+                    forms::canvas(tui, left(TITLE_ROW), |ui| {
+                        label_with_hint(ui, "Texture", "")
+                    });
+                    let title = |ui: &mut Ui| label_with_hint(ui, "Texture Size", "");
+                    forms::canvas(tui, right(TITLE_ROW), title);
+                });
+                tui.style(forms::row_nowrap(COLUMN_GAP)).add(|tui| {
+                    new = forms::canvas(tui, left(h), |ui| {
+                        // New, pegado al select: comparten la columna del borde. Va primero, así
+                        // el borde del select queda encima (como en el boceto).
+                        let row = ui.max_rect();
+                        let new_rect =
+                            Rect::from_min_max(pos2(row.right() - new_w, row.top()), row.max);
+                        let new_id = id.with("model_texture_new");
+                        let new = kit::button::button_at(ui, skin, new_rect, new_id, "New");
+                        let field =
+                            Rect::from_min_max(row.min, pos2(new_rect.left() + 1.0, row.bottom()));
+                        kit::select::select_at(
+                            ui,
+                            skin,
+                            field,
+                            id.with("model_texture"),
+                            &shown,
+                            list,
+                        );
+                        new.clicked()
+                    });
+                    forms::canvas(tui, right(h), |ui| {
+                        let rect = ui.max_rect();
+                        // Deshabilitado sin textura.
+                        ui.add_enabled_ui(size.is_some(), |ui| {
+                            let size_id = id.with("model_texture_size");
+                            kit::select::select_at(ui, skin, rect, size_id, &size_shown, sides);
+                        });
+                    });
+                });
             });
             new
         }
         None => {
+            label_with_hint(ui, "Texture", "");
+            ui.add_space(-TITLE_PULL);
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("model_texture")
                     .selected_text(&shown)
                     .show_ui(ui, list);
                 let new = pixel_ui::text_button(ui, "New").clicked();
+                ui.label("Texture Size");
                 ui.add_enabled_ui(size.is_some(), |ui| {
                     egui::ComboBox::from_id_salt("model_texture_size")
                         .selected_text(&size_shown)
@@ -781,22 +916,38 @@ fn camera_row(
     shown: &str,
     list: impl FnOnce(&mut Ui),
 ) -> Option<CameraPreset> {
-    let row_w = row_width(ui);
     match skin {
         Some(skin) => {
             let items = PRESETS.map(|(label, _)| kit::group::GroupItem::text(label));
-            let row = row_rect(ui, row_w);
-            let at = pos2(
-                (row.right() - kit::group::width(ui, &items)).round(),
-                row.top(),
-            );
-            let field = Rect::from_min_max(row.min, pos2(at.x - COLUMN_GAP, row.bottom()));
+            let presets_w = kit::group::width(ui, &items);
+            // El select, de lo que dice para arriba.
+            let field_min = kit::select::width(ui, shown);
             let id = ui.id();
-            kit::select::select_at(ui, skin, field, id.with("model_projection"), shown, list);
-            let painter = ui.painter().clone();
-            let presets = id.with("model_camera_presets");
-            kit::group::button_group_at(ui, skin, &painter, presets, at, &items, &|_| false)
-                .map(|i| PRESETS[i].1)
+            let h = kit::select::HEIGHT;
+            let mut picked = None;
+            row_form(ui, "model_camera_row", |tui| {
+                tui.style(forms::row_end(COLUMN_GAP)).add(|tui| {
+                    tui.style(forms::grow(field_min, 0.0, None, h)).ui(|ui| {
+                        let rect = ui.max_rect();
+                        let field = id.with("model_projection");
+                        kit::select::select_at(ui, skin, rect, field, shown, list);
+                    });
+                    picked = tui.style(forms::fixed(presets_w, h)).ui(|ui| {
+                        let painter = ui.painter().clone();
+                        let (presets, at) = (id.with("model_camera_presets"), ui.max_rect().min);
+                        kit::group::button_group_at(
+                            ui,
+                            skin,
+                            &painter,
+                            presets,
+                            at,
+                            &items,
+                            &|_| false,
+                        )
+                    });
+                });
+            });
+            picked.map(|i| PRESETS[i].1)
         }
         None => {
             ui.horizontal(|ui| {
@@ -831,23 +982,39 @@ fn label_width(ui: &Ui, text: &str) -> f32 {
 fn light_row(ui: &mut Ui, skin: Option<&Skin>, light: &mut cs_core::Light3D) {
     let (was_yaw, was_pitch) = (wrap_angle(light.yaw) / 10, light.pitch / 10);
     let (mut y, mut p) = (was_yaw, was_pitch);
-    let right = ui.cursor().left() + row_width(ui);
-    in_row(ui, |ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        check(ui, skin, &mut light.enabled, "Light");
-        ui.add_space(LIGHT_GAP);
-        ui.add_enabled_ui(light.enabled, |ui| {
+    let (yaw, pitch) = (-YAW_MAX..=YAW_MAX, -PITCH_MAX..=PITCH_MAX);
+    match skin {
+        Some(skin) => {
+            let mark = kit::check::Mark::Check(kit::check::Check::of(light.enabled));
+            let light_w = kit::check::width(ui, skin, mark, "Light");
             let (yaw_w, pitch_w) = (label_width(ui, "Yaw"), label_width(ui, "Pitch"));
-            let free = right - ui.cursor().left() - yaw_w - pitch_w - 2.0 * LABEL_GAP - PAIR_GAP;
-            let range = -YAW_MAX..=YAW_MAX;
-            angle_cell(ui, skin, (free / 2.0).floor(), ("Yaw", &mut y), range);
-            ui.add_space(PAIR_GAP);
-            // El de Pitch llega justo al final de la fila.
-            let width = right - ui.cursor().left() - pitch_w - LABEL_GAP;
-            let range = -PITCH_MAX..=PITCH_MAX;
-            angle_cell(ui, skin, width, ("Pitch", &mut p), range);
-        });
-    });
+            // Light y los dos ángulos, con steppers del mismo ancho (±1) hasta el final de la
+            // fila; si no caben, Pitch baja.
+            row_form(ui, "model_light_row", |tui| {
+                tui.style(forms::row_lines(ROW_GAP)).add(|tui| {
+                    let light_cell = forms::fixed(light_w, kit::check::HEIGHT);
+                    tui.style(forms::air_right(LIGHT_GAP, light_cell))
+                        .ui(|ui| check(ui, Some(skin), &mut light.enabled, "Light"));
+                    let on = light.enabled;
+                    angle_cell(tui, skin, ("Yaw", yaw_w, PAIR_GAP), on, &mut y, yaw);
+                    angle_cell(tui, skin, ("Pitch", pitch_w, 0.0), on, &mut p, pitch);
+                });
+            });
+        }
+        None => {
+            ui.horizontal(|ui| {
+                check(ui, None, &mut light.enabled, "Light");
+                ui.add_enabled_ui(light.enabled, |ui| {
+                    for (label, value, range) in [("Yaw", &mut y, yaw), ("Pitch", &mut p, pitch)] {
+                        ui.label(label);
+                        edit_angle(value, range.clone(), |v| {
+                            ui.add(egui::DragValue::new(v).range(range));
+                        });
+                    }
+                });
+            });
+        }
+    }
     if y != was_yaw {
         light.yaw = y * 10;
     }
@@ -915,15 +1082,20 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     light_row(ui, skin, &mut next.light);
     let mut outline = next.outline.is_some();
     let lit = next.light.enabled;
-    in_row(ui, |ui| {
-        check(ui, skin, &mut outline, "Outline");
-        if let Some(color) = &mut next.outline {
-            crate::widgets::color_edit(ui, color, false, "Outline color");
+    let dither = &mut next.light.dither;
+    match skin {
+        Some(skin) => outline_row(ui, skin, (&mut outline, &mut next.outline), dither, lit),
+        None => {
+            ui.horizontal(|ui| {
+                check(ui, None, &mut outline, "Outline");
+                if let Some(color) = &mut next.outline {
+                    crate::widgets::color_edit(ui, color, false, "Outline color");
+                }
+                ui.add_space(LIGHT_GAP);
+                ui.add_enabled_ui(lit, |ui| check(ui, None, dither, "Dither"));
+            });
         }
-        // El tramado de las sombras (sin luz no hay sombras: se ve pero no se usa).
-        ui.add_space(LIGHT_GAP);
-        ui.add_enabled_ui(lit, |ui| check(ui, skin, &mut next.light.dither, "Dither"));
-    });
+    }
     if outline != next.outline.is_some() {
         next.outline = outline.then_some(primary);
     }
@@ -937,6 +1109,46 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
+/// La fila del contorno, con Pixel UI: la casilla Outline (`on`) con su color (si hay contorno,
+/// `color`) y, a [`LIGHT_GAP`] más del aire de entre botones, Dither, deshabilitada sin luz
+/// (`lit`: sin luz no hay sombras que tramar). Si no caben, lo que no cabe baja.
+fn outline_row(
+    ui: &mut Ui,
+    skin: &Skin,
+    (on, color): (&mut bool, &mut Option<Rgba>),
+    dither: &mut bool,
+    lit: bool,
+) {
+    let gap = ui.spacing().item_spacing.x;
+    let width = |ui: &Ui, label: &str| {
+        let mark = kit::check::Mark::Check(kit::check::Check::of(false));
+        kit::check::width(ui, skin, mark, label)
+    };
+    let (outline_w, dither_w) = (width(ui, "Outline"), width(ui, "Dither"));
+    let swatch = kit::color_button::size(skin);
+    let h = kit::check::HEIGHT;
+    row_form(ui, "model_outline_row", |tui| {
+        tui.style(forms::row_lines(ROW_GAP)).add(|tui| {
+            let air = if color.is_some() {
+                gap
+            } else {
+                gap + LIGHT_GAP
+            };
+            tui.style(forms::air_right(air, forms::fixed(outline_w, h)))
+                .ui(|ui| check(ui, Some(skin), on, "Outline"));
+            if let Some(color) = color {
+                let cell = forms::fixed(swatch.x, swatch.y);
+                tui.style(forms::air_right(gap + LIGHT_GAP, cell)).ui(|ui| {
+                    crate::widgets::color_edit(ui, color, false, "Outline color");
+                });
+            }
+            tui.style(forms::fixed(dither_w, h)).ui(|ui| {
+                ui.add_enabled_ui(lit, |ui| check(ui, Some(skin), dither, "Dither"));
+            });
+        });
+    });
+}
+
 /// Shading…, Sheet settings… y GIF settings…, al final de su fila (como el boceto, que tenía
 /// los dos primeros). Devuelve lo pedido.
 fn window_buttons(ui: &mut Ui, skin: Option<&Skin>) -> Option<ModelAction> {
@@ -948,18 +1160,23 @@ fn window_buttons(ui: &mut Ui, skin: Option<&Skin>) -> Option<ModelAction> {
     let mut picked = None;
     match skin {
         Some(skin) => {
-            let row = row_rect(ui, row_width(ui));
-            let mut right = row.right();
-            for (label, action) in BUTTONS.into_iter().rev() {
-                let w = kit::button::width(ui, label);
-                let rect =
-                    Rect::from_min_max(pos2(right - w, row.top()), pos2(right, row.bottom()));
-                let id = ui.id().with(("model_window_button", label));
-                if kit::button::button_at(ui, skin, rect, id, label).clicked() {
-                    picked = Some(action);
-                }
-                right = rect.left() - COLUMN_GAP;
-            }
+            let id = ui.id();
+            let widths = BUTTONS.map(|(label, _)| kit::button::width(ui, label));
+            row_form(ui, "model_window_buttons", |tui| {
+                tui.style(forms::row_end(COLUMN_GAP)).add(|tui| {
+                    for ((label, action), w) in BUTTONS.into_iter().zip(widths) {
+                        let cell = forms::fixed(w, kit::button::HEIGHT);
+                        let clicked = tui.style(cell).ui(|ui| {
+                            let (rect, id) =
+                                (ui.max_rect(), id.with(("model_window_button", label)));
+                            kit::button::button_at(ui, skin, rect, id, label).clicked()
+                        });
+                        if clicked {
+                            picked = Some(action);
+                        }
+                    }
+                });
+            });
         }
         None => {
             ui.horizontal(|ui| {
@@ -1213,5 +1430,207 @@ fn swatches(
         None => egui::Popup::menu(response)
             .show(content)
             .and_then(|i| i.inner),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forms::testing::{Probe, run_at};
+
+    /// Un modelo en su workspace, como en los tests de ChimpCAD: "Ship" (con el cubo elegido) y un
+    /// artboard "Skin" para la textura.
+    fn editing() -> Editor {
+        let rgba = |w, h| cs_core::Sprite::new(w, h, cs_core::ColorMode::Rgba);
+        let mut e = Editor::with_sprite(rgba(8, 8));
+        assert!(e.add_artboard_with_sprite("Skin".into(), rgba(16, 16)));
+        assert!(e.new_model("Ship", (32, 32)));
+        e
+    }
+
+    /// El panel de `width` con el modelo de `setup`, y el ancho justo del select de la cámara
+    /// (con lo que dice).
+    fn panel_at(width: f32, setup: fn(&mut Editor)) -> (Probe, f32) {
+        let mut editor = editing();
+        setup(&mut editor);
+        let mut state = ModelPanelState::default();
+        let mut select = 0.0;
+        let probe = run_at(width, |ui| {
+            let skin = pixel_ui::frame_skin(ui.ctx());
+            show(ui, &mut editor, skin.as_deref(), &mut state);
+            let projection = editor.edited_model().map(|m| m.camera.projection);
+            select = kit::select::width(ui, &projection_label(projection.unwrap()));
+        });
+        (probe, select)
+    }
+
+    /// El de más a la izquierda y el de más a la derecha de los controles `name` (los dos
+    /// steppers de la luz tienen un − y un +).
+    fn ends(probe: &Probe, name: &str) -> (Rect, Rect) {
+        let mut all: Vec<Rect> = probe
+            .widgets
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(!all.is_empty(), "no {name:?}");
+        all.sort_by(|a, b| {
+            (a.top(), a.left())
+                .partial_cmp(&(b.top(), b.left()))
+                .unwrap()
+        });
+        (all[0], all[all.len() - 1])
+    }
+
+    /// Lo que se tapa a propósito, fuera de la cuenta: la fila del outliner es un botón de lado a
+    /// lado con los suyos (ojo, candado) adentro, y el select de la textura y los presets de la
+    /// cámara comparten la columna del borde con el que sigue.
+    fn without_glued(mut probe: Probe) -> Probe {
+        probe.widgets.retain(|(n, _)| n != "Cube");
+        for (n, r) in &mut probe.widgets {
+            if ["Ship Texture", "Iso", "Top", "Side"].contains(&n.as_str()) {
+                r.max.x -= 1.0;
+            }
+        }
+        probe
+    }
+
+    type Setup = (&'static str, fn(&mut Editor));
+
+    /// De `MIN_WIDTH` para arriba (y en el ancho de referencia, como el boceto), en modo Model con
+    /// el cubo elegido, en modo Texture, sin objeto y con la luz apagada y el contorno: todo entra
+    /// en el ancho del panel, en puntos enteros y sin que nada tape a nada. Las filas llegan hasta
+    /// antes de la barra del scroll y se parten si no caben: los presets de la cámara bajan
+    /// debajo de su select (que entonces llena la fila), los botones de las ventanas y los del
+    /// objeto siguen en la fila de abajo y Pitch baja debajo de Yaw; más ancho, crecen el select de
+    /// la cámara, los steppers de la luz, los selects de la textura y las filas del outliner.
+    #[test]
+    fn the_model_panel_reflows_at_any_width() {
+        let states: [Setup; 4] = [
+            ("object", |_| {}),
+            ("texture", |e| e.set_cad_mode(CadMode::Texture)),
+            ("no object", |e| e.select_model_object(None)),
+            ("light off", |e| {
+                let off = cs_core::Light3D {
+                    enabled: false,
+                    ..Default::default()
+                };
+                assert!(e.set_light(off));
+                assert!(e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0))));
+            }),
+        ];
+        let gap = COLUMN_GAP;
+        // Si se partió alguna vez la fila de la cámara, la de las ventanas, la de la luz y la del
+        // objeto.
+        let mut wrapped = [false; 4];
+        let mut grown = [0.0; 3];
+        for width in [MIN_WIDTH, 215.0, REFERENCE_WIDTH, 600.0] {
+            for (state, setup) in states {
+                let (probe, select) = panel_at(width, setup);
+                let at = format!("{state} at {width}");
+                probe.assert_whole_px();
+                probe.assert_within(width);
+                // Hasta antes de la barra del scroll y su aire.
+                let end = width - pixel_ui::SCROLL_BAR - ROW_END_GAP;
+                // El encabezado del outliner llega hasta el borde (está arriba del scroll).
+                assert_eq!(probe.rect("Add object").right(), width, "{at}");
+                // Los modos al principio y la cuadrícula al final.
+                assert_eq!(probe.rect("Object").left(), 0.0, "{at}");
+                assert_eq!(probe.rect("1/4").right(), end, "{at}");
+                // La textura: el tamaño en la columna de la derecha (a 5/8 de la fila) y New
+                // pegado al select.
+                let size = probe.rect("64");
+                assert_eq!(size.left(), (end * RIGHT_COLUMN).round(), "{at}");
+                assert_eq!(size.right(), end, "{at}");
+                let new = probe.rect("New");
+                assert_eq!(new.right(), size.left() - gap, "{at}");
+                let texture = probe.rect("Ship Texture");
+                assert_eq!((texture.left(), texture.right()), (0.0, new.left() + 1.0));
+                // La cámara: el select y, a su lado o debajo, los presets al final de la fila.
+                let projection = probe.rect("Perspective 60°");
+                let (iso, front) = (probe.rect("Iso"), probe.rect("Front"));
+                assert_eq!(front.right(), end, "{at}");
+                if select + gap + front.right() - iso.left() <= end {
+                    assert_eq!(iso.top(), projection.top(), "beside {at}");
+                    assert_eq!(projection.right(), iso.left() - gap, "{at}");
+                } else {
+                    wrapped[0] = true;
+                    assert!(iso.top() > projection.bottom(), "below {at}");
+                    assert_eq!(projection.right(), end, "{at}");
+                }
+                // Shading…, Sheet settings… y GIF settings…, al final de su fila (o de dos).
+                let [shading, sheet, gif] =
+                    ["Shading…", "Sheet settings…", "GIF settings…"].map(|l| probe.rect(l));
+                assert_eq!(gif.right(), end, "{at}");
+                if shading.width() + sheet.width() + gif.width() + 2.0 * gap <= end {
+                    assert_eq!([shading.top(), sheet.top()], [gif.top(); 2], "{at}");
+                    assert_eq!(sheet.right(), gif.left() - gap, "{at}");
+                } else {
+                    wrapped[1] = true;
+                    assert!(gif.top() > shading.bottom(), "{at}");
+                    assert_eq!(sheet.right(), end, "{at}");
+                }
+                // La luz: los steppers (casi) del mismo ancho y el de Pitch hasta el final de su
+                // fila; si no caben al lado de Light, Pitch baja.
+                let (yaw, pitch_minus) = ends(&probe, "Decrease");
+                let (yaw_plus, pitch) = ends(&probe, "Increase");
+                assert_eq!(pitch.right(), end, "{at}");
+                let widths = [
+                    yaw_plus.right() - yaw.left(),
+                    pitch.right() - pitch_minus.left(),
+                ];
+                if pitch.top() > yaw.top() {
+                    wrapped[2] = true;
+                    assert!(pitch.top() >= yaw.bottom(), "{at}");
+                } else {
+                    assert!((widths[0] - widths[1]).abs() <= 1.0, "{widths:?} {at}");
+                }
+                // La fila del outliner, de lado a lado de las filas.
+                let cube = probe.rect("Cube");
+                assert_eq!((cube.left(), cube.right()), (0.0, end), "{at}");
+                // Los botones del objeto, desde el principio de la fila.
+                let buttons = match state {
+                    "texture" => ["Rotate 90°", "Flip H", "Flip V", "Pack UVs"],
+                    _ => ["Extrude", "Subdivide", "Merge", "Delete"],
+                };
+                let rects = buttons.map(|l| probe.rect(l));
+                assert_eq!(rects[0].left(), 0.0, "{at}");
+                if rects[3].top() > rects[0].top() {
+                    wrapped[3] = true;
+                    assert!(rects[3].top() >= rects[0].bottom(), "{at}");
+                } else {
+                    assert!(rects[3].right() <= end, "{at}");
+                }
+                if state == "object" {
+                    if width == REFERENCE_WIDTH {
+                        grown = [projection.width(), widths[1], size.width()];
+                    } else if width > REFERENCE_WIDTH {
+                        assert!(projection.width() > grown[0], "{at}");
+                        assert!(widths[1] > grown[1], "{at}");
+                        assert!(size.width() > grown[2], "{at}");
+                    }
+                }
+                without_glued(probe).assert_no_overlap();
+            }
+        }
+        assert_eq!(wrapped, [true; 4], "camera, windows, light, object");
+    }
+
+    /// Sin modelo, New 3D Model… y lo que dice, del ancho que haya.
+    #[test]
+    fn without_a_model_the_panel_fits_any_width() {
+        for width in [MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
+            let rgba = cs_core::Sprite::new(8, 8, cs_core::ColorMode::Rgba);
+            let mut editor = Editor::with_sprite(rgba);
+            let mut state = ModelPanelState::default();
+            let probe = run_at(width, |ui| {
+                let skin = pixel_ui::frame_skin(ui.ctx());
+                show(ui, &mut editor, skin.as_deref(), &mut state);
+            });
+            probe.assert_whole_px();
+            probe.assert_within(width);
+            probe.assert_no_overlap();
+            assert_eq!(probe.rect("New 3D Model…").left(), 0.0);
+        }
     }
 }
