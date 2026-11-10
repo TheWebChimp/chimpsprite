@@ -30,9 +30,6 @@ pub(crate) enum PanelAction {
     OpenCanvasSize,
     /// Lo pedido desde el encabezado de la paleta (Color).
     Palette(panels::PaletteAction),
-    /// Se entró a una instancia desde Color: el zoom que pide el lienzo, calculado al entrar
-    /// (a un símbolo de la biblioteca se ajusta; a uno del lienzo, se centra).
-    InstanceZoom(view::ZoomRequest),
     /// New Tilemap Layer, desde la línea de tiempo.
     NewTilemap,
     /// La × del Preview.
@@ -41,7 +38,9 @@ pub(crate) enum PanelAction {
 
 impl ChimpApp {
     /// El contenido del panel `id` en `ui` y lo que pidió. Lo que lo rodea (el marco, el
-    /// tamaño, el scroll de la toolbar, lo que apaga un diálogo modal) es de su anfitrión.
+    /// tamaño, el scroll de la toolbar, lo que apaga un diálogo modal) es de su anfitrión,
+    /// salvo en Color, que maneja el modal adentro: aquí va sin modal; donde puede haber un
+    /// diálogo modal abierto, usa [`Self::draw_panel_modal`].
     pub(crate) fn draw_panel(&mut self, ui: &mut egui::Ui, id: PanelId) -> Option<PanelAction> {
         self.draw_panel_in(ui, id, None, false)
     }
@@ -69,6 +68,7 @@ impl ChimpApp {
         modal: bool,
     ) -> Option<PanelAction> {
         // Solo préstamos de campos sueltos: el skin junto al editor y al estado de cada panel.
+        // `modal` solo lo usa Color: a los demás los apaga su anfitrión (`add_enabled_ui`).
         let skin = self.pixel.skin();
         match id {
             PanelId::Groom => {
@@ -175,12 +175,14 @@ impl ChimpApp {
             if entered {
                 // A un símbolo de la biblioteca: se ve solo él, ajustado; a uno del lienzo,
                 // se centra.
+                // Se pide en el acto (el lienzo es otro campo): así no le gana a una acción de
+                // la paleta del mismo frame.
                 let zoom = if editor.in_symbol_mode() {
                     view::ZoomRequest::Fit
                 } else {
                     view::ZoomRequest::CenterActive
                 };
-                action = Some(PanelAction::InstanceZoom(zoom));
+                self.doc.canvas.request_zoom(zoom);
             }
         });
         action
@@ -260,7 +262,6 @@ impl ChimpApp {
             PanelAction::Lospec(action) => self.lospec_action(Some(action)),
             PanelAction::OpenCanvasSize => self.open_canvas_size(),
             PanelAction::Palette(action) => self.palette_action(ctx, action),
-            PanelAction::InstanceZoom(zoom) => self.doc.canvas.request_zoom(zoom),
             PanelAction::NewTilemap => {
                 self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
             }
@@ -400,13 +401,24 @@ mod tests {
     fn frame(
         ctx: &egui::Context,
         app: &mut ChimpApp,
-        mut contents: impl FnMut(&mut ChimpApp, &mut egui::Ui),
+        contents: impl FnMut(&mut ChimpApp, &mut egui::Ui),
     ) {
+        frame_with(ctx, app, Vec::new(), contents);
+    }
+
+    /// Como [`frame`], con los eventos `events`; devuelve la salida del frame.
+    fn frame_with(
+        ctx: &egui::Context,
+        app: &mut ChimpApp,
+        events: Vec<egui::Event>,
+        mut contents: impl FnMut(&mut ChimpApp, &mut egui::Ui),
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(1280.0, 800.0),
             )),
+            events,
             ..Default::default()
         };
         let mut output = ctx.run_ui(input, |ui| {
@@ -415,6 +427,27 @@ mod tests {
         });
         // Las texturas (fuentes, skin e imágenes de los paneles) no se suben a ninguna GPU.
         output.textures_delta.clear();
+        output
+    }
+
+    /// El nodo de accesibilidad con la etiqueta `label` en `output`.
+    fn node(output: &egui::FullOutput, label: &str) -> Option<egui::accesskit::NodeId> {
+        let update = output.platform_output.accesskit_update.as_ref()?;
+        update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label() == Some(label))
+            .map(|(id, _)| *id)
+    }
+
+    /// Un clic de accesibilidad en el nodo `target` (como los de un lector de pantalla).
+    fn accesskit_click(target: egui::accesskit::NodeId) -> egui::Event {
+        egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+            action: egui::accesskit::Action::Click,
+            target_tree: egui::accesskit::TreeId::ROOT,
+            target_node: target,
+            data: None,
+        })
     }
 
     #[test]
@@ -505,19 +538,56 @@ mod tests {
     }
 
     #[test]
+    fn a_palette_action_and_entering_an_instance_in_the_same_frame_both_happen() {
+        use super::PanelAction;
+        use crate::panel_registry::PanelId;
+        use cs_core::{PixelValue, Rgba};
+        // Sin Pixel UI (Presets ⏷ es un botón con nombre), con una instancia elegida en su capa.
+        let mut app = test_app_with(false);
+        let e = &mut app.doc.editor;
+        e.execute(cs_commands::Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(2, 2, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        e.convert_to_symbol("S", cs_commands::symbol::SymbolTiming::Graphic)
+            .expect("the symbol");
+        assert!(e.on_object_layer() && e.instance_key().is_some());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let color = |app: &mut ChimpApp, ui: &mut egui::Ui| app.draw_panel(ui, PanelId::Color);
+        let output = frame_with(&ctx, &mut app, Vec::new(), |app, ui| {
+            color(app, ui);
+        });
+        let presets = node(&output, "Presets ⏷").expect("Presets ⏷");
+        let edit = node(&output, "Edit Symbol").expect("Edit Symbol");
+        assert_eq!(app.doc.canvas.pending_zoom(), None);
+        // Los dos clics en el mismo frame.
+        let mut action = None;
+        let events = vec![accesskit_click(presets), accesskit_click(edit)];
+        frame_with(&ctx, &mut app, events, |app, ui| action = color(app, ui));
+        assert!(
+            matches!(
+                action,
+                Some(PanelAction::Palette(
+                    crate::panels::PaletteAction::OpenPresets
+                ))
+            ),
+            "the palette action"
+        );
+        assert!(app.doc.editor.in_symbol_mode(), "entered the symbol");
+        assert_eq!(
+            app.doc.canvas.pending_zoom(),
+            Some(crate::view::ZoomRequest::Fit),
+            "and the canvas fits it"
+        );
+    }
+
+    #[test]
     fn the_fixed_region_actions_do_what_their_panels_did() {
         use super::PanelAction;
         let mut app = test_app();
         let ctx = egui::Context::default();
-        // Entrar a una instancia: el lienzo pide el zoom que se calculó al dibujar.
-        app.apply_panel_action(
-            &ctx,
-            PanelAction::InstanceZoom(crate::view::ZoomRequest::CenterActive),
-        );
-        assert_eq!(
-            app.doc.canvas.pending_zoom(),
-            Some(crate::view::ZoomRequest::CenterActive)
-        );
         // La × del Preview lo apaga.
         app.view.preview = true;
         app.apply_panel_action(&ctx, PanelAction::ClosePreview);
