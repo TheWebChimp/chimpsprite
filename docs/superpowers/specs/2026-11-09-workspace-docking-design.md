@@ -120,7 +120,11 @@ egui_taffy y solo `workspace` conoce egui_dock.
 
 - **A. `forms` + migrar los paneles de ancho fijo**, uno por commit: FontForge Config (ya probado
   en el prototipo), Groom, Lumen, Library, Dafont, Modelo (y Lospec si hace falta). En su ancho de
-  referencia se ven igual que hoy; a otros anchos se reacomodan.
+  referencia se ven igual que hoy; a otros anchos se reacomodan. **HECHA** (guía en `docs/forms.md`):
+  `crates/cs-ui/src/forms.rs` + los seis paneles migrados, cada uno con `REFERENCE_WIDTH` /
+  `MIN_WIDTH`: FontForge 314 / 150, Groom 434 / 216, Lumen 434 / 216, Library 434 / 160, Dafont
+  364 / 210, Modelo 227 / 200. El dock sigue abriendo cada panel a su `REFERENCE_WIDTH` hasta la
+  fase C. (Lospec no se migró.)
 - **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia.
 - **C. Docking del lado derecho:** la tira de íconos y sus flyouts + el panel de color pasan a
   egui_dock (colapsado a íconos, flotantes, arrastrar).
