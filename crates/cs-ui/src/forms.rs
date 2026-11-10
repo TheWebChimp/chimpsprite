@@ -56,6 +56,18 @@ pub(crate) fn row(gap: f32) -> Style {
     }
 }
 
+/// Como [`row`], pero sin espacio entre los hijos de una fila (cada uno pone el suyo con
+/// [`air_right`]) y con `gap` entre las filas: para las filas con un hijo [`push_right`].
+pub(crate) fn row_lines(gap: f32) -> Style {
+    Style {
+        gap: Size {
+            width: length(0.0_f32),
+            height: length(gap),
+        },
+        ..row(0.0)
+    }
+}
+
 /// Hijos uno al lado del otro, sin partir la fila.
 pub(crate) fn row_nowrap(gap: f32) -> Style {
     Style {
@@ -194,7 +206,9 @@ pub(crate) fn air_below(bottom: f32, style: Style) -> Style {
 }
 
 /// `style` empujado a la derecha de su fila (lo de antes queda a la izquierda; si la fila se
-/// parte, a la derecha de la suya).
+/// parte, a la derecha de la suya). En una fila con espacio entre los hijos, taffy 0.9 no pone ese
+/// espacio en la línea de este hijo y lo deja a ese espacio del borde: va en filas de
+/// [`row_lines`] (o de espacio 0).
 pub(crate) fn push_right(style: Style) -> Style {
     Style {
         margin: Rect {
@@ -286,6 +300,9 @@ pub(crate) mod testing {
         pub widgets: Vec<(String, Rect)>,
         /// Los textos pintados: lo que se ve (con su "…" si no cupo) y el rect de su galley.
         pub texts: Vec<(String, Rect)>,
+        /// Las imágenes pintadas (las piezas del skin también): su textura y lo que se ve de
+        /// ellas (con su recorte).
+        pub images: Vec<(egui::TextureId, Rect)>,
     }
 
     /// Lo que se mide: hojas que el usuario ve (no los grupos que las contienen).
@@ -309,10 +326,13 @@ pub(crate) mod testing {
         crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
         let mut widgets = Vec::new();
         let mut texts = Vec::new();
+        let mut images = Vec::new();
         // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
         for _ in 0..3 {
             let input = RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(2000.0, 2000.0))),
+                // Las texturas grandes que acepta la app (las muestras de una fuente, por ejemplo).
+                max_texture_side: Some(8192),
                 ..Default::default()
             };
             let mut output = ctx.run_ui(input, |ui| {
@@ -325,8 +345,10 @@ pub(crate) mod testing {
             // Nadie sube texturas aquí: egui exige descartar lo pendiente.
             output.textures_delta.clear();
             texts.clear();
+            images.clear();
             for clipped in &output.shapes {
                 collect_texts(&clipped.shape, &mut texts);
+                collect_images(&clipped.shape, clipped.clip_rect, &mut images);
             }
             let nodes = output
                 .platform_output
@@ -351,7 +373,24 @@ pub(crate) mod testing {
                 })
                 .collect();
         }
-        Probe { widgets, texts }
+        Probe {
+            widgets,
+            texts,
+            images,
+        }
+    }
+
+    /// Las mallas con textura de `shape` y lo que se ve de cada una con el recorte `clip`, desde
+    /// la esquina del panel.
+    fn collect_images(shape: &egui::Shape, clip: Rect, out: &mut Vec<(egui::TextureId, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_images(s, clip, out)),
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                let shown = mesh.calc_bounds().intersect(clip);
+                out.push((mesh.texture_id, shown.translate(Vec2::splat(-10.0))));
+            }
+            _ => {}
+        }
     }
 
     /// Los textos de `shape` como se ven (las letras de sus filas) y su rect, desde la esquina del

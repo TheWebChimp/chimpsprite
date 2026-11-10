@@ -843,7 +843,7 @@ impl ChimpApp {
             dock::DockPanel::Dafont,
             anchor,
             self.pixel.skin(),
-            dafont::WIDTH,
+            dafont::REFERENCE_WIDTH,
             true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| picked = dafont.ui(ui));
