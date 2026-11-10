@@ -4255,6 +4255,36 @@ fn the_font_settings_are_the_mockup_layout() {
 }
 
 #[test]
+fn the_font_settings_reflow_at_any_width() {
+    use crate::font_panel::{MIN_WIDTH, REFERENCE_WIDTH, config_view};
+    use crate::forms::testing::run_at;
+    for width in [MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
+        let sprite = cs_core::Sprite::new(8, 8, cs_core::ColorMode::Rgba);
+        let mut editor = crate::editor::Editor::with_sprite(sprite);
+        editor.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+        let probe = run_at(width, |ui| {
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            config_view(ui, &mut editor, skin.as_deref());
+        });
+        probe.assert_whole_px();
+        probe.assert_within(width);
+        probe.assert_no_overlap();
+        // Lo que tiene que estar a cualquier ancho.
+        for name in [
+            "Family",
+            "Style",
+            "Ghost",
+            "Italic",
+            "Monospace",
+            "Baseline",
+            "New Variant…",
+        ] {
+            probe.rect(name);
+        }
+    }
+}
+
+#[test]
 fn hovering_a_font_number_highlights_its_line_in_the_preview() {
     let mut h = font_settings_open();
     // Una línea resaltada: roja, de 2 de alto y del ancho de la celda (16 × 7 = 112).

@@ -22,6 +22,7 @@ use crate::dock::FLYOUT_MARGIN;
 use crate::editor::Editor;
 use crate::font_dialog;
 use crate::font_metrics_preview::{self, Metric};
+use crate::forms::{self, TuiBuilderLogic as _};
 use crate::kit;
 use crate::menus;
 use crate::panel_kit::label_with_hint;
@@ -30,8 +31,17 @@ use crate::pixel_ui;
 use crate::skin::{Skin, WidgetState};
 use crate::widgets;
 
-/// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
-pub const WIDTH: f32 = CONTENT_W + pixel_ui::SCROLL_BAR;
+/// Ancho de adentro del panel (sin su marco) en el mockup: el contenido y la barra del scroll.
+/// El dock abre el panel de este ancho; adentro, los ajustes se acomodan al que les toque.
+pub const REFERENCE_WIDTH: f32 = CONTENT_W + pixel_ui::SCROLL_BAR;
+/// El ancho más chico en que los ajustes caben sin encimarse ni salirse (medido): lo más ancho que
+/// no se parte es Weight con su select (32 + 5 + 112). El título y la vista Edit todavía no se
+/// acomodan: el dock aún no achica el panel.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
+)]
+pub const MIN_WIDTH: f32 = 150.0;
 /// Ancho del contenido que se desplaza (x 8 a 312 en el mockup; la barra, de 312 a 322).
 const CONTENT_W: f32 = 304.0;
 /// El logo del título (el chango herrero y "FontForge", 141×28), en (6, 2): sube por encima del
@@ -77,49 +87,51 @@ pub(crate) const TEST_PAD: f32 = 4.0;
 /// La tinta del Test Drive: oscura fija, porque el papel es blanco aunque el tema sea oscuro.
 pub(crate) const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
 /// La vista de ajustes, como en settings-mockup.png (el panel en (463, 70) y el contenido desde
-/// (471, 105), su esquina: todo lo de abajo es desde ahí). Las etiquetas van en la fila de su
-/// control con las mayúsculas 6 más abajo, como en el mockup: el texto de egui las tiene 4 abajo
-/// de su caja, así que se pinta [`TEXT_DROP`] abajo de la fila.
+/// (471, 105), su esquina: todo lo de abajo es desde ahí, en [`REFERENCE_WIDTH`]). Se arma con
+/// [`forms`]: con menos ancho las filas se parten (lo que va junto baja junto) y con más crece la
+/// vista previa. Las etiquetas ([`forms::label`]) van en la fila de su control, con las
+/// mayúsculas 6 más abajo, como en el mockup.
 ///
-/// Los campos van en x 37 (508): Family y Style de 160 en las filas 1 y 22 (106 y 127) y el
-/// select de Weight de 112 en la 43 (148).
+/// Las filas van a 4 una de otra (una cada 21) y las etiquetas a 4 de su campo: los campos en
+/// x 37 (508), Family y Style de 160 en las filas 1 y 22 (106 y 127) y el select de Weight de 112
+/// en la 43 (148). Con poco ancho, Family y Style se achican hasta [`NAME_MIN`].
+const ROW_GAP: f32 = 4.0;
 const FIELD_X: f32 = 37.0;
+const LABEL_W: f32 = FIELD_X - ROW_GAP;
 const NAME_W: f32 = 160.0;
+const NAME_MIN: f32 = 60.0;
 const FAMILY_Y: f32 = 1.0;
-const STYLE_Y: f32 = 22.0;
-const WEIGHT_Y: f32 = 43.0;
 const WEIGHT_W: f32 = 112.0;
-/// En la fila de Weight, la casilla Ghost en x 154 (625; su fila, 1 más arriba que la del
-/// select: la casilla en la 150) y el select de la fantasma de 80 en x 200 (671).
+/// La fila de Weight va con 5 entre sus cosas: la casilla Ghost en x 154 (625; 1 más arriba que
+/// el select: la casilla en la 150) y el select de la fantasma de 80 en x 200 (671).
+const WEIGHT_GAP: f32 = 5.0;
 const GHOST_X: f32 = 154.0;
-const GHOST_Y: f32 = WEIGHT_Y - 1.0;
+const GHOST_RAISE: f32 = 1.0;
 const GHOST_SELECT_X: f32 = 200.0;
 const GHOST_W: f32 = 80.0;
 /// La fila de Italic, Monospace y Auto width (las casillas en y 172 y x 508, 556 y 625).
-const CHECKS_Y: f32 = 64.0;
 const CHECKS_X: [f32; 3] = [FIELD_X, 85.0, GHOST_X];
 /// Mode · 1 bit · Cell · 16×16: texto en cuatro columnas (la tinta en x 471, 545, 622 y 705),
-/// las mayúsculas en la 196.
-const MODE_Y: f32 = 85.0;
+/// las mayúsculas en la 196; de a dos, que bajan juntos.
 const MODE_X: [f32; 4] = [0.0, NUMBER_X, 151.0, 234.0];
-/// Los números en una columna: steppers de 62 en x 74 (545), uno cada 21 desde la 111 (216).
+/// Los números en una columna: steppers de 62 en x 74 (545), uno cada 21 desde la 111 (216), 5
+/// más abajo de lo que daría el paso de las filas.
 const NUMBER_X: f32 = 74.0;
 const NUMBER_W: f32 = 62.0;
-const NUMBERS_Y: f32 = 111.0;
-const ROW_PITCH: f32 = 21.0;
+const NUMBERS_AIR: f32 = 5.0;
 /// El recuadro de la vista previa de métricas, con su marco: desde (146, 111) (617, 216), del
-/// alto de los seis steppers (121, hasta la 336) y hasta 2 antes del borde del contenido (782).
+/// alto de los seis steppers menos 1 (121, hasta la 336) y hasta 2 antes del borde del contenido
+/// (782). Con poco ancho, debajo de los números y de no menos de [`PREVIEW_MIN`].
 const PREVIEW_X: f32 = 146.0;
-const PREVIEW_H: f32 = 5.0 * ROW_PITCH + kit::stepper::HEIGHT - 1.0;
+const PREVIEW_H: f32 = 6.0 * kit::stepper::HEIGHT + 5.0 * ROW_GAP - 1.0;
+const PREVIEW_MIN: f32 = 80.0;
 const PREVIEW_RIGHT_AIR: f32 = 2.0;
-/// La familia: el título con sus mayúsculas en la 250 (355; su caja desde la 246), los radios
-/// de los estilos cada 21 desde la 268 (el radio en la 376) y New Variant… 23 debajo del último
-/// (396).
-const FAMILY_TITLE_Y: f32 = 244.0 + TEXT_DROP;
-const STYLES_Y: f32 = 268.0;
-const NEW_VARIANT_GAP: f32 = 23.0;
-/// De la fila de una etiqueta a la caja de su texto (ver [`FIELD_X`]).
-const TEXT_DROP: f32 = 2.0;
+/// La familia, 13 debajo de los números: el título con sus mayúsculas en la 250 (355; su caja
+/// desde la 246), los radios de los estilos cada 21 desde la 268 (el radio en la 376) y New
+/// Variant… 23 debajo del último (396).
+const FAMILY_AIR: f32 = 13.0;
+const FAMILY_TITLE_H: f32 = 18.0;
+const NEW_VARIANT_AIR: f32 = 2.0;
 /// El aire entre Generate ▾ y Build ▾.
 const GENERATE_GAP: f32 = 4.0;
 /// La sección Glyph: el aire de arriba y entre filas, entre controles, el ancho del nombre de
@@ -816,41 +828,22 @@ pub(crate) fn letter_rect(
 }
 
 /// La vista de ajustes (el engrane): los ajustes de la fuente con la vista previa de métricas y,
-/// debajo, la familia, en las posiciones del mockup (ver [`FIELD_X`]).
-fn config_view(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<FontAction> {
-    editor.font()?;
-    let styles = editor.family_fonts().len().max(1);
-    let height = STYLES_Y + (styles - 1) as f32 * ROW_PITCH + NEW_VARIANT_GAP + kit::button::HEIGHT;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    let origin = rect.min.round();
-    settings(ui, editor, skin, origin, rect.width());
-    family_section(ui, editor, skin, origin)
-}
-
-/// Un hijo de `ui` en (`x`, `y`) desde `origin`, de izquierda a derecha, del alto de un campo y
-/// hasta el borde derecho de `ui`: ahí van los controles del kit, en su esquina.
-fn place<R>(
+/// debajo, la familia, del ancho de `ui` (en [`REFERENCE_WIDTH`], como el mockup: ver
+/// [`FIELD_X`]).
+pub(crate) fn config_view(
     ui: &mut Ui,
-    origin: egui::Pos2,
-    (x, y): (f32, f32),
-    salt: &str,
-    add: impl FnOnce(&mut Ui) -> R,
-) -> R {
-    let min = origin + vec2(x, y);
-    let right = ui.max_rect().right().max(min.x + 1.0);
-    let rect = Rect::from_min_max(min, pos2(right, min.y + kit::input::HEIGHT));
-    let builder = UiBuilder::new()
-        .id_salt(("font_settings_at", salt))
-        .max_rect(rect)
-        .layout(egui::Layout::left_to_right(egui::Align::Min));
-    add(&mut ui.new_child(builder))
-}
-
-/// Un texto de los ajustes en la fila `y` desde `origin`, en `x`: sus mayúsculas, 6 más abajo
-/// (sin el centrado de las filas de egui).
-fn text_at(ui: &Ui, origin: egui::Pos2, (x, y): (f32, f32), text: &str) {
-    let at = origin + vec2(x, y);
-    pixel_ui::small_text_at(ui, Rect::from_min_size(at, Vec2::ZERO), text);
+    editor: &mut Editor,
+    skin: Option<&Skin>,
+) -> Option<FontAction> {
+    editor.font()?;
+    ui.scope(|ui| {
+        // Sin el aire de egui entre una cosa y otra: el de cada lugar, el del mockup.
+        ui.spacing_mut().item_spacing.y = 0.0;
+        settings(ui, editor, skin);
+        ui.add_space(FAMILY_AIR);
+        family_section(ui, editor, skin)
+    })
+    .inner
 }
 
 /// Un número: el stepper del kit de [`NUMBER_W`] (sin Pixel UI, el `DragValue` de egui).
@@ -897,69 +890,63 @@ fn select(
     }
 }
 
-/// Los ajustes de la fuente, desde `origin` (la esquina del contenido, de `width` de ancho):
-/// Family, Style, Weight con Ghost y su fuente, Italic, Monospace y el ancho automático del
-/// glifo actual, el modo y la celda, los seis números en una columna y, a su derecha, la vista
-/// previa de métricas (con la línea del número que tiene el puntero encima resaltada). Todo lo
-/// cambiado en un frame (o en un arrastre) es un paso de deshacer (`set_font_info_grouped`).
-fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, origin: egui::Pos2, width: f32) {
+/// Family y Style: la etiqueta, el nombre del campo y su texto de ayuda.
+const NAMES: [(&str, &str, &str); 2] = [
+    ("Family", "Font name", "Font name"),
+    ("Style", "Style name", "Regular"),
+];
+
+/// Una fila de [`NAMES`] en `tui`, con `air` de más arriba: la etiqueta y el campo con
+/// `current`, de [`NAME_W`] (con poco ancho se achica hasta [`NAME_MIN`]; no se separan). Lo
+/// escrito, al terminar de escribir (ver [`kit::input::buffered`]).
+fn name_row(
+    tui: &mut forms::Tui,
+    skin: Option<&Skin>,
+    id: egui::Id,
+    (caption, label, hint): (&str, &str, &str),
+    current: &str,
+    air: f32,
+) -> Option<String> {
+    let h = kit::input::HEIGHT;
+    let mut edited = None;
+    let row = forms::air_above(air, forms::row_nowrap(ROW_GAP));
+    tui.style(row).add(|tui| {
+        tui.style(forms::fixed(LABEL_W, h))
+            .ui(|ui| forms::label(ui, caption, LABEL_W));
+        tui.style(forms::grow(NAME_MIN, NAME_W, Some(NAME_W), h))
+            .ui(|ui| {
+                let w = ui.max_rect().width();
+                edited = kit::input::buffered(ui, id, current, |ui, text| match skin {
+                    Some(skin) => kit::input::text_input(ui, skin, text, w, label, hint),
+                    None => ui.add(egui::TextEdit::singleline(text).desired_width(w)),
+                });
+            });
+    });
+    edited
+}
+
+/// Los ajustes de la fuente, del ancho de `ui`: Family, Style, Weight con Ghost y su fuente,
+/// Italic, Monospace y el ancho automático del glifo actual, el modo y la celda, los seis números
+/// en una columna y, a su derecha (o debajo, si no cabe), la vista previa de métricas (con la
+/// línea del número que tiene el puntero encima resaltada). Todo lo cambiado en un frame (o en
+/// un arrastre) es un paso de deshacer (`set_font_info_grouped`).
+fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(font) = editor.font().cloned() else {
         return;
     };
     let (cell_w, cell_h) = (editor.sprite().width, editor.sprite().height);
     let mut info = font.clone();
-    // Family y Style.
-    text_at(ui, origin, (0.0, FAMILY_Y), "Family");
-    let name_id = ui.id().with("font_name");
-    let name = place(ui, origin, (FIELD_X, FAMILY_Y), "family", |ui| {
-        kit::input::buffered(ui, name_id, &font.name, |ui, text| match skin {
-            Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Font name", "Font name"),
-            None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
-        })
-    });
-    if let Some(name) = name {
-        info.name = name;
-    }
-    text_at(ui, origin, (0.0, STYLE_Y), "Style");
-    let style_id = ui.id().with("font_style_name");
-    let style = place(ui, origin, (FIELD_X, STYLE_Y), "style", |ui| {
-        kit::input::buffered(ui, style_id, &font.style.name, |ui, text| match skin {
-            Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Style name", "Regular"),
-            None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
-        })
-    });
-    if let Some(name) = style.filter(|n| !n.trim().is_empty()) {
-        info.style.name = name.trim().to_owned();
-    }
-    // Weight y, en su fila, la letra fantasma.
-    text_at(ui, origin, (0.0, WEIGHT_Y), "Weight");
-    place(ui, origin, (FIELD_X, WEIGHT_Y), "weight", |ui| {
-        let weight = &mut info.style.weight;
-        let selected = format!("{weight} {}", cs_core::weight_name(*weight));
-        select(ui, skin, "font_weight", &selected, WEIGHT_W, |ui| {
-            for (w, name) in cs_core::WEIGHTS {
-                widgets::choice(ui, weight, w, &format!("{w} {name}"));
-            }
-        });
-    });
-    place(ui, origin, (GHOST_X, GHOST_Y), "ghost", |ui| {
-        checkbox(ui, skin, &mut info.ghost.enabled, "Ghost")
-    });
-    place(ui, origin, (GHOST_SELECT_X, WEIGHT_Y), "ghost_face", |ui| {
-        let ghost = &mut info.ghost.monospace;
-        let face = if *ghost { "Hack" } else { "Ubuntu" };
-        select(ui, skin, "font_ghost", face, GHOST_W, |ui| {
-            widgets::choice(ui, ghost, false, "Ubuntu");
-            widgets::choice(ui, ghost, true, "Hack");
-        });
-    });
-    place(ui, origin, (CHECKS_X[0], CHECKS_Y), "italic", |ui| {
-        checkbox(ui, skin, &mut info.style.italic, "Italic")
-    });
-    place(ui, origin, (CHECKS_X[1], CHECKS_Y), "monospace", |ui| {
-        checkbox(ui, skin, &mut info.monospace, "Monospace")
-    });
-    // El modo y la celda.
+    // El glifo actual y su ancho (los ajustes no cambian los anchos de los glifos: es el mismo
+    // antes y después de `set_font_info`).
+    let current = editor
+        .current_glyph()
+        .and_then(|ch| Some((ch, font.glyphs[font.index_of(ch)?].advance)));
+    let ids = [ui.id().with("font_name"), ui.id().with("font_style_name")];
+    let h = kit::input::HEIGHT;
+    let (mut name, mut style) = (None, None);
+    let mut auto_width = None;
+    let mut hovered = None;
+    let mut preview = None;
     let cell = format!("{cell_w}×{cell_h}");
     let mode = [
         "Mode",
@@ -967,36 +954,128 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, origin: egui:
         "Cell",
         cell.as_str(),
     ];
-    for (x, text) in MODE_X.into_iter().zip(mode) {
-        text_at(ui, origin, (x, MODE_Y), text);
-    }
-    // Los números: las mayúsculas y la x-height hasta la baseline; los descendentes, de ella
-    // hasta abajo. Con el puntero sobre una fila (etiqueta o stepper), su línea se resalta en
-    // la vista previa.
+    let cell_label_w = forms::label_width(ui, &cell);
     let baseline = font.metrics.baseline;
-    let mut hovered = None;
-    for (i, metric) in Metric::ALL.into_iter().enumerate() {
-        let y = NUMBERS_Y + i as f32 * ROW_PITCH;
-        let m = &mut info.metrics;
-        let (value, range) = match metric {
-            Metric::Baseline => (&mut m.baseline, 0..=cell_h),
-            Metric::XHeight => (&mut m.x_height, 0..=baseline),
-            Metric::LetterSpacing => (&mut info.letter_spacing, 0..=8),
-            Metric::CapHeight => (&mut m.cap_height, 0..=baseline),
-            Metric::Descent => (&mut m.descent, 0..=cell_h - baseline.min(cell_h)),
-            Metric::SpaceWidth => (&mut info.space_width, 0..=cell_w),
-        };
-        text_at(ui, origin, (0.0, y), metric.label());
-        place(ui, origin, (NUMBER_X, y), metric.label(), |ui| {
-            number(ui, skin, metric.label(), value, range);
+    forms::form(ui, "font_settings", ROW_GAP, |tui| {
+        // Family y Style.
+        name = name_row(tui, skin, ids[0], NAMES[0], &font.name, FAMILY_Y);
+        style = name_row(tui, skin, ids[1], NAMES[1], &font.style.name, 0.0);
+        // Weight y, en su fila, la letra fantasma (la casilla y su fuente, juntas).
+        tui.style(forms::row(WEIGHT_GAP)).add(|tui| {
+            tui.style(forms::group(WEIGHT_GAP)).add(|tui| {
+                let label_w = FIELD_X - WEIGHT_GAP;
+                tui.style(forms::fixed(label_w, h))
+                    .ui(|ui| forms::label(ui, "Weight", label_w));
+                tui.style(forms::fixed(WEIGHT_W, h)).ui(|ui| {
+                    let weight = &mut info.style.weight;
+                    let selected = format!("{weight} {}", cs_core::weight_name(*weight));
+                    select(ui, skin, "font_weight", &selected, WEIGHT_W, |ui| {
+                        for (w, name) in cs_core::WEIGHTS {
+                            widgets::choice(ui, weight, w, &format!("{w} {name}"));
+                        }
+                    });
+                });
+            });
+            tui.style(forms::group(WEIGHT_GAP)).add(|tui| {
+                let ghost_w = GHOST_SELECT_X - GHOST_X - WEIGHT_GAP;
+                let ghost = forms::air_above(-GHOST_RAISE, forms::fixed(ghost_w, h));
+                tui.style(ghost).ui(|ui| {
+                    checkbox(ui, skin, &mut info.ghost.enabled, "Ghost");
+                });
+                tui.style(forms::fixed(GHOST_W, h)).ui(|ui| {
+                    let ghost = &mut info.ghost.monospace;
+                    let face = if *ghost { "Hack" } else { "Ubuntu" };
+                    select(ui, skin, "font_ghost", face, GHOST_W, |ui| {
+                        widgets::choice(ui, ghost, false, "Ubuntu");
+                        widgets::choice(ui, ghost, true, "Hack");
+                    });
+                });
+            });
         });
-        let row = Rect::from_min_size(
-            origin + vec2(0.0, y),
-            vec2(NUMBER_X + NUMBER_W, kit::stepper::HEIGHT),
-        );
-        if ui.rect_contains_pointer(row) {
-            hovered = Some(metric);
-        }
+        // Italic, Monospace y el ancho automático del glifo actual, en la columna de los campos.
+        tui.style(forms::row(ROW_GAP)).add(|tui| {
+            tui.style(forms::group(ROW_GAP)).add(|tui| {
+                tui.style(forms::fixed(LABEL_W, h)).add_empty();
+                let w = CHECKS_X[1] - CHECKS_X[0] - ROW_GAP;
+                tui.style(forms::fixed(w, h)).ui(|ui| {
+                    checkbox(ui, skin, &mut info.style.italic, "Italic");
+                });
+            });
+            let w = CHECKS_X[2] - CHECKS_X[1] - ROW_GAP;
+            tui.style(forms::fixed(w, h)).ui(|ui| {
+                checkbox(ui, skin, &mut info.monospace, "Monospace");
+            });
+            if let Some((ch, advance)) = current {
+                tui.style(forms::natural()).ui(|ui| {
+                    let mut auto = advance.is_none();
+                    let caption = format!("Auto width ({ch})");
+                    if checkbox(ui, skin, &mut auto, &caption).changed() {
+                        auto_width = Some((ch, auto));
+                    }
+                });
+            }
+        });
+        // El modo y la celda.
+        tui.style(forms::row(ROW_GAP)).add(|tui| {
+            for pair in [0, 2] {
+                tui.style(forms::group(ROW_GAP)).add(|tui| {
+                    for i in [pair, pair + 1] {
+                        let w = MODE_X
+                            .get(i + 1)
+                            .map_or(cell_label_w, |next| next - MODE_X[i] - ROW_GAP);
+                        tui.style(forms::fixed(w, h))
+                            .ui(|ui| forms::label(ui, mode[i], w));
+                    }
+                });
+            }
+        });
+        // Los números: las mayúsculas y la x-height hasta la baseline; los descendentes, de ella
+        // hasta abajo. Con el puntero sobre una fila (etiqueta o stepper), su línea se resalta en
+        // la vista previa, que va a su derecha.
+        let numbers = forms::row(PREVIEW_X - NUMBER_X - NUMBER_W);
+        tui.style(forms::air_above(NUMBERS_AIR, numbers))
+            .add(|tui| {
+                let column = forms::Style {
+                    flex_shrink: 0.0,
+                    ..forms::column(ROW_GAP)
+                };
+                tui.style(column).add(|tui| {
+                    for metric in Metric::ALL {
+                        let m = &mut info.metrics;
+                        let (value, range) = match metric {
+                            Metric::Baseline => (&mut m.baseline, 0..=cell_h),
+                            Metric::XHeight => (&mut m.x_height, 0..=baseline),
+                            Metric::LetterSpacing => (&mut info.letter_spacing, 0..=8),
+                            Metric::CapHeight => (&mut m.cap_height, 0..=baseline),
+                            Metric::Descent => (&mut m.descent, 0..=cell_h - baseline.min(cell_h)),
+                            Metric::SpaceWidth => (&mut info.space_width, 0..=cell_w),
+                        };
+                        tui.style(forms::group(0.0)).add(|tui| {
+                            let label = tui.style(forms::fixed(NUMBER_X, h)).ui(|ui| {
+                                forms::label(ui, metric.label(), NUMBER_X);
+                                ui.max_rect()
+                            });
+                            tui.style(forms::fixed(NUMBER_W, h)).ui(|ui| {
+                                number(ui, skin, metric.label(), value, range);
+                                if ui.rect_contains_pointer(label.union(ui.max_rect())) {
+                                    hovered = Some(metric);
+                                }
+                            });
+                        });
+                    }
+                });
+                let min = PREVIEW_MIN + PREVIEW_RIGHT_AIR;
+                tui.style(forms::grow(min, min, None, PREVIEW_H)).ui(|ui| {
+                    // Se pinta después, con los cambios de este frame (no en la pasada que mide).
+                    preview = ui.is_visible().then(|| ui.max_rect());
+                });
+            });
+    });
+    if let Some(name) = name {
+        info.name = name;
+    }
+    if let Some(name) = style.filter(|n: &String| !n.trim().is_empty()) {
+        info.style.name = name.trim().to_owned();
     }
     // Con la baseline movida, lo demás se acomoda (solo si se cambió algo: abrir el panel no
     // deja pasos).
@@ -1012,43 +1091,25 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, origin: egui:
     if !ui.input(|i| i.pointer.any_down()) {
         editor.end_group_of(group);
     }
-    // El ancho automático del glifo actual (después: `set_font_info` lleva los anchos de antes).
-    let current = editor.current_glyph().and_then(|ch| {
-        let font = editor.font()?;
-        Some((ch, font.glyphs[font.index_of(ch)?].advance))
-    });
-    if let Some((ch, advance)) = current {
-        let mut auto = advance.is_none();
-        let caption = format!("Auto width ({ch})");
-        let changed = place(ui, origin, (CHECKS_X[2], CHECKS_Y), "auto_width", |ui| {
-            checkbox(ui, skin, &mut auto, &caption).changed()
-        });
-        if changed {
-            let advance = if auto { None } else { editor.glyph_advance() };
-            editor.set_glyph_advance(ch, advance);
-        }
+    // El ancho automático (después: `set_font_info` lleva los anchos de antes).
+    if let Some((ch, auto)) = auto_width {
+        let advance = if auto { None } else { editor.glyph_advance() };
+        editor.set_glyph_advance(ch, advance);
     }
-    metrics_preview(ui, editor, origin, width, hovered);
+    if let Some(rect) = preview {
+        metrics_preview(ui, editor, rect, hovered);
+    }
 }
 
-/// La vista previa de métricas en su recuadro (con el marco de las líneas del mapa), con lo que
-/// la fuente tiene ya con los cambios de este frame.
-fn metrics_preview(
-    ui: &Ui,
-    editor: &Editor,
-    origin: egui::Pos2,
-    width: f32,
-    hovered: Option<Metric>,
-) {
+/// La vista previa de métricas en `rect` (su recuadro, con el marco de las líneas del mapa, sin
+/// el aire de la derecha), con lo que la fuente tiene ya con los cambios de este frame.
+fn metrics_preview(ui: &Ui, editor: &Editor, rect: Rect, hovered: Option<Metric>) {
     let (Some(font), Some(view)) = (editor.font(), editor.artboard().font_view()) else {
         return;
     };
     let frame = Rect::from_min_max(
-        origin + vec2(PREVIEW_X, NUMBERS_Y),
-        pos2(
-            origin.x + width - PREVIEW_RIGHT_AIR,
-            origin.y + NUMBERS_Y + PREVIEW_H,
-        ),
+        rect.min,
+        pos2(rect.right() - PREVIEW_RIGHT_AIR, rect.top() + PREVIEW_H),
     );
     if frame.width() < 3.0 {
         return;
@@ -1075,90 +1136,89 @@ fn metrics_preview(
     );
 }
 
-/// La sección Family de los ajustes, desde `origin`: el título con cuántos estilos tiene, un
+/// La sección Family de los ajustes, del ancho de `ui`: el título con cuántos estilos tiene, un
 /// radio por estilo de la familia (el actual marcado; un clic abre su pestaña) con Rebuild en
-/// los generados, y New Variant….
-fn family_section(
-    ui: &mut Ui,
-    editor: &mut Editor,
-    skin: Option<&Skin>,
-    origin: egui::Pos2,
-) -> Option<FontAction> {
+/// los generados (que baja si no cabe), y New Variant….
+fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<FontAction> {
     let font = editor.font()?.clone();
     let members = editor.family_fonts();
     let hint = match members.len() {
         1 => "(1 style)".to_owned(),
         n => format!("({n} styles)"),
     };
-    place(ui, origin, (0.0, FAMILY_TITLE_Y), "family_title", |ui| {
-        // Sin el alto mínimo de las filas de egui: el texto, arriba de su fila.
-        ui.spacing_mut().interact_size.y = 0.0;
-        label_with_hint(ui, &format!("Family \"{}\"", font.name), &hint);
-    });
+    let title = format!("Family \"{}\"", font.name);
+    let h = kit::input::HEIGHT;
     let mut action = None;
     let mut rebuild = None;
-    let mut y = STYLES_Y;
-    for (i, (id, style)) in members.iter().enumerate() {
-        y = STYLES_Y + i as f32 * ROW_PITCH;
-        let on = *id == editor.active;
-        let generated = style.source.as_ref().map(|s| {
-            let from = editor
-                .document
-                .artboard(s.artboard)
-                .and_then(|a| a.font.as_ref())
-                .map_or_else(|| "a removed font".to_owned(), |f| f.style.name.clone());
-            format!("{} from {from}", s.recipe.kind.label())
+    let mut new = false;
+    let editor_now: &Editor = editor;
+    forms::form(ui, "font_family", ROW_GAP, |tui| {
+        tui.style(forms::row(0.0)).add(|tui| {
+            tui.style(forms::share(0.0, FAMILY_TITLE_H)).ui(|ui| {
+                // Sin el alto mínimo de las filas de egui: el texto, arriba de su fila.
+                ui.spacing_mut().interact_size.y = 0.0;
+                label_with_hint(ui, &title, &hint);
+                // Con nombre, para los lectores de pantalla (y los tests).
+                let rect = ui.min_rect();
+                ui.interact(rect, ui.id().with("title"), Sense::hover())
+                    .widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &title)
+                    });
+            });
         });
-        let salt = format!("style{i}");
-        place(ui, origin, (0.0, y), &salt, |ui| {
-            ui.spacing_mut().item_spacing.x = GLYPH_GAP;
-            let label = style.name.clone();
-            let picked = ui
-                .allocate_ui_with_layout(
-                    vec2(NAME_W, kit::stepper::HEIGHT),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        ui.set_min_width(NAME_W);
-                        match skin {
-                            Some(skin) => kit::check::radio(ui, skin, on, &label),
-                            None => ui.radio(on, &label),
-                        }
-                    },
-                )
-                .inner;
-            if picked.clicked() && !on {
-                action = Some(FontAction::OpenFont(*id));
-            }
-            if let Some(generated) = &generated {
-                let can = editor.can_rebuild(*id);
-                let response = ui
-                    .add_enabled_ui(can, |ui| match skin {
-                        Some(skin) => kit::button::button(ui, skin, "Rebuild"),
-                        None => pixel_ui::text_button(ui, "Rebuild"),
-                    })
-                    .inner
-                    .on_hover_text(format!("{generated}: generate it again (your edits go)"))
-                    .on_disabled_hover_text("Its source font is gone");
-                if response.clicked() {
-                    rebuild = Some(*id);
+        for (id, style) in &members {
+            let on = *id == editor_now.active;
+            let generated = style.source.as_ref().map(|s| {
+                let from = editor_now
+                    .document
+                    .artboard(s.artboard)
+                    .and_then(|a| a.font.as_ref())
+                    .map_or_else(|| "a removed font".to_owned(), |f| f.style.name.clone());
+                format!("{} from {from}", s.recipe.kind.label())
+            });
+            tui.style(forms::row(GLYPH_GAP)).add(|tui| {
+                let picked = tui
+                    .style(forms::grow(NAME_MIN, NAME_W, Some(NAME_W), h))
+                    .ui(|ui| match skin {
+                        Some(skin) => kit::check::radio(ui, skin, on, &style.name),
+                        None => ui.radio(on, &style.name),
+                    });
+                if picked.clicked() && !on {
+                    action = Some(FontAction::OpenFont(*id));
                 }
-            }
+                if let Some(generated) = &generated {
+                    let can = editor_now.can_rebuild(*id);
+                    tui.style(forms::natural()).ui(|ui| {
+                        let response = ui
+                            .add_enabled_ui(can, |ui| match skin {
+                                Some(skin) => kit::button::button(ui, skin, "Rebuild"),
+                                None => pixel_ui::text_button(ui, "Rebuild"),
+                            })
+                            .inner
+                            .on_hover_text(format!(
+                                "{generated}: generate it again (your edits go)"
+                            ))
+                            .on_disabled_hover_text("Its source font is gone");
+                        if response.clicked() {
+                            rebuild = Some(*id);
+                        }
+                    });
+                }
+            });
+        }
+        let below = forms::air_above(NEW_VARIANT_AIR, forms::natural());
+        tui.style(below).ui(|ui| {
+            let response = match skin {
+                Some(skin) => kit::button::button(ui, skin, "New Variant…"),
+                None => pixel_ui::text_button(ui, "New Variant…"),
+            };
+            new = response.clicked();
         });
-    }
+    });
     if let Some(id) = rebuild {
         editor.rebuild_variant(id);
     }
-    let new = place(
-        ui,
-        origin,
-        (0.0, y + NEW_VARIANT_GAP),
-        "new_variant",
-        |ui| match skin {
-            Some(skin) => kit::button::button(ui, skin, "New Variant…"),
-            None => pixel_ui::text_button(ui, "New Variant…"),
-        },
-    );
-    if new.clicked() {
+    if new {
         action = Some(FontAction::NewVariant);
     }
     action

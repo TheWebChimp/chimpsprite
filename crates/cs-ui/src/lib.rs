@@ -688,7 +688,7 @@ impl ChimpApp {
             dock::DockPanel::Font,
             anchor,
             skin,
-            font_panel::WIDTH,
+            font_panel::REFERENCE_WIDTH,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
                     action = font_panel::show(ui, editor, skin, state);
@@ -907,7 +907,7 @@ impl ChimpApp {
         self.doc
             .canvas
             .request_zoom(view::ZoomRequest::FitActiveBeside {
-                right_inset: dock::flyout_reach(font_panel::WIDTH),
+                right_inset: dock::flyout_reach(font_panel::REFERENCE_WIDTH),
             });
     }
 

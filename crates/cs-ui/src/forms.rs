@@ -3,10 +3,6 @@
 //! Los tamaños van en puntos enteros: con la escala de la UI cada punto es un pixel del skin.
 //! Solo este módulo conoce egui_taffy; los paneles usan lo que reexporta.
 
-// Los paneles lo van estrenando (tareas siguientes de "Workspace, fase A"); mientras, solo los
-// tests lo usan.
-#![allow(dead_code, unused_imports)]
-
 use eframe::egui::{self, Id, Ui, vec2};
 use egui_taffy::taffy::prelude::*;
 
@@ -20,8 +16,11 @@ pub(crate) fn form(
     gap: f32,
     add: impl FnOnce(&mut Tui),
 ) {
+    // En puntos enteros: con medio punto disponible (mientras entra la barra del scroll, por
+    // ejemplo), taffy redondearía hacia arriba y la forma se saldría de `ui`.
+    let width = ui.available_width().floor();
     egui_taffy::tui(ui, Id::new(id))
-        .reserve_available_width()
+        .reserve_width(width)
         .style(Style {
             size: Size {
                 width: percent(1.0_f32),
@@ -115,6 +114,40 @@ pub(crate) fn share(min: f32, h: f32) -> Style {
     }
 }
 
+/// Hijos uno al lado del otro que van juntos dentro de una fila (una etiqueta y su campo): del
+/// ancho de lo que tienen, sin partirse ni encogerse; si no caben, bajan juntos.
+pub(crate) fn group(gap: f32) -> Style {
+    Style {
+        size: Size {
+            width: auto(),
+            height: auto(),
+        },
+        flex_shrink: 0.0,
+        ..row_nowrap(gap)
+    }
+}
+
+/// Una hoja del tamaño de lo que tiene adentro (lo que ocupó en el frame anterior), que no se
+/// encoge: para los controles que se miden solos (casillas y botones con su texto).
+pub(crate) fn natural() -> Style {
+    Style {
+        flex_shrink: 0.0,
+        ..Default::default()
+    }
+}
+
+/// `style` con `top` de aire de más arriba (negativo, sube): para las filas del mockup que no van
+/// al paso de las demás.
+pub(crate) fn air_above(top: f32, style: Style) -> Style {
+    Style {
+        margin: Rect {
+            top: length(top),
+            ..style.margin
+        },
+        ..style
+    }
+}
+
 /// El ancho que necesita `text` en la fuente de la UI (tinta + 1), en puntos enteros.
 pub(crate) fn label_width(ui: &Ui, text: &str) -> f32 {
     crate::kit::button::ink_width(ui, text).ceil() + 1.0
@@ -188,7 +221,12 @@ pub(crate) mod testing {
                         Pos2::new(b.x0 as f32 - 10.0, b.y0 as f32 - 10.0),
                         Pos2::new(b.x1 as f32 - 10.0, b.y1 as f32 - 10.0),
                     );
-                    Some((n.label()?.to_string(), rect))
+                    // Las etiquetas llevan su texto en el valor (así las nombra egui).
+                    let name = match n.label() {
+                        Some(label) => label.to_string(),
+                        None => n.value()?.to_string(),
+                    };
+                    Some((name, rect))
                 })
                 .collect();
         }
@@ -275,6 +313,15 @@ mod tests {
             probe.assert_within(width);
             probe.assert_no_overlap();
         }
+    }
+
+    /// Con medio punto disponible (mientras entra la barra de un scroll, por ejemplo), la forma
+    /// usa solo los puntos enteros: no se sale de su `Ui` (si se saliera, el panel crecería).
+    #[test]
+    fn a_form_keeps_to_whole_points_of_a_fractional_width() {
+        let probe = run_at(311.5, sample);
+        probe.assert_whole_px();
+        probe.assert_within(311.5);
     }
 
     #[test]
