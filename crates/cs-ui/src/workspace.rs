@@ -10,10 +10,19 @@
 //! flotantes siempre llevan su barra: es su título y de ahí se arrastran.
 //!
 //! Solo este módulo usa egui_dock.
+//!
+//! El marco de las ventanas flotantes se viste con un `ui.scope` alrededor del `DockArea` cuyo
+//! estilo lleva el color marcador (`skin::window_visuals`): funciona porque egui_dock 0.21.1 arma
+//! el marco con `Frame::window(ui.style())` del `Ui` que se le pasa, mientras que el contenido de
+//! cada pestaña usa el estilo del contexto. Si eso cambia al subir de versión, hay que revisarlo.
 
-// Lo hospeda la app en la tarea 5 de la fase C; hasta entonces solo lo usan los tests y la
-// variable de demo.
-#![cfg_attr(not(test), allow(dead_code))]
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "solo lo usan los tests y la variable de demo hasta que la tarea 5 de la fase C lo conecte a la app"
+    )
+)]
 
 mod skin;
 
@@ -49,6 +58,9 @@ pub(crate) struct Workspace {
     state: DockState<PanelId>,
     /// Los paneles en la tira, en el orden de `PanelId::ALL`.
     strip: Vec<PanelId>,
+    /// Es el que queda en `app.workspace` mientras [`show`] tiene prestado el de verdad (los
+    /// paneles se dibujan con la app entera): cambiarlo no serviría de nada.
+    lent: bool,
 }
 
 impl Default for Workspace {
@@ -64,7 +76,24 @@ impl Workspace {
         Workspace {
             state: DockState::new(vec![PanelId::Color]),
             strip: PanelId::DOCK.to_vec(),
+            lent: false,
         }
+    }
+
+    /// Lo que queda en `app.workspace` mientras [`show`] dibuja los paneles.
+    fn placeholder() -> Workspace {
+        Workspace {
+            lent: true,
+            ..Workspace::essentials()
+        }
+    }
+
+    /// Los cambios a un workspace prestado se perderían: es un error (solo se revisa en debug).
+    fn check_not_lent(&self) {
+        debug_assert!(
+            !self.lent,
+            "app.workspace is a placeholder while workspace::show draws the panels"
+        );
     }
 
     /// Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`, para capturas): `library-tab`
@@ -118,6 +147,7 @@ impl Workspace {
     /// Saca `id` de donde esté (la tira o el árbol). Un grupo o una ventana que se vacían
     /// desaparecen.
     fn take(&mut self, id: PanelId) {
+        self.check_not_lent();
         self.strip.retain(|&p| p != id);
         if let Some(path) = self.state.find_tab(&id) {
             self.state.remove_tab(path);
@@ -216,10 +246,15 @@ impl Workspace {
 
     /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
     /// o más. Las ventanas flotantes siempre la llevan (es su título y de ahí se arrastran).
-    pub(crate) fn refresh_tab_bars(&mut self) {
+    /// Devuelve si alguna cambió.
+    pub(crate) fn refresh_tab_bars(&mut self) -> bool {
+        let mut changed = false;
         for (path, leaf) in self.state.iter_leaves_mut() {
-            leaf.tab_bar_hidden = path.surface.is_main() && leaf.tabs.len() <= 1;
+            let hidden = path.surface.is_main() && leaf.tabs.len() <= 1;
+            changed |= leaf.tab_bar_hidden != hidden;
+            leaf.tab_bar_hidden = hidden;
         }
+        changed
     }
 
     /// Cada panel en un solo lugar: lo que está en el árbol sale de la tira (y la tira sin
@@ -348,8 +383,12 @@ fn dock_id() -> egui::Id {
 /// [`ChimpApp::draw_panel`]. Lo que piden los paneles se aplica al final, con la app entera;
 /// cerrar una pestaña la regresa a la tira. Con un diálogo modal (`modal`), los paneles quedan
 /// apagados y las pestañas no se arrastran.
+///
+/// Mientras los paneles se dibujan, `app.workspace` es un acomodo de relleno (el de verdad lo
+/// tiene `show`): cambiarlo desde un panel no serviría, por eso sus operaciones lo revisan en
+/// debug. Lo que haya que cambiar del acomodo se pide como acción y se hace después.
 pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
-    let mut workspace = std::mem::take(&mut app.workspace);
+    let mut workspace = std::mem::replace(&mut app.workspace, Workspace::placeholder());
     workspace.tidy();
     workspace.refresh_tab_bars();
     let shared_skin = app.pixel.shared_skin();
@@ -365,9 +404,6 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
         Some(skin) => skin::dock_style(ui.style(), skin),
         None => skin::plain_style(ui.style()),
     };
-    if let Some(skin) = &shared_skin {
-        skin::arm(ui.ctx(), skin.clone());
-    }
     let mut viewer = Viewer {
         app,
         modal,
@@ -378,6 +414,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
         hits: Vec::new(),
         closed: Vec::new(),
     };
+    let area = ui.available_rect_before_wrap();
     ui.scope(|ui| {
         // El marco de las ventanas flotantes (solo lo leen los marcos).
         if let Some(skin) = skin {
@@ -425,11 +462,36 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
         skin::paint_tabs(ui, skin, &workspace.state, &hits, dock_id());
         closed.extend(close_marks(ui, &hits, modal));
     }
+    // Dónde puede haber marcadores este frame: el DockArea y sus ventanas, fuera del cuerpo de los
+    // grupos (ver `skin::Armed`).
+    if let Some(skin) = &shared_skin {
+        let mut armed = skin::Armed::new(skin.clone());
+        armed.areas.push(area);
+        for (s, _) in workspace.state.iter_surfaces_indexed() {
+            if !s.is_main()
+                && let Some(rect) = ui.ctx().memory(|m| m.area_rect(skin::window_area_id(s)))
+            {
+                armed.areas.push(rect);
+            }
+        }
+        armed.bodies = workspace
+            .state
+            .iter_leaves()
+            .map(|(_, leaf)| leaf.viewport)
+            .filter(|r| r.is_positive())
+            .collect();
+        skin::arm(ui.ctx(), armed);
+    }
     for id in closed {
         workspace.to_strip(id);
     }
+    // Si un panel se soltó en otro grupo, la barra de algún grupo cambia: este frame ya se dibujó
+    // con la de antes, así que se descarta y se vuelve a dibujar (sin el parpadeo de un frame).
+    if workspace.refresh_tab_bars() {
+        ui.ctx().request_discard("tab bar visibility changed");
+    }
     // A puntos enteros para el frame siguiente.
-    skin::snap(&mut workspace.state);
+    skin::snap(ui.ctx(), &mut workspace.state);
     skin::snap_windows(ui.ctx(), &mut workspace.state);
     app.workspace = workspace;
     for action in actions {
@@ -687,6 +749,44 @@ mod tests {
             .memory(|m| m.area_rect(skin::window_area_id(surface)))
             .expect("Lumen's window");
         assert_eq!(rect.min, rect.min.round());
+    }
+
+    #[test]
+    fn the_grab_strip_of_a_lower_lone_panel_wins_over_the_separator() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        // Groom solo, debajo de Color: los dos sin barra, con un divisor entre ellos.
+        app.workspace = Workspace::demo("split").unwrap();
+        let out = frames(&ctx, &mut app);
+        let (surface, node) = app.workspace.leaf_of(PanelId::Groom).unwrap();
+        let path = NodePath { surface, node };
+        let lower = app.workspace.state.leaf(path).unwrap().rect;
+        assert!(app.workspace.tab_bar_hidden_of(PanelId::Groom));
+        assert!(!skin::hidden_strip_hovered(&ctx, dock_id(), path));
+        assert_ne!(out.platform_output.cursor_icon, egui::CursorIcon::Grab);
+        // El puntero un punto debajo del borde de arriba del grupo: la franja (no el divisor).
+        let at = egui::pos2(lower.center().x, lower.top() + 1.0);
+        frame(&ctx, &mut app, vec![egui::Event::PointerMoved(at)]);
+        let out = frame(&ctx, &mut app, Vec::new());
+        assert!(
+            skin::hidden_strip_hovered(&ctx, dock_id(), path),
+            "the strip is the hovered widget"
+        );
+        assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Grab);
+        // Y se arrastra desde ahí (no cambia el tamaño del split).
+        let press = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        frame(&ctx, &mut app, vec![press]);
+        for dy in [4.0, 12.0, 24.0] {
+            let to = at + egui::vec2(0.0, dy);
+            frame(&ctx, &mut app, vec![egui::Event::PointerMoved(to)]);
+        }
+        assert!(skin::hidden_strip_dragged(&ctx, dock_id(), path));
+        assert_eq!(app.workspace.state.leaf(path).unwrap().rect, lower);
     }
 
     #[test]

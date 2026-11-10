@@ -13,8 +13,7 @@
 //! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin).
 //!
 //! **Depende de detalles internos de egui_dock 0.21.1** (por eso la versión va fija en
-//! `Cargo.toml`): los ids de [`window_area_id`], [`is_dragged_tab`] y
-//! [`hidden_strip_dragged`], y que el estilo transparente siga pintando rects llenos con los colores
+//! `Cargo.toml`): los ids de [`window_area_id`], [`is_dragged_tab`] y [`hidden_strip_id`], y que el estilo transparente siga pintando rects llenos con los colores
 //! de [`dock_style`]. Al subir de versión hay que revisarlos.
 
 use std::sync::Arc;
@@ -46,6 +45,10 @@ pub(super) const TAB_BAR_H: f32 = kit::tabs::ACTIVE_HEIGHT;
 /// La franja de arriba de un grupo sin barra de pestañas: de ahí se agarra para arrastrarlo (con
 /// el puntero encima se pinta la línea grabada resaltada, como un divisor).
 pub(super) const GRAB_STRIP: f32 = 3.0;
+/// Lo que la zona de un divisor crece más allá de su línea (la mitad de cada lado). egui_dock
+/// registra los divisores después de los grupos: lo que alcanzan le gana a la franja de agarre del
+/// grupo de abajo. Con 1 (medio punto por lado) le dejan 2.5 de los 3 puntos a la franja.
+const SEPARATOR_EXTRA: f32 = 1.0;
 /// El marco de las ventanas flotantes y de la zona de destino (el de los paneles del dock).
 const FLYOUT: &str = "menu.side";
 /// El relleno de la zona de destino (la franja rosa de las listas, a media luz).
@@ -83,7 +86,6 @@ pub(super) fn dock_style(ui_style: &egui::Style, skin: &Skin) -> egui_dock::Styl
     style.tab.hline_below_active_tab_name = false;
     style.tab.tab_body.bg_fill = colors.background;
     style.separator.width = pixel_ui::ETCHED_SIZE;
-    style.separator.extra_interact_width = 4.0;
     style.separator.color_idle = M_SEP_IDLE;
     style.separator.color_hovered = M_SEP_HOVER;
     style.separator.color_dragged = M_SEP_DRAG;
@@ -103,6 +105,7 @@ pub(super) fn plain_style(ui_style: &egui::Style) -> egui_dock::Style {
     style.tab.tab_body.stroke = Stroke::NONE;
     style.tab.tab_body.corner_radius = CornerRadius::ZERO;
     style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
+    style.separator.extra_interact_width = SEPARATOR_EXTRA;
     style.buttons.show_tab_bar_size = 0.0;
     style.buttons.show_tab_bar_hover_expand = 0.0;
     style.buttons.show_tab_bar_color = Color32::TRANSPARENT;
@@ -148,17 +151,48 @@ fn flyout_margin(skin: &Skin) -> Margin {
 #[derive(Default)]
 pub(super) struct SkinRewriter;
 
-/// Donde [`arm`] deja el skin del frame.
+/// Lo que el workspace le deja al plugin en un frame: el skin y dónde puede haber marcadores.
+#[derive(Clone, Default)]
+pub(super) struct Armed {
+    skin: Option<Arc<Skin>>,
+    /// El `DockArea` y sus ventanas flotantes.
+    pub areas: Vec<Rect>,
+    /// El cuerpo de cada grupo: lo recortado adentro es de los paneles (un cuadro de la paleta
+    /// del color justo de un marcador no se toca).
+    pub bodies: Vec<Rect>,
+}
+
+impl Armed {
+    pub(super) fn new(skin: Arc<Skin>) -> Armed {
+        Armed {
+            skin: Some(skin),
+            ..Default::default()
+        }
+    }
+
+    /// Si lo recortado a `clip` puede ser de egui_dock: toca el `DockArea` o una ventana, y no
+    /// está dentro del cuerpo de un grupo.
+    fn in_scope(&self, clip: Rect) -> bool {
+        let touches = self.areas.iter().any(|a| a.intersect(clip).area() > 0.0);
+        touches
+            && !self
+                .bodies
+                .iter()
+                .any(|b| b.expand(0.5).contains_rect(clip))
+    }
+}
+
+/// Donde [`arm`] deja lo del frame.
 fn rewriter_id() -> Id {
     Id::new("workspace_skin_rewriter")
 }
 
-/// Registra el plugin (una vez por contexto) y le deja `skin` para este frame.
-pub(super) fn arm(ctx: &egui::Context, skin: Arc<Skin>) {
+/// Registra el plugin (una vez por contexto) y le deja `armed` para este frame.
+pub(super) fn arm(ctx: &egui::Context, armed: Armed) {
     if ctx.plugin_opt::<SkinRewriter>().is_none() {
         ctx.add_plugin(SkinRewriter);
     }
-    ctx.data_mut(|d| d.insert_temp(rewriter_id(), Some(skin)));
+    ctx.data_mut(|d| d.insert_temp(rewriter_id(), armed));
 }
 
 impl egui::Plugin for SkinRewriter {
@@ -168,13 +202,17 @@ impl egui::Plugin for SkinRewriter {
 
     fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
         // Solo si el workspace se mostró en este frame (y con Pixel UI).
-        let skin = ctx.data_mut(|d| d.remove_temp::<Option<Arc<Skin>>>(rewriter_id()));
-        let Some(skin) = skin.flatten() else {
+        let armed = ctx
+            .data_mut(|d| d.remove_temp::<Armed>(rewriter_id()))
+            .unwrap_or_default();
+        let Some(skin) = armed.skin.clone() else {
             return;
         };
         let ppp = output.pixels_per_point;
         for clipped in &mut output.shapes {
-            rewrite(&mut clipped.shape, &skin, ppp);
+            if armed.in_scope(clipped.clip_rect) {
+                rewrite(&mut clipped.shape, &skin, ppp);
+            }
         }
     }
 }
@@ -270,22 +308,38 @@ pub(super) fn is_dragged_tab(response: &egui::Response) -> bool {
         && response.ctx.input(|i| i.pointer.is_decidedly_dragging())
 }
 
-/// Si se está arrastrando el grupo `path` (sin barra de pestañas) desde su franja de arriba
+/// El id de la franja de agarre del grupo `path` sin barra de pestañas
 /// (`hidden_tab_bar_controls` en `show/leaf.rs`).
-pub(super) fn hidden_strip_dragged(ctx: &egui::Context, dock_id: Id, path: NodePath) -> bool {
-    let id = dock_id
+pub(super) fn hidden_strip_id(dock_id: Id, path: NodePath) -> Id {
+    dock_id
         .with((path.surface, "surface"))
         .with((path.node, "node"))
-        .with("hidden_tab_bar_drag");
-    ctx.is_being_dragged(id) && ctx.input(|i| i.pointer.is_decidedly_dragging())
+        .with("hidden_tab_bar_drag")
+}
+
+/// Si se está arrastrando el grupo `path` (sin barra de pestañas) desde su franja de arriba.
+pub(super) fn hidden_strip_dragged(ctx: &egui::Context, dock_id: Id, path: NodePath) -> bool {
+    ctx.is_being_dragged(hidden_strip_id(dock_id, path))
+        && ctx.input(|i| i.pointer.is_decidedly_dragging())
+}
+
+/// Si el puntero está sobre la franja de agarre del grupo `path` y es ella la que lo recibe (no
+/// un divisor que la pisa).
+pub(super) fn hidden_strip_hovered(ctx: &egui::Context, dock_id: Id, path: NodePath) -> bool {
+    ctx.read_response(hidden_strip_id(dock_id, path))
+        .is_some_and(|r| r.hovered())
 }
 
 // ---------------------------------------------------------------------------------------------
 // Puntos enteros.
 
 /// Los divisores a puntos enteros (para el frame siguiente): la fracción de cada split, de modo
-/// que el punto medio caiga en un entero.
-pub(super) fn snap<T>(state: &mut DockState<T>) {
+/// que el punto medio caiga en un entero. Con un botón apretado no: un arrastre lento se pegaría
+/// o se adelantaría.
+pub(super) fn snap<T>(ctx: &egui::Context, state: &mut DockState<T>) {
+    if ctx.input(|i| i.pointer.any_down()) {
+        return;
+    }
     for surface in state.iter_surfaces_mut() {
         let Some(tree) = surface.node_tree_mut() else {
             continue;
@@ -399,7 +453,7 @@ pub(super) fn paint_tabs(
         if leaf.tab_bar_hidden {
             let strip = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), GRAB_STRIP));
             let dragged = hidden_strip_dragged(ctx, dock_id, path);
-            if dragged || (ctx.dragged_id().is_none() && ui.rect_contains_pointer(strip)) {
+            if dragged || hidden_strip_hovered(ctx, dock_id, path) {
                 let mut c = *skin.colors();
                 c.canvas = c.text_selection;
                 let line = pixel_ui::etched_hline(
@@ -478,8 +532,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn snapping_puts_a_split_on_a_whole_point() {
+    /// Un split de Color y Library en 0.37 de un rect de 301 de alto (el medio cae en x.37).
+    fn split_state() -> DockState<PanelId> {
         let mut state = DockState::new(vec![PanelId::Color]);
         let [_, _] = state.main_surface_mut().split_below(
             egui_dock::NodeIndex::root(),
@@ -491,11 +545,61 @@ mod tests {
             egui::pos2(0.0, 10.0),
             vec2(200.0, 301.0),
         ));
-        snap(&mut state);
-        let Node::Vertical(split) = &state.main_surface()[egui_dock::NodeIndex::root()] else {
-            panic!("a vertical split");
-        };
-        let mid = split.rect.min.y + split.rect.height() * split.fraction;
+        state
+    }
+
+    fn fraction(state: &DockState<PanelId>) -> f32 {
+        match &state.main_surface()[egui_dock::NodeIndex::root()] {
+            Node::Vertical(split) => split.fraction,
+            _ => panic!("a vertical split"),
+        }
+    }
+
+    #[test]
+    fn snapping_puts_a_split_on_a_whole_point() {
+        let mut state = split_state();
+        snap(&egui::Context::default(), &mut state);
+        let mid = 10.0 + 301.0 * fraction(&state);
         assert!((mid - mid.round()).abs() < 1e-3, "{mid}");
+    }
+
+    #[test]
+    fn splits_are_not_snapped_while_a_button_is_down() {
+        let ctx = egui::Context::default();
+        let at = egui::pos2(50.0, 50.0);
+        let input = egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |_| {});
+        output.textures_delta.clear();
+        let mut state = split_state();
+        snap(&ctx, &mut state);
+        assert_eq!(fraction(&state), 0.37, "an ongoing drag is left alone");
+    }
+
+    #[test]
+    fn markers_are_only_rewritten_outside_the_panel_bodies() {
+        let mut armed = Armed::default();
+        armed.areas.push(Rect::from_min_max(
+            egui::pos2(900.0, 0.0),
+            egui::pos2(1280.0, 800.0),
+        ));
+        let body = Rect::from_min_max(egui::pos2(900.0, 0.0), egui::pos2(1280.0, 399.0));
+        armed.bodies.push(body);
+        // Lo recortado al DockArea (un divisor) o a la pantalla (la zona de destino), sí.
+        assert!(armed.in_scope(armed.areas[0]));
+        assert!(armed.in_scope(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))));
+        // Lo de adentro de un panel (un cuadro de la paleta) o fuera del DockArea, no.
+        assert!(!armed.in_scope(body.shrink(8.0)));
+        assert!(!armed.in_scope(Rect::from_min_size(egui::Pos2::ZERO, vec2(300.0, 200.0))));
     }
 }
