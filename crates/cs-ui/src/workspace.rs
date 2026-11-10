@@ -16,14 +16,6 @@
 //! el marco con `Frame::window(ui.style())` del `Ui` que se le pasa, mientras que el contenido de
 //! cada pestaña usa el estilo del contexto. Si eso cambia al subir de versión, hay que revisarlo.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "solo lo usan los tests y la variable de demo hasta que la tarea 5 de la fase C lo conecte a la app"
-    )
-)]
-
 mod skin;
 
 use std::collections::HashMap;
@@ -49,6 +41,13 @@ pub(crate) enum DockTarget {
     /// Partiendo el grupo `(superficie, nodo)`: el panel va del lado `Split`.
     Split(SurfaceIndex, NodeIndex, Split),
     /// En el grupo con el foco de la superficie principal (o el primero que haya).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "solo los tests por ahora; la tarea 6 acopla desde la tira"
+        )
+    )]
     Focused,
 }
 
@@ -125,6 +124,10 @@ impl Workspace {
     }
 
     /// Si `id` está flotando (en una ventana).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "solo los tests por ahora; lo lee la tarea 6")
+    )]
     pub(crate) fn floating(&self, id: PanelId) -> bool {
         self.state
             .find_tab(&id)
@@ -137,6 +140,10 @@ impl Workspace {
     }
 
     /// Si el grupo de `id` va sin barra de pestañas.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "solo los tests por ahora; lo lee la tarea 6")
+    )]
     pub(crate) fn tab_bar_hidden_of(&self, id: PanelId) -> bool {
         self.state
             .find_tab(&id)
@@ -234,6 +241,13 @@ impl Workspace {
     }
 
     /// Regresa a la tira todos los paneles del grupo `(surface, node)`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "solo los tests por ahora; el botón de colapsar es de la tarea 6"
+        )
+    )]
     pub(crate) fn collapse_leaf(&mut self, surface: SurfaceIndex, node: NodeIndex) {
         let tabs = match self.state.leaf(NodePath { surface, node }) {
             Ok(leaf) => leaf.tabs.clone(),
@@ -286,6 +300,12 @@ struct Viewer<'a> {
     hits: Vec<skin::TabHit>,
     /// Los que egui_dock cerró (sin Pixel UI, con su ×): van a la tira.
     closed: Vec<PanelId>,
+    /// Lo que ocupó a lo ancho el contenido de cada panel dibujado (ver [`host_width`]).
+    extents: Vec<Extent>,
+    /// El estilo del `Ui` anfitrión: egui_dock arma el cuerpo de cada pestaña con `Ui::new`, que
+    /// toma el del contexto, y en el frame en que Pixel UI cambia el estilo los dos no coinciden
+    /// (el panel derecho de antes usaba el del anfitrión, y de ese frame sale su ancho).
+    style: std::sync::Arc<egui::Style>,
 }
 
 impl TabViewer for Viewer<'_> {
@@ -312,27 +332,38 @@ impl TabViewer for Viewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut PanelId) {
         let id = *tab;
+        let spacing = ui.spacing().item_spacing;
+        ui.set_style(self.style.clone());
+        ui.spacing_mut().item_spacing = spacing;
         // El fondo del grupo (dentro del scroll de egui_dock el `max_rect` puede no serlo): hasta
         // ahí llega la lista de Lospec.
         let bottom = ui.clip_rect().bottom().min(ui.max_rect().bottom()).floor();
+        // El cuerpo (sin el margen), para comparar con lo que ocupa el contenido.
+        let body = ui.max_rect();
         let panel = PanelCtx {
             modal: self.modal,
             bottom: Some(bottom),
         };
-        let action = match id.spec().body {
+        // En un `scope`: su rect es lo que ocupó el contenido (el `Ui` del cuerpo ya viene
+        // agrandado al cuerpo entero).
+        let app = &mut *self.app;
+        let inner = ui.scope(|ui| match id.spec().body {
             Body::Fixed => {
                 ui.set_min_height(ui.available_height());
-                self.app.draw_panel(ui, id, &panel)
+                app.draw_panel(ui, id, &panel)
             }
             Body::Fit | Body::Tall => {
                 let area = egui::ScrollArea::vertical()
                     .id_salt(("workspace_scroll", id.key()))
                     .auto_shrink([false, false]);
-                let app = &mut *self.app;
                 pixel_ui::scroll(ui, area, |ui| app.draw_panel(ui, id, &panel))
             }
-        };
-        self.actions.extend(action);
+        });
+        self.actions.extend(inner.inner);
+        self.extents.push(Extent {
+            id,
+            delta: inner.response.rect.right() - body.right(),
+        });
     }
 
     fn on_tab_button(&mut self, tab: &mut PanelId, response: &egui::Response) {
@@ -374,6 +405,27 @@ impl TabViewer for Viewer<'_> {
     }
 }
 
+/// Lo que el contenido de un panel dibujado se pasó a lo ancho del borde derecho de su cuerpo
+/// (negativo si le sobró lugar).
+#[derive(Clone, Copy, Debug)]
+struct Extent {
+    id: PanelId,
+    delta: f32,
+}
+
+/// El ancho que el workspace le reporta a su anfitrión (desde su borde izquierdo), un
+/// `egui::Panel` que se ajusta a lo que ocupa su contenido: de ese ajuste sale el ancho de
+/// fábrica de la columna en los primeros frames, cuando la escala y la fuente de Pixel UI todavía
+/// cambian. Como el panel derecho de antes con Color adentro (que en esos frames quedaba igual en
+/// un ancho entero): el ancho en puntos enteros del `DockArea` (`dock_width`) más lo que se pase
+/// el contenido de un panel acoplado; si el rect del anfitrión no era de puntos enteros
+/// (`whole` falso, un frame de transición), redondeado hacia arriba. Si al contenido le sobra
+/// lugar no encoge: un panel angosto no achica la columna.
+fn host_width(dock_width: f32, whole: bool, docked: impl Iterator<Item = Extent>) -> f32 {
+    let width = dock_width + docked.map(|e| e.delta).fold(0.0, f32::max);
+    if whole { width } else { width.ceil() }
+}
+
 /// El id del `DockArea` del workspace.
 fn dock_id() -> egui::Id {
     egui::Id::new("workspace_dock")
@@ -413,9 +465,19 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
         actions: Vec::new(),
         hits: Vec::new(),
         closed: Vec::new(),
+        extents: Vec::new(),
+        style: ui.style().clone(),
     };
     let area = ui.available_rect_before_wrap();
-    ui.scope(|ui| {
+    // El `DockArea`, de un ancho de puntos enteros (egui_dock solo ajusta a píxel físico) y en un
+    // `Ui` aparte (ocupa todo su rect): al anfitrión se le reporta el ancho de lo acoplado (ver
+    // `host_width`).
+    let dock_rect = egui::Rect::from_x_y_ranges(
+        area.left().ceil()..=area.right().floor().max(area.left().ceil()),
+        area.y_range(),
+    );
+    {
+        let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(dock_rect));
         // El marco de las ventanas flotantes (solo lo leen los marcos).
         if let Some(skin) = skin {
             skin::window_visuals(ui.style_mut(), skin);
@@ -436,14 +498,22 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
             .hidable_tab_bars(true)
             .draggable_tabs(!modal)
             .show_inside(ui, &mut viewer);
-    });
+    }
     let Viewer {
         app,
         actions,
         hits,
         mut closed,
+        extents,
         ..
     } = viewer;
+    let docked = extents.into_iter().filter(|e| workspace.docked(e.id));
+    let whole = area.left() == dock_rect.left() && area.right() == dock_rect.right();
+    let width = host_width(dock_rect.width(), whole, docked);
+    ui.advance_cursor_after_rect(egui::Rect::from_min_size(
+        area.min,
+        egui::vec2(width, area.height()),
+    ));
     // El nombre de cada pestaña para los lectores de pantalla (el título es de 1 pt) y, con
     // Pixel UI, las del kit encima y su ×.
     let active: Vec<PanelId> = workspace
@@ -539,6 +609,25 @@ mod tests {
 
     use super::*;
     use crate::panel_registry::PanelId;
+
+    #[test]
+    fn the_host_fits_the_docked_contents_like_the_old_right_panel() {
+        let e = |delta| Extent {
+            id: PanelId::Color,
+            delta,
+        };
+        // Se pasa: crece lo que se pasó.
+        assert_eq!(host_width(219.0, true, [e(43.875)].into_iter()), 262.875);
+        // Le sobra (o nada se dibujó): el ancho del DockArea, sin encoger.
+        assert_eq!(host_width(263.0, true, [e(-40.0)].into_iter()), 263.0);
+        assert_eq!(host_width(263.0, true, std::iter::empty()), 263.0);
+        // Con el anfitrión en una fracción de punto: a puntos enteros, hacia arriba.
+        assert_eq!(
+            host_width(262.0, false, [e(-40.0), e(0.875)].into_iter()),
+            263.0
+        );
+        assert_eq!(host_width(263.0, false, [e(0.0)].into_iter()), 263.0);
+    }
 
     #[test]
     fn essentials_docks_color_and_strips_the_rest() {

@@ -129,14 +129,20 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }
 
-/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón.
+/// El dock: un botón por panel de la tira (`strip`, los que no están acoplados ni flotando) y el
+/// panel abierto, flotando a la izquierda de su botón.
 pub fn show(
     ui: &mut Ui,
     skin: Option<&Skin>,
+    strip: &[DockPanel],
     timeline: &mut bool,
     preview: &mut bool,
 ) -> DockOutput {
     let mut out = DockOutput::default();
+    // Un panel que dejó la tira (se acopló o flota) ya no se abre desde ella.
+    if open_panel(ui.ctx()).is_some_and(|p| !strip.contains(&p)) {
+        set_open(ui.ctx(), None);
+    }
     let open = open_panel(ui.ctx());
     let mut anchors = Vec::new();
     ui.spacing_mut().item_spacing.y = BUTTON_GAP;
@@ -146,7 +152,7 @@ pub fn show(
         column.min.y += TOP_AIR;
         column.max.y -= BOTTOM_AIR;
     }
-    for &panel in DockPanel::DOCK {
+    for &panel in strip {
         let is_open = open == Some(panel);
         let response = match skin {
             Some(skin) => pixel_button(
@@ -199,7 +205,8 @@ pub fn show(
         | DockPanel::Model => out.app_panel = Some((panel, anchor)),
         #[cfg(not(target_arch = "wasm32"))]
         DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
-        // Los que no son botones del dock (no están en `PanelId::DOCK`).
+        // Los que no son botones del dock (no están en `PanelId::DOCK`): si llegan a la tira (un
+        // grupo colapsado), su botón todavía no abre nada.
         DockPanel::Tools | DockPanel::Color | DockPanel::Timeline | DockPanel::Preview => {}
     }
     out

@@ -104,6 +104,8 @@ pub(super) fn plain_style(ui_style: &egui::Style) -> egui_dock::Style {
     style.main_surface_border_stroke = Stroke::NONE;
     style.tab.tab_body.stroke = Stroke::NONE;
     style.tab.tab_body.corner_radius = CornerRadius::ZERO;
+    // El fondo de los paneles de egui, como el panel derecho de antes (no el de las ventanas).
+    style.tab.tab_body.bg_fill = ui_style.visuals.panel_fill;
     style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
     style.separator.extra_interact_width = SEPARATOR_EXTRA;
     style.buttons.show_tab_bar_size = 0.0;

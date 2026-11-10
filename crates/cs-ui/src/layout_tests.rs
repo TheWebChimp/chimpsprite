@@ -11324,3 +11324,118 @@ fn the_font_settings_show_the_family_and_new_variant_creates_the_bold() {
     assert_ne!(e.active, bold);
     assert_eq!(e.artboard().name, "Mine");
 }
+
+// --- El workspace en la columna derecha (fase C) ---
+
+/// Cuántos botones `label` hay en el panel `panel` (por el centro de su rect).
+fn buttons_in(h: &LayoutHarness, label: &str, panel: &str) -> usize {
+    let rect = h.panel(panel);
+    h.buttons
+        .iter()
+        .filter(|(l, r)| l == label && rect.contains(r.center()))
+        .count()
+}
+
+#[test]
+fn with_essentials_the_right_panel_and_the_color_controls_stay_where_they_were() {
+    use crate::panel_registry::PanelId;
+    let h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.workspace.docked(PanelId::Color));
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    // Las medidas de antes de la fase C (1200×800, Pixel UI).
+    assert_eq!(
+        h.panel("palette"),
+        Rect::from_min_max(pos2(937.0, 63.0), pos2(1200.0, 780.0))
+    );
+    assert_eq!(
+        h.panel("dock"),
+        Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
+    );
+    for (label, min, max) in [
+        ("Lock palette", pos2(947.0, 71.0), pos2(972.0, 88.0)),
+        ("Palette menu", pos2(971.0, 71.0), pos2(996.0, 88.0)),
+        ("Mask", pos2(1166.0, 71.0), pos2(1190.0, 88.0)),
+        ("Palette height", pos2(945.0, 299.0), pos2(1192.0, 305.0)),
+        ("R", pos2(974.0, 305.0), pos2(1004.0, 321.0)),
+        (
+            "Saturation and value",
+            pos2(948.0, 327.0),
+            pos2(1182.0, 391.0),
+        ),
+        ("Alpha", pos2(948.0, 409.0), pos2(1182.0, 422.0)),
+    ] {
+        assert_eq!(h.node(label), Rect::from_min_max(min, max), "{label}");
+    }
+    assert_color_editor_whole(&h);
+    // Color va solo: sin barra de pestañas (ni su pestaña).
+    assert_eq!(buttons_in(&h, "Color", "palette"), 0);
+    // La tira: un botón por panel de DOCK.
+    for &p in PanelId::DOCK {
+        assert_eq!(buttons_in(&h, p.label(), "dock"), 1, "{p:?}");
+    }
+}
+
+/// Library acoplado junto a Color (como `CHIMPSPRITE_DEMO_WORKSPACE=library-tab`).
+fn library_beside_color() -> LayoutHarness {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.dock(PanelId::Library, DockTarget::Focused);
+    for _ in 0..2 {
+        h.frame();
+    }
+    h
+}
+
+#[test]
+fn a_panel_docked_beside_color_gets_kit_tabs_and_leaves_the_strip() {
+    let h = library_beside_color();
+    let palette = h.panel("palette");
+    // La columna derecha no se movió.
+    assert_eq!(
+        palette,
+        Rect::from_min_max(pos2(937.0, 63.0), pos2(1200.0, 780.0))
+    );
+    // Las dos pestañas arriba de la columna, con la × del kit en la de Library.
+    let (color, library) = (h.button("Color"), h.button("Library"));
+    for tab in [color, library] {
+        assert!(palette.contains_rect(tab), "{tab:?} in {palette:?}");
+        assert_eq!(tab.top(), palette.top(), "{tab:?}");
+        assert_eq!(tab.min, tab.min.round(), "whole points: {tab:?}");
+    }
+    assert!(color.right() <= library.left(), "{color:?} {library:?}");
+    assert!(library.contains_rect(h.button("Close Library")));
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Close Color"));
+    // El botón de Library ya no está en la tira; los demás sí.
+    assert_eq!(buttons_in(&h, "Library", "dock"), 0);
+    assert_eq!(buttons_in(&h, "Artboards", "dock"), 1);
+}
+
+#[test]
+fn closing_a_docked_tab_sends_it_back_to_the_strip() {
+    use crate::panel_registry::PanelId;
+    let mut h = library_beside_color();
+    let close = h.button("Close Library");
+    h.click(close.center(), PointerButton::Primary);
+    assert!(!h.app.workspace.docked(PanelId::Library));
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    // Color vuelve a ir solo (sin pestañas) y Library, a su botón de la tira.
+    assert_eq!(buttons_in(&h, "Color", "palette"), 0);
+    assert_eq!(buttons_in(&h, "Library", "palette"), 0);
+    assert_eq!(buttons_in(&h, "Library", "dock"), 1);
+}
+
+#[test]
+fn docking_a_panel_whose_flyout_is_open_closes_the_flyout() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    assert_eq!(crate::dock::open_panel(&h.ctx), Some(PanelId::Library));
+    h.app.workspace.dock(PanelId::Library, DockTarget::Focused);
+    h.frame();
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
+    // Library, una sola vez: su pestaña en la columna derecha.
+    assert_eq!(h.buttons.iter().filter(|(l, _)| l == "Library").count(), 1);
+    assert_eq!(buttons_in(&h, "Library", "palette"), 1);
+}

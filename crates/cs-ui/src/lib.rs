@@ -1392,8 +1392,8 @@ impl ChimpApp {
         use crate::app_panels::{PanelAction, PanelCtx};
         use crate::panel_registry::PanelId;
         self.begin_panel_frame();
-        // Cómo se hospedan las regiones fijas: apagadas con un diálogo abierto (Color, solo sus
-        // menús y la instancia); ninguna es Lospec, así que el fondo no importa.
+        // Cómo se hospedan las regiones fijas: apagadas con un diálogo abierto; ninguna es Lospec,
+        // así que el fondo no importa (los paneles del workspace los hospeda `workspace::show`).
         let fixed = PanelCtx {
             modal,
             bottom: None,
@@ -1468,8 +1468,8 @@ impl ChimpApp {
             });
         // El panel derecho antes que la línea de tiempo: va a todo el alto, hasta la barra de
         // estado, y la línea de tiempo termina a su izquierda.
-        // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
-        let mut color_action = None;
+        // Adentro va el workspace (Color acoplado y lo que se le junte): lo que piden sus paneles
+        // lo aplica `workspace::show` al final, con la app entera.
         // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
         self.doc.editor.palette_locked = self.view.palette_locked;
         // El ancho guardado de la columna de colores; sin uno, el de fábrica.
@@ -1499,7 +1499,11 @@ impl ChimpApp {
                 });
             }
         }
-        let mut panel = egui::Panel::right("palette").default_size(saved_width);
+        // El margen de Color lo pone el cuerpo de su grupo (ver `workspace`): el panel va sin él y
+        // el `DockArea` lo llena de borde a borde.
+        let mut panel = egui::Panel::right("palette")
+            .default_size(saved_width)
+            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0));
         if let Some(skin) = skin {
             // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
             // márgenes del panel.
@@ -1509,8 +1513,8 @@ impl ChimpApp {
         }
         let palette_panel = panel.show(ui, |ui| {
             // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la
-            // instancia (lo decide el panel).
-            color_action = self.draw_panel(ui, PanelId::Color, &fixed);
+            // instancia (lo decide el panel); los demás paneles acoplados se apagan.
+            workspace::show(self, ui, modal);
         });
         // Lo que el usuario arrastró se guarda con la vista (el panel ya respetó su mínimo).
         let width = palette_panel.response.rect.width();
@@ -1567,7 +1571,13 @@ impl ChimpApp {
                 .show_separator_line(skin.is_none())
                 .show(ui, |ui| {
                     ui.add_enabled_ui(!modal, |ui| {
-                        dock::show(ui, skin, &mut self.view.timeline, &mut self.view.preview)
+                        dock::show(
+                            ui,
+                            skin,
+                            self.workspace.strip(),
+                            &mut self.view.timeline,
+                            &mut self.view.preview,
+                        )
                     })
                     .inner
                 })
@@ -1593,10 +1603,7 @@ impl ChimpApp {
                 self.apply_panel_action(ui.ctx(), action);
             }
         }
-        // Después de los paneles: lo pedido desde el derecho necesita `self` entero.
-        if let Some(action) = color_action {
-            self.apply_panel_action(ui.ctx(), action);
-        }
+        // Después de los paneles: lo pedido desde el panel 3D necesita `self` entero.
         if let Some(action) = model_action {
             self.apply_panel_action(ui.ctx(), action);
         }
