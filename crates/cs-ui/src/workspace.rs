@@ -401,6 +401,18 @@ impl Workspace {
         w
     }
 
+    /// Cuántas veces está `id` en el acomodo: en la tira y en el árbol (para los tests: una).
+    #[cfg(test)]
+    pub(crate) fn places(&self, id: PanelId) -> usize {
+        let in_strip = self.strip.iter().filter(|&&p| p == id).count();
+        let in_tree = self
+            .state
+            .iter_all_tabs()
+            .filter(|(_, p)| **p == id)
+            .count();
+        in_strip + in_tree
+    }
+
     /// Todos los paneles del árbol (acoplados y flotantes), con repetidos si los hubiera.
     #[cfg(test)]
     pub(crate) fn state_tabs(&self) -> Vec<PanelId> {
@@ -1214,6 +1226,21 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     for id in closed {
         workspace.to_strip(id);
     }
+    // Una pestaña (o un grupo sin barra) de egui_dock soltada fuera de la columna y de las
+    // ventanas: egui_dock no hace nada (solo suelta sobre sus grupos y su `DockArea` es la
+    // columna); aquí se pone a flotar donde se soltó, como un ícono de la tira sobre el lienzo.
+    let windows: Vec<egui::Rect> = workspace
+        .state
+        .iter_surfaces_indexed()
+        .filter(|(s, _)| !s.is_main())
+        .filter_map(|(s, _)| ui.ctx().memory(|m| m.area_rect(skin::window_area_id(s))))
+        .collect();
+    let outside = |p: egui::Pos2| !dock_rect.contains(p) && !windows.iter().any(|r| r.contains(p));
+    if let Some((id, at)) = tab_drag_released(ui.ctx(), &workspace.state, &hits)
+        && outside(at)
+    {
+        workspace.float(id, at);
+    }
     if let Some((surface, node)) = collapse_buttons(ui, skin, &workspace, modal) {
         workspace.collapse_to_icons(surface, node);
     }
@@ -1230,6 +1257,46 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     app.workspace = workspace;
     for action in actions {
         app.apply_panel_action(ui.ctx(), action);
+    }
+}
+
+/// El panel que egui_dock arrastraba y dónde se soltó, el frame en que se suelta. Mientras se
+/// arrastra (por su pestaña o por la franja de un grupo sin barra), se recuerda cuál es: el frame
+/// de soltar egui_dock ya no lo dice.
+fn tab_drag_released(
+    ctx: &egui::Context,
+    state: &DockState<PanelId>,
+    hits: &[skin::TabHit],
+) -> Option<(PanelId, egui::Pos2)> {
+    let memory = egui::Id::new("workspace_tab_drag");
+    if ctx.input(|i| i.pointer.primary_released()) {
+        let id = ctx.data_mut(|d| d.remove_temp::<Option<PanelId>>(memory))??;
+        return Some((id, ctx.input(|i| i.pointer.latest_pos())?.round()));
+    }
+    let dragged = hits
+        .iter()
+        .find(|h| skin::is_dragged_tab(&h.response))
+        .map(|h| h.id)
+        .or_else(|| {
+            state
+                .iter_leaves()
+                .find(|(path, _)| skin::hidden_strip_dragged(ctx, dock_id(), *path))
+                .and_then(|(_, leaf)| leaf.tabs.get(leaf.active.0).copied())
+        });
+    ctx.data_mut(|d| d.insert_temp(memory, dragged));
+    None
+}
+
+/// Si `shape` (o lo que lleva adentro) tiene un rect con un color marcador de la piel: el plugin
+/// tenía que cambiarlo por una pieza del skin.
+#[cfg(test)]
+pub(crate) fn has_marker(shape: &egui::Shape) -> bool {
+    match shape {
+        egui::Shape::Vec(v) => v.iter().any(has_marker),
+        egui::Shape::Rect(r) => {
+            skin::MARKERS.contains(&r.fill) || skin::MARKERS.contains(&r.stroke.color)
+        }
+        _ => false,
     }
 }
 

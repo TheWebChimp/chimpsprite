@@ -11972,3 +11972,77 @@ fn with_many_tabs_the_collapse_button_does_not_cover_a_close_mark() {
     }
     assert!(checked > 0);
 }
+
+#[test]
+fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for to_canvas in [false, true] {
+        // Library en el grupo de Color (con su barra de pestañas), Groom solo debajo.
+        let mut h = groom_below_color(300.0);
+        let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+        h.app
+            .workspace
+            .dock(PanelId::Library, DockTarget::Leaf(s, n));
+        h.frame();
+        h.frame();
+        let groom = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
+        let from = h.button("Library").center();
+        // Al borde izquierdo de Groom (lo parte) o al lienzo (una ventana).
+        let to = if to_canvas {
+            h.canvas.expect("the canvas").center()
+        } else {
+            pos2(groom.left() + groom.width() * 0.05, groom.center().y)
+        };
+        h.frame_with(vec![Event::PointerMoved(from)]);
+        h.frame_with(vec![press(from, true)]);
+        let mut ghost = false;
+        // Al final, un rato quieto: egui_dock se queda con el grupo por el que pasó el puntero
+        // hasta `max_preference_time` (0.3 s; cada frame del arnés es de 0.05 s).
+        let path = [0.1, 0.3, 0.5, 0.7, 0.9].into_iter().chain([1.0; 8]);
+        for t in path {
+            let at = from + (to - from) * t;
+            h.frame_with(vec![Event::PointerMoved(at)]);
+            // Ningún marcador sin cambiar por su pieza (la zona de destino, `M_DROP`, tampoco).
+            assert!(
+                !h.shapes
+                    .iter()
+                    .any(|c| crate::workspace::has_marker(&c.shape)),
+                "canvas {to_canvas}: a marker left at {t}"
+            );
+            // El fantasma de la pestaña bajo el puntero: egui_dock da la respuesta de la que se
+            // arrastra con `id.with("dragged")` (ver `skin::is_dragged_tab`).
+            ghost |= h.texts.iter().any(|(text, p)| {
+                text == "Library" && (p.x - at.x).abs() < 60.0 && (p.y - at.y).abs() < 20.0
+            });
+        }
+        assert!(ghost, "canvas {to_canvas}: the ghost follows the pointer");
+        h.frame_with(vec![press(to, false)]);
+        h.frame();
+        h.frame();
+        let w = &h.app.workspace;
+        for &id in crate::panel_registry::PanelId::ALL {
+            let expected = usize::from(PanelId::DOCK.contains(&id) || id == PanelId::Color);
+            assert_eq!(w.places(id), expected, "canvas {to_canvas}: {id:?}");
+        }
+        if to_canvas {
+            assert!(w.floating(PanelId::Library));
+        } else {
+            assert!(w.docked(PanelId::Library));
+            let library = w.leaf_rect(PanelId::Library).unwrap();
+            let groom = w.leaf_rect(PanelId::Groom).unwrap();
+            assert_ne!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Groom));
+            assert_ne!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+            assert!(
+                library.right() <= groom.left() + 1.0,
+                "{library:?} left of {groom:?}"
+            );
+        }
+    }
+}

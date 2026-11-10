@@ -76,6 +76,17 @@ fn borders(piece: &Piece) -> [f32; 4] {
 /// Formas que dibujan `piece` estirada sobre `rect` (en 9-slice si tiene centro), alineadas a
 /// píxeles de pantalla.
 pub(crate) fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> Vec<Shape> {
+    nine_slice_shapes(piece, rect, pixels_per_point, true)
+}
+
+/// Como [`piece_shapes`], sin el centro del 9-slice (solo el marco: lo de abajo se ve). Una pieza
+/// sin 9-slice va entera.
+pub(crate) fn piece_ring_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> Vec<Shape> {
+    nine_slice_shapes(piece, rect, pixels_per_point, false)
+}
+
+/// Las mallas de `piece` estirada a `rect` (con su 9-slice, con o sin el centro).
+fn nine_slice_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32, center: bool) -> Vec<Shape> {
     let ppp = pixels_per_point;
     let min = (rect.min.to_vec2() * ppp).round();
     let max = (rect.max.to_vec2() * ppp).round();
@@ -87,7 +98,13 @@ pub(crate) fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> 
     );
     let [w, h] = piece.size;
     let parts: Vec<(IRect, IRect)> = match piece.center {
-        Some(center) => nine_slice(dest, piece.size, center, ppp.round().max(1.0) as u32).to_vec(),
+        // El centro es la parte 4 (de izquierda a derecha y de arriba abajo).
+        Some(nine) => nine_slice(dest, piece.size, nine, ppp.round().max(1.0) as u32)
+            .into_iter()
+            .enumerate()
+            .filter(|&(i, _)| center || i != 4)
+            .map(|(_, part)| part)
+            .collect(),
         None => vec![(IRect::new(0, 0, w as i32, h as i32), dest)],
     };
     let (w, h) = (w as f32, h as f32);

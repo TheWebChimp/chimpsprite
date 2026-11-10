@@ -248,8 +248,8 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32) {
             } else if r.fill == M_WINDOW {
                 *shape = Shape::Vec(frame_shapes(skin, r.rect, ppp));
             } else if r.stroke.color == M_DROP {
-                // El contorno de "soltar aquí = ventana nueva".
-                let mut s = Shape::Vec(frame_shapes(skin, r.rect, ppp));
+                // El contorno de "soltar aquí = ventana nueva" (sin el centro: lo de abajo se ve).
+                let mut s = Shape::Vec(ring_shapes(skin, r.rect, ppp));
                 fade(&mut s, NEW_WINDOW_ALPHA);
                 *shape = s;
             }
@@ -276,17 +276,36 @@ fn etched_in(rect: Rect, colors: &SkinColors, ppp: f32) -> Shape {
     }
 }
 
-/// La zona de destino: la franja de selección a media luz dentro del marco `menu.side`.
+/// La zona de destino: el marco `menu.side` sin su centro (el panel de abajo se ve) y, encima,
+/// la franja de selección a media luz adentro.
 pub(super) fn drop_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
+    let mut out = ring_shapes(skin, rect, ppp);
+    let inside = rect - flyout_margin(skin);
     let fill = match skin.piece(DROP_FILL, WidgetState::Normal) {
-        Some(p) => pixel_ui::piece_shapes(p, rect.shrink(2.0), ppp),
-        None => vec![Shape::rect_filled(rect, 0.0, skin.colors().text_selection)],
+        Some(p) => pixel_ui::piece_shapes(p, inside, ppp),
+        None => vec![Shape::rect_filled(
+            inside,
+            0.0,
+            skin.colors().text_selection,
+        )],
     };
     let mut fill = Shape::Vec(fill);
     fade(&mut fill, DROP_ALPHA);
-    let mut out = vec![fill];
-    out.extend(frame_shapes(skin, rect, ppp));
+    out.push(fill);
     out
+}
+
+/// El marco `menu.side` en 9-slice sin su centro (sin el skin, un borde de 1 punto).
+fn ring_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
+    match skin.piece(FLYOUT, WidgetState::Normal) {
+        Some(p) => pixel_ui::piece_ring_shapes(p, rect, ppp),
+        None => vec![Shape::rect_stroke(
+            rect,
+            0.0,
+            Stroke::new(1.0, skin.colors().outline),
+            egui::StrokeKind::Inside,
+        )],
+    }
 }
 
 /// El marco `menu.side` en 9-slice.
