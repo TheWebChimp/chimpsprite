@@ -1491,13 +1491,17 @@ impl ChimpApp {
         // lo aplica `workspace::show` al final, con la app entera.
         // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
         self.doc.editor.palette_locked = self.view.palette_locked;
-        // Lo más angosta que puede quedar la columna: con Pixel UI, la fila más ancha de Color
-        // que no se parte (con los márgenes del panel); y cada panel acoplado en su mínimo (los
-        // que van lado a lado, sumados), con o sin Pixel UI.
-        let column_min = self
-            .workspace
-            .column_min_width(ui, skin)
-            .max(skin.map_or(0.0, |skin| color_panel::panel_min_size(ui, skin)));
+        // Lo más angosta que puede quedar la columna: con Pixel UI y Color acoplado, la fila más
+        // ancha de Color que no se parte (con los márgenes del panel); y cada panel acoplado en su
+        // mínimo (los que van lado a lado, sumados), con o sin Pixel UI. Con Color flotando, el
+        // suyo no cuenta (va en su ventana).
+        let color_min = match skin {
+            Some(skin) if self.workspace.docked(PanelId::Color) => {
+                color_panel::panel_min_size(ui, skin)
+            }
+            _ => 0.0,
+        };
+        let column_min = self.workspace.column_min_width(ui, skin).max(color_min);
         // El ancho guardado de la columna de colores; sin uno, el de fábrica (nunca menos que
         // el mínimo).
         let saved_width = self

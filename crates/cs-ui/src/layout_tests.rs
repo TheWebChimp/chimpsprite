@@ -12046,3 +12046,18 @@ fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
         }
     }
 }
+
+#[test]
+fn with_color_floating_the_column_does_not_keep_colors_minimum() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.float(PanelId::Color, pos2(320.0, 120.0));
+    h.frame();
+    h.frame();
+    assert!(h.app.workspace.floating(PanelId::Color));
+    // La columna vacía se puede angostar más que el mínimo de Color (que está en su ventana).
+    let panel = h.panel("palette");
+    let edge = pos2(panel.left(), panel.center().y);
+    drag(&mut h, edge, edge + vec2(150.0, 0.0));
+    assert_eq!(h.panel("palette").width(), panel.width() - 150.0);
+}
