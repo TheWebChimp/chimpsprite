@@ -18,7 +18,7 @@ use cs_core::{AnimDirection, ArtboardId, Playback};
 /// El lugar del dibujo, de fábrica.
 pub const VIEW: Vec2 = vec2(192.0, 144.0);
 /// Lo más chico y lo más grande que se puede hacer con la agarradera.
-const MIN_VIEW: Vec2 = vec2(96.0, 64.0);
+pub(crate) const MIN_VIEW: Vec2 = vec2(96.0, 64.0);
 const MAX_VIEW: Vec2 = vec2(720.0, 540.0);
 /// La agarradera: un cuadro de este lado en la esquina de abajo a la derecha de la vista.
 const GRIP: f32 = 9.0;

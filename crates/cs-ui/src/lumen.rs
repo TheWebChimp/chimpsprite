@@ -25,10 +25,6 @@ pub const REFERENCE_WIDTH: f32 = 434.0;
 /// Lo más angosto en que se ve bien (medido): los tres botones del pie en una fila (New Sprite,
 /// Add as Layer y Add as Artboard miden 216 con su aire). Los mapas, los controles y la vista
 /// previa, uno debajo de otro.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
-)]
 pub const MIN_WIDTH: f32 = 216.0;
 /// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno) y abrir y
 /// quitar van en la caja de cada mapa (sin su fila de botones).

@@ -37,7 +37,6 @@ pub const REFERENCE_WIDTH: f32 = CONTENT_W + pixel_ui::SCROLL_BAR;
 /// Lo más angosto del panel: por ahora, su ancho de referencia. Baja cuando se migren el título,
 /// la vista Edit (Test Drive mide 284) y la de Kerning; la de Config ya llega a
 /// [`CONFIG_MIN_WIDTH`].
-#[expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")]
 pub const MIN_WIDTH: f32 = REFERENCE_WIDTH;
 /// El ancho más chico en que la vista Config cabe sin encimarse ni salirse (medido): lo más ancho
 /// que no se parte es Weight con su select (32 + 5 + 112).

@@ -47,6 +47,7 @@ mod model_dialog;
 mod model_panel;
 mod palette_ops;
 mod palette_ui;
+mod panel_registry;
 mod scripts;
 mod select_dialogs;
 mod sheet_dialog;
@@ -1682,7 +1683,10 @@ impl ChimpApp {
                 )
             }
             // Sin Pixel UI, la barra con nombres.
-            None => (184.0, egui::Frame::side_top_panel(ui.style())),
+            None => (
+                pixel_ui::TOOLBAR_WIDTH_PLAIN,
+                egui::Frame::side_top_panel(ui.style()),
+            ),
         };
         egui::Panel::left("tools")
             .resizable(false)
@@ -1703,7 +1707,11 @@ impl ChimpApp {
         self.doc.editor.palette_locked = self.view.palette_locked;
         let tiles = self.doc.editor.tiles_mode();
         // El ancho guardado de la columna de colores; sin uno, el de fábrica.
-        let saved_width = self.view.palette_width.unwrap_or(220.0).max(1.0);
+        let saved_width = self
+            .view
+            .palette_width
+            .unwrap_or(color_panel::DEFAULT_WIDTH)
+            .max(1.0);
         // Los primeros cuadros egui guarda el ancho del panel con medidas que todavía cambian
         // (la fuente y la escala del skin rigen después): el guardado se impone hasta que el
         // usuario toca algo, y recién entonces se guarda lo que arrastre.
@@ -1851,7 +1859,7 @@ impl ChimpApp {
         {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
-                .default_size(190.0);
+                .default_size(dock::TIMELINE_DEFAULT_HEIGHT);
             // Con Pixel UI, la caja del diseño sobre el fondo del skin, sin la línea de egui.
             if let Some(skin) = skin {
                 panel = panel

@@ -705,7 +705,7 @@ fn confirm_window(
 const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
 
 /// El panel Lospec del dock: el ancho de su contenido.
-const LOSPEC_PANEL_W: f32 = 364.0;
+pub(crate) const LOSPEC_PANEL_W: f32 = 364.0;
 /// La franja de arriba del panel (frame 8): el logo de Lospec y las franjas de colores (de 25 px,
 /// contra la luz de la derecha), de 29 de alto, debajo de la luz de arriba.
 const BAND_H: f32 = 29.0;

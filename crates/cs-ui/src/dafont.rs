@@ -28,10 +28,6 @@ pub const REFERENCE_WIDTH: f32 = 364.0;
 /// Submit debajo; en las tarjetas, las descargas en una línea y los botones debajo. Son 208, más
 /// 2: con la fila de los campos justo del ancho del campo, taffy 0.9 la mide como si cada campo
 /// fuera en su fila (y la deja más alta).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
-)]
 pub const MIN_WIDTH: f32 = 210.0;
 /// Lo que queda debajo de la lista hasta el final de la pantalla (el borde del panel y la barra
 /// de estado).

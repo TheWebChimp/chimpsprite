@@ -55,6 +55,9 @@ use crate::pixel_ui::Tip as _;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 use crate::tab_bar;
 
+/// El ancho de fábrica de la columna de colores (el guardado, si hay, manda).
+pub(crate) const DEFAULT_WIDTH: f32 = 220.0;
+
 /// La división entre la caja de la paleta y el editor: 6 filas de aire, sin línea (se arrastra
 /// igual). En el diseño, sin división, eran 5 filas de aire (y 327..331).
 pub const SPLITTER_HEIGHT: f32 = 6.0;
