@@ -207,6 +207,7 @@ pub fn show(
         DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
         // Los que no son botones del dock (no están en `PanelId::DOCK`): si llegan a la tira (un
         // grupo colapsado), su botón todavía no abre nada.
+        // TODO(tarea 6): Color no debe poder colapsarse a la tira (o necesita un flyout).
         DockPanel::Tools | DockPanel::Color | DockPanel::Timeline | DockPanel::Preview => {}
     }
     out

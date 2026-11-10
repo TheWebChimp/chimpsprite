@@ -11439,3 +11439,82 @@ fn docking_a_panel_whose_flyout_is_open_closes_the_flyout() {
     assert_eq!(h.buttons.iter().filter(|(l, _)| l == "Library").count(), 1);
     assert_eq!(buttons_in(&h, "Library", "palette"), 1);
 }
+
+/// Groom acoplado debajo de Color (como `CHIMPSPRITE_DEMO_WORKSPACE=split`) con la columna
+/// guardada de 137 (la del usuario): unos frames para que el acomodo se asiente.
+fn groom_below_color(palette_width: f32) -> LayoutHarness {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let view = ViewSettings {
+        palette_width: Some(palette_width),
+        ..pixel_ui()
+    };
+    let mut h = LayoutHarness::new(view, true);
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Below));
+    for _ in 0..4 {
+        h.frame();
+    }
+    h
+}
+
+#[test]
+fn a_docked_panel_never_gets_narrower_than_its_minimum() {
+    use crate::panel_registry::PanelId;
+    let h = groom_below_color(137.0);
+    let column = h.panel("palette");
+    // El mínimo de Groom, con el margen de los paneles del dock y su barra de scroll.
+    let min = crate::groom::MIN_WIDTH
+        + 2.0 * crate::dock::FLYOUT_MARGIN as f32
+        + crate::pixel_ui::SCROLL_BAR;
+    assert!(column.width() >= min, "{column:?} vs {min}");
+    // Todo lo de Groom entra a lo ancho en su grupo (nada cortado a la derecha).
+    let leaf = h
+        .app
+        .workspace
+        .leaf_rect(PanelId::Groom)
+        .expect("Groom's leaf");
+    let inside: Vec<_> = h
+        .nodes
+        .iter()
+        .filter(|(_, r)| leaf.contains(r.center()))
+        .collect();
+    assert!(!inside.is_empty());
+    for (label, r) in inside {
+        assert!(
+            r.left() >= leaf.left() && r.right() <= leaf.right(),
+            "{label} {r:?} in {leaf:?}"
+        );
+    }
+}
+
+#[test]
+fn with_a_panel_docked_a_click_does_not_change_the_columns_width() {
+    use crate::panel_registry::PanelId;
+    for saved in [137.0, 300.0] {
+        let mut h = groom_below_color(saved);
+        let before = h.panel("palette").width();
+        // La columna llega justo al borde de la ventana (no se estira fuera de ella).
+        assert_eq!(
+            h.panel("palette").right(),
+            h.screen().right(),
+            "saved {saved}"
+        );
+        // Un clic en el aire del grupo de Groom (en su margen): el apretón de manos termina.
+        let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
+        h.click(
+            leaf.left_bottom() + Vec2::new(3.0, -3.0),
+            PointerButton::Primary,
+        );
+        let after = h.panel("palette").width();
+        assert_eq!(after, before, "saved {saved}: no jump");
+        assert_eq!(
+            h.panel("palette").right(),
+            h.screen().right(),
+            "saved {saved}"
+        );
+        assert_eq!(h.app.view.palette_width, Some(after), "saved {saved}");
+    }
+}

@@ -1472,11 +1472,20 @@ impl ChimpApp {
         // lo aplica `workspace::show` al final, con la app entera.
         // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
         self.doc.editor.palette_locked = self.view.palette_locked;
-        // El ancho guardado de la columna de colores; sin uno, el de fábrica.
+        // Lo más angosta que puede quedar la columna: con Pixel UI, la fila más ancha de Color
+        // que no se parte (con los márgenes del panel); y cada panel acoplado en su mínimo (los
+        // que van lado a lado, sumados), con o sin Pixel UI.
+        let column_min = self
+            .workspace
+            .column_min_width(ui, skin)
+            .max(skin.map_or(0.0, |skin| color_panel::panel_min_size(ui, skin)));
+        // El ancho guardado de la columna de colores; sin uno, el de fábrica (nunca menos que
+        // el mínimo).
         let saved_width = self
             .view
             .palette_width
             .unwrap_or(color_panel::DEFAULT_WIDTH)
+            .max(column_min)
             .max(1.0);
         // Los primeros cuadros egui guarda el ancho del panel con medidas que todavía cambian
         // (la fuente y la escala del skin rigen después): el guardado se impone hasta que el
@@ -1490,7 +1499,7 @@ impl ChimpApp {
                 egui::containers::panel::PanelState::load(ui.ctx(), palette_id),
             ) {
                 let mut outer_rect = state.outer_rect;
-                outer_rect.min.x = outer_rect.max.x - width.max(1.0);
+                outer_rect.min.x = outer_rect.max.x - width.max(column_min).max(1.0);
                 ui.data_mut(|d| {
                     d.insert_persisted(
                         palette_id,
@@ -1504,12 +1513,11 @@ impl ChimpApp {
         let mut panel = egui::Panel::right("palette")
             .default_size(saved_width)
             .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0));
-        if let Some(skin) = skin {
-            // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
-            // márgenes del panel.
-            panel = panel
-                .min_size(color_panel::panel_min_size(ui, skin))
-                .show_separator_line(false);
+        if skin.is_some() {
+            panel = panel.min_size(column_min).show_separator_line(false);
+        } else if column_min > 0.0 {
+            // Sin Pixel UI, Color no pide mínimo (queda el de egui); los demás acoplados, sí.
+            panel = panel.min_size(column_min);
         }
         let palette_panel = panel.show(ui, |ui| {
             // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la

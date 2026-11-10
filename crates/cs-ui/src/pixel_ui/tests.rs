@@ -219,6 +219,50 @@ fn with_pixel_ui_scroll_areas_draw_the_design_bars() {
     assert!(drawn(false).is_empty(), "without Pixel UI, egui's bar");
 }
 
+#[test]
+fn a_vertical_scroll_area_never_draws_a_horizontal_bar() {
+    let ctx = egui::Context::default();
+    let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+    let track = skin
+        .piece(SCROLL_TRACK_H, WidgetState::Normal)
+        .unwrap()
+        .texture
+        .id();
+    // Contenido más ancho (y más alto) que el área, que solo se desplaza a lo alto: sin la
+    // barra de abajo, con o sin `auto_shrink` y con un ancho máximo.
+    let areas = [
+        egui::ScrollArea::vertical().auto_shrink([false, false]),
+        egui::ScrollArea::vertical(),
+        egui::ScrollArea::vertical().max_width(100.0),
+    ];
+    for (k, area) in areas.into_iter().enumerate() {
+        let mut found = 0;
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                set_bubble(ui.ctx(), Some(std::sync::Arc::new(skin.clone())));
+                let rect = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 200.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    scroll(ui, area.clone(), |ui| {
+                        ui.allocate_space(vec2(300.0, 400.0));
+                    });
+                });
+            });
+            output.textures_delta.clear();
+            found = output
+                .shapes
+                .iter()
+                .flat_map(|c| meshes(&c.shape))
+                .filter(|(id, _)| *id == track)
+                .count();
+        }
+        assert_eq!(found, 0, "area {k}");
+    }
+}
+
 /// Las mallas (con su textura) de una forma, aplanada.
 fn meshes(shape: &Shape) -> Vec<(egui::TextureId, Rect)> {
     match shape {

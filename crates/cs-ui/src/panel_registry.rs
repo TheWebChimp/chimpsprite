@@ -62,13 +62,6 @@ pub enum PanelId {
 
 /// La ficha de un panel.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "hasta que el workspace (fase C) lea `min_width` (los tests ya lo leen)"
-    )
-)]
 pub(crate) struct PanelSpec {
     /// Su llave estable: es lo que se guarda en el acomodo (no cambia aunque cambie el título).
     pub key: &'static str,

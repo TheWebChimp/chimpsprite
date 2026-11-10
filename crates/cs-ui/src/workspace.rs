@@ -21,7 +21,7 @@ mod skin;
 use std::collections::HashMap;
 
 use eframe::egui;
-use egui_dock::{DockArea, DockState, Node, NodePath, TabViewer};
+use egui_dock::{DockArea, DockState, Node, NodePath, TabViewer, Tree};
 pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 
 use crate::ChimpApp;
@@ -139,6 +139,13 @@ impl Workspace {
         self.state.find_tab(&id).map(|p| (p.surface, p.node))
     }
 
+    /// El rect del grupo de `id` (el del frame pasado), si está en el árbol.
+    #[cfg(test)]
+    pub(crate) fn leaf_rect(&self, id: PanelId) -> Option<egui::Rect> {
+        let path = self.state.find_tab(&id)?;
+        self.state.leaf(path.node_path()).ok().map(|leaf| leaf.rect)
+    }
+
     /// Si el grupo de `id` va sin barra de pestañas.
     #[cfg_attr(
         not(test),
@@ -238,6 +245,14 @@ impl Workspace {
         let rank = |p: &PanelId| PanelId::ALL.iter().position(|q| q == p);
         let at = self.strip.partition_point(|p| rank(p) < rank(&id));
         self.strip.insert(at, id);
+    }
+
+    /// Lo más angosta que puede quedar la columna de la superficie principal: cada panel
+    /// acoplado en su mínimo (ver [`minima`]); los que van lado a lado, sumados.
+    pub(crate) fn column_min_width(&self, ui: &egui::Ui, skin: Option<&Skin>) -> f32 {
+        let (sep, bar) = chrome(ui, skin);
+        let m = minima(ui, skin);
+        node_min(self.state.main_surface(), NodeIndex::root(), &m, sep, bar).x
     }
 
     /// Regresa a la tira todos los paneles del grupo `(surface, node)`.
@@ -356,14 +371,21 @@ impl TabViewer for Viewer<'_> {
                 let area = egui::ScrollArea::vertical()
                     .id_salt(("workspace_scroll", id.key()))
                     .auto_shrink([false, false]);
-                pixel_ui::scroll(ui, area, |ui| app.draw_panel(ui, id, &panel))
+                pixel_ui::scroll(ui, area, |ui| {
+                    exact_width(ui, id, |ui| app.draw_panel(ui, id, &panel))
+                })
             }
         });
         self.actions.extend(inner.inner);
-        self.extents.push(Extent {
-            id,
-            delta: inner.response.rect.right() - body.right(),
-        });
+        // Solo de Color, el que vivía en el panel derecho: de lo que ocupa sale el ancho de
+        // fábrica de la columna (ver `host_width`). Los demás no la ensanchan: la columna ya
+        // respeta su mínimo.
+        if id == PanelId::Color {
+            self.extents.push(Extent {
+                id,
+                delta: inner.response.rect.right() - body.right(),
+            });
+        }
     }
 
     fn on_tab_button(&mut self, tab: &mut PanelId, response: &egui::Response) {
@@ -405,6 +427,24 @@ impl TabViewer for Viewer<'_> {
     }
 }
 
+/// El contenido de un panel con scroll, justo al ancho que le queda en `ui` (el del grupo sin la
+/// barra): un `ScrollArea` crece a lo ancho de su contenido y, con él, su barra se iría fuera del
+/// grupo. Lo que se pase se recorta (no debería: la columna respeta su mínimo).
+fn exact_width<R>(ui: &mut egui::Ui, id: PanelId, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let width = ui.available_width();
+    let start = ui.cursor().min;
+    let max = egui::Rect::from_min_size(start, egui::vec2(width, ui.available_height()));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("workspace_body", id.key()))
+            .max_rect(max),
+    );
+    let out = add(&mut child);
+    let height = child.min_rect().bottom() - start.y;
+    ui.advance_cursor_after_rect(egui::Rect::from_min_size(start, egui::vec2(width, height)));
+    out
+}
+
 /// Lo que el contenido de un panel dibujado se pasó a lo ancho del borde derecho de su cuerpo
 /// (negativo si le sobró lugar).
 #[derive(Clone, Copy, Debug)]
@@ -424,6 +464,183 @@ struct Extent {
 fn host_width(dock_width: f32, whole: bool, docked: impl Iterator<Item = Extent>) -> f32 {
     let width = dock_width + docked.map(|e| e.delta).fold(0.0, f32::max);
     if whole { width } else { width.ceil() }
+}
+
+/// Lo mínimo de cada panel en un grupo del workspace, con el margen de su cuerpo (ver
+/// [`minima`]).
+pub(crate) type Minima = HashMap<PanelId, egui::Vec2>;
+
+/// Lo mínimo de cada panel en un grupo del workspace, con el margen de su cuerpo. Color, lo que
+/// pide su panel con Pixel UI (el ancho de su fila más ancha y el alto del editor entero con la
+/// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). Los demás, el `min_width`
+/// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
+/// scroll, la barra (así los acomoda [`Viewer`]).
+pub(crate) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
+    let margin = 2.0 * f32::from(dock::FLYOUT_MARGIN);
+    PanelId::ALL
+        .iter()
+        .map(|&id| {
+            let min = match (id, skin) {
+                (PanelId::Color, Some(skin)) => egui::vec2(
+                    crate::color_panel::panel_min_size(ui, skin),
+                    crate::color_panel::panel_min_height(ui, skin),
+                ),
+                (PanelId::Color, None) => egui::Vec2::ZERO,
+                _ => {
+                    let spec = id.spec();
+                    let bar = match spec.body {
+                        Body::Fit | Body::Tall => pixel_ui::SCROLL_BAR,
+                        Body::Fixed => 0.0,
+                    };
+                    let height = if spec.min_height > 0.0 {
+                        spec.min_height + margin
+                    } else {
+                        0.0
+                    };
+                    egui::vec2(spec.min_width + margin + bar, height)
+                }
+            };
+            (id, min)
+        })
+        .collect()
+}
+
+/// Lo que ocupan un divisor y una barra de pestañas con el estilo de `show`.
+fn chrome(ui: &egui::Ui, skin: Option<&Skin>) -> (f32, f32) {
+    let style = match skin {
+        Some(skin) => skin::dock_style(ui.style(), skin),
+        None => skin::plain_style(ui.style()),
+    };
+    (style.separator.width, style.tab_bar.height)
+}
+
+/// Lo mínimo del nodo `node` de `tree`: un grupo, lo de su panel más exigente (y su barra de
+/// pestañas, si la lleva); un split, sus dos lados uno junto al otro (o uno encima del otro) con
+/// el divisor entre ellos.
+fn node_min(tree: &Tree<PanelId>, node: NodeIndex, m: &Minima, sep: f32, bar: f32) -> egui::Vec2 {
+    if node.0 >= tree.len() {
+        return egui::Vec2::ZERO;
+    }
+    let sides = || {
+        (
+            node_min(tree, node.left(), m, sep, bar),
+            node_min(tree, node.right(), m, sep, bar),
+        )
+    };
+    match &tree[node] {
+        Node::Empty => egui::Vec2::ZERO,
+        Node::Leaf(leaf) => {
+            let mut min = leaf
+                .tabs
+                .iter()
+                .map(|t| m.get(t).copied().unwrap_or_default())
+                .fold(egui::Vec2::ZERO, egui::Vec2::max);
+            if !leaf.tab_bar_hidden && !leaf.tabs.is_empty() {
+                min.y += bar;
+            }
+            min
+        }
+        Node::Horizontal(_) => {
+            let (a, b) = sides();
+            egui::vec2(a.x + b.x + sep, a.y.max(b.y))
+        }
+        Node::Vertical(_) => {
+            let (a, b) = sides();
+            egui::vec2(a.x.max(b.x), a.y + b.y + sep)
+        }
+    }
+}
+
+/// La fracción de un split que mide `len` (a lo ancho o a lo alto) para que cada lado tenga al
+/// menos su mínimo (`a` y `b`, más medio divisor `sep`): la misma si ya alcanza; si no, la del
+/// borde de ese mínimo. Si no alcanza para los dos, el lado que no se desplaza (`keep`: `Some(true)`
+/// el primero, `Some(false)` el segundo) se queda con su mínimo y el otro, con lo que sobra (lo
+/// suyo va con scroll); si los dos o ninguno se desplazan, en proporción a sus mínimos.
+fn fit_fraction(len: f32, fraction: f32, a: f32, b: f32, sep: f32, keep: Option<bool>) -> f32 {
+    if len <= 0.0 || !len.is_finite() {
+        return fraction;
+    }
+    let lo = a + sep / 2.0;
+    let hi = len - b - sep / 2.0;
+    let mid = len * fraction;
+    let fitted = if lo <= hi {
+        if (lo..=hi).contains(&mid) {
+            return fraction;
+        }
+        mid.clamp(lo, hi)
+    } else if keep == Some(true) {
+        lo.min(len)
+    } else if keep == Some(false) {
+        hi.max(0.0)
+    } else if a + b > 0.0 {
+        len * a / (a + b)
+    } else {
+        return fraction;
+    };
+    (fitted / len).clamp(0.0, 1.0)
+}
+
+/// Si todo lo del nodo `node` de `tree` se desplaza a lo alto (sus paneles van con scroll): lo
+/// que no entre en su lugar se ve igual.
+fn node_scrolls(tree: &Tree<PanelId>, node: NodeIndex) -> bool {
+    if node.0 >= tree.len() {
+        return true;
+    }
+    match &tree[node] {
+        Node::Empty => true,
+        Node::Leaf(leaf) => leaf.tabs.iter().all(|t| t.spec().body != Body::Fixed),
+        Node::Horizontal(_) | Node::Vertical(_) => {
+            node_scrolls(tree, node.left()) && node_scrolls(tree, node.right())
+        }
+    }
+}
+
+/// Cada split de cada superficie con sus dos lados en su mínimo, si cabe (ver
+/// [`fit_fraction`]). Corre después del `DockArea` con los rects de este frame y rige en el
+/// siguiente, como `skin::snap`.
+fn fit_splits(state: &mut DockState<PanelId>, m: &Minima, sep: f32, bar: f32) {
+    for surface in state.iter_surfaces_mut() {
+        let Some(tree) = surface.node_tree_mut() else {
+            continue;
+        };
+        let fixes: Vec<(NodeIndex, f32)> = (0..tree.len())
+            .filter_map(|i| {
+                let node = NodeIndex(i);
+                let (split, horizontal) = match &tree[node] {
+                    Node::Horizontal(s) => (s, true),
+                    Node::Vertical(s) => (s, false),
+                    _ => return None,
+                };
+                let a = node_min(tree, node.left(), m, sep, bar);
+                let b = node_min(tree, node.right(), m, sep, bar);
+                let (len, a, b) = if horizontal {
+                    (split.rect.width(), a.x, b.x)
+                } else {
+                    (split.rect.height(), a.y, b.y)
+                };
+                // A lo alto, si no alcanza, se queda con su mínimo el lado que no se desplaza.
+                let keep = if horizontal {
+                    None
+                } else {
+                    match (
+                        node_scrolls(tree, node.left()),
+                        node_scrolls(tree, node.right()),
+                    ) {
+                        (false, true) => Some(true),
+                        (true, false) => Some(false),
+                        _ => None,
+                    }
+                };
+                let f = fit_fraction(len, split.fraction, a, b, sep, keep);
+                (f != split.fraction).then_some((node, f))
+            })
+            .collect();
+        for (node, f) in fixes {
+            if let Node::Horizontal(s) | Node::Vertical(s) = &mut tree[node] {
+                s.fraction = f;
+            }
+        }
+    }
 }
 
 /// El id del `DockArea` del workspace.
@@ -560,7 +777,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     if workspace.refresh_tab_bars() {
         ui.ctx().request_discard("tab bar visibility changed");
     }
-    // A puntos enteros para el frame siguiente.
+    // Cada split con sus lados en su mínimo, y a puntos enteros, para el frame siguiente.
+    let (sep, bar) = chrome(ui, skin);
+    fit_splits(&mut workspace.state, &minima(ui, skin), sep, bar);
     skin::snap(ui.ctx(), &mut workspace.state);
     skin::snap_windows(ui.ctx(), &mut workspace.state);
     app.workspace = workspace;
@@ -740,11 +959,18 @@ mod tests {
         app: &mut ChimpApp,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        frame_in(ctx, app, events, egui::vec2(1280.0, 800.0))
+    }
+
+    /// Como `frame`, en una ventana de `size`.
+    fn frame_in(
+        ctx: &egui::Context,
+        app: &mut ChimpApp,
+        events: Vec<egui::Event>,
+        size: egui::Vec2,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1280.0, 800.0),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             events,
             ..Default::default()
         };
@@ -876,6 +1102,109 @@ mod tests {
         }
         assert!(skin::hidden_strip_dragged(&ctx, dock_id(), path));
         assert_eq!(app.workspace.state.leaf(path).unwrap().rect, lower);
+    }
+
+    /// El mínimo de `id` en un grupo, como lo cuenta el workspace (con Pixel UI).
+    fn min_of(ctx: &egui::Context, app: &ChimpApp, id: PanelId) -> egui::Vec2 {
+        let mut out = egui::Vec2::ZERO;
+        let input = egui::RawInput::default();
+        let mut output = ctx.run_ui(input, |ui| {
+            out = minima(ui, app.pixel.skin())[&id];
+        });
+        output.textures_delta.clear();
+        out
+    }
+
+    #[test]
+    fn splits_give_each_group_at_least_its_minimum() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        // Groom debajo de Color, a la mitad: en 800 de alto a Groom no le toca su mínimo.
+        app.workspace = Workspace::demo("split").unwrap();
+        frames(&ctx, &mut app);
+        let groom = app.workspace.leaf_rect(PanelId::Groom).unwrap();
+        let color = app.workspace.leaf_rect(PanelId::Color).unwrap();
+        assert!(
+            groom.height() >= min_of(&ctx, &app, PanelId::Groom).y,
+            "{groom:?}"
+        );
+        assert!(
+            color.height() >= min_of(&ctx, &app, PanelId::Color).y,
+            "{color:?}"
+        );
+        // En una ventana baja no alcanza para los dos: Color, que no se desplaza, se queda con su
+        // mínimo; Groom, con lo que sobra (y su scroll).
+        app.workspace = Workspace::demo("split").unwrap();
+        for _ in 0..6 {
+            frame_in(&ctx, &mut app, Vec::new(), egui::vec2(960.0, 450.0));
+        }
+        let color = app.workspace.leaf_rect(PanelId::Color).unwrap();
+        assert!(
+            color.height() >= min_of(&ctx, &app, PanelId::Color).y,
+            "{color:?}"
+        );
+        // Library a la derecha de Color con casi todo para Color: Library llega a su mínimo.
+        let mut w = Workspace::essentials();
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Library, DockTarget::Split(s, n, Split::Right));
+        if let Node::Horizontal(split) = &mut w.state.main_surface_mut()[NodeIndex::root()] {
+            split.fraction = 0.95;
+        }
+        app.workspace = w;
+        frames(&ctx, &mut app);
+        let library = app.workspace.leaf_rect(PanelId::Library).unwrap();
+        assert!(
+            library.width() >= min_of(&ctx, &app, PanelId::Library).x,
+            "{library:?}"
+        );
+    }
+
+    #[test]
+    fn a_split_fraction_is_moved_only_as_far_as_the_minima_need() {
+        // Cabe: se queda; se pasa de un lado: al borde de ese mínimo (con medio divisor).
+        assert_eq!(fit_fraction(400.0, 0.5, 100.0, 100.0, 2.0, None), 0.5);
+        assert_eq!(
+            fit_fraction(400.0, 0.1, 100.0, 100.0, 2.0, None),
+            101.0 / 400.0
+        );
+        assert_eq!(
+            fit_fraction(400.0, 0.9, 100.0, 100.0, 2.0, None),
+            299.0 / 400.0
+        );
+        // No alcanza para los dos: en proporción a sus mínimos; o el que no se desplaza se queda
+        // con el suyo (el otro, con scroll).
+        assert_eq!(fit_fraction(100.0, 0.9, 100.0, 300.0, 0.0, None), 0.25);
+        assert_eq!(
+            fit_fraction(200.0, 0.9, 100.0, 300.0, 2.0, Some(true)),
+            101.0 / 200.0
+        );
+        assert_eq!(
+            fit_fraction(200.0, 0.1, 150.0, 100.0, 2.0, Some(false)),
+            99.0 / 200.0
+        );
+        // Sin tamaño todavía: nada.
+        assert_eq!(fit_fraction(0.0, 0.7, 100.0, 100.0, 2.0, None), 0.7);
+    }
+
+    #[test]
+    fn floating_windows_stay_on_the_screen() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        // La ventana baja de las capturas (504 de alto con la escala 2), y una más chica que
+        // Lumen; Lumen en 320, 120.
+        for size in [egui::vec2(960.0, 504.0), egui::vec2(400.0, 300.0)] {
+            app.workspace = Workspace::demo("float").unwrap();
+            for _ in 0..6 {
+                frame_in(&ctx, &mut app, Vec::new(), size);
+            }
+            let (surface, _) = app.workspace.leaf_of(PanelId::Lumen).unwrap();
+            let rect = ctx
+                .memory(|m| m.area_rect(skin::window_area_id(surface)))
+                .expect("Lumen's window");
+            let screen = ctx.content_rect();
+            assert!(screen.contains_rect(rect), "{rect:?} in {screen:?}");
+            assert_eq!(rect.min, rect.min.round());
+        }
     }
 
     #[test]

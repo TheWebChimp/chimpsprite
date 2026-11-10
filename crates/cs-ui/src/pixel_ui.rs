@@ -994,6 +994,12 @@ pub fn scroll<R>(
         });
         let ppp = ui.ctx().pixels_per_point();
         let inner = out.inner_rect;
+        // El rect del área con sus barras (en este `scope` no hay nada más). La de abajo va solo
+        // donde egui le dejó lugar: un `ScrollArea::vertical` con contenido más ancho que el área
+        // no se desplaza a lo ancho y no la lleva. La de la derecha se pinta desde el primer
+        // frame (egui le deja lugar uno después).
+        let outer = ui.min_rect();
+        let bottom_room = outer.height() - inner.height() >= SCROLL_BAR - 0.5;
         let mut shapes = Vec::new();
         for vertical in [true, false] {
             let (content, view) = if vertical {
@@ -1001,7 +1007,7 @@ pub fn scroll<R>(
             } else {
                 (out.content_size.x, inner.width())
             };
-            if content <= view + 0.5 {
+            if content <= view + 0.5 || (!vertical && !bottom_room) {
                 continue;
             }
             let offset = if vertical {
