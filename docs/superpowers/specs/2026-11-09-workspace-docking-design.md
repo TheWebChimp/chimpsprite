@@ -131,7 +131,8 @@ egui_taffy y solo `workspace` conoce egui_dock.
   **Excepciones a propósito a "idéntico en `REFERENCE_WIDTH`":** el logo de Groom, Lumen y Dafont
   ahora muestra su fila de arriba completa; la vista previa de Library baja medio punto a escala 2
   (antes estaba a medio pixel del skin); el Export de Luminance en Lumen ya no se sale del panel
-  (Generate 50, Modify 45 y Export 41 en la columna de 140, como el mockup).
+  (Generate 50, Modify 45 y Export 41 en la columna de 140, como el mockup); con Modify abierto,
+  su raya naranja baja medio punto (a escala 2, 1 pixel de pantalla) para quedar en pixel entero.
 
   **Pendiente para antes de la fase C:** un test de barrido de anchos de `MIN_WIDTH` a 600 por
   panel; una variante de `run_at` a escala 2; reservar el ancho de la barra de scroll en los
