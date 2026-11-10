@@ -248,9 +248,11 @@ impl ChimpApp {
                         .open_file(groom::FILTER, platform::OpenPurpose::GroomImage, ctx);
                 }
                 groom::GroomAction::BrowseLospec => {
-                    // TODO(tarea 6): con Lospec acoplado, enfocar su pestaña (el flyout no se
-                    // abre: Lospec no está en la tira).
-                    dock::set_open(ctx, Some(dock::DockPanel::Lospec));
+                    // Acoplado o flotando, su pestaña al frente y con el foco; en la tira, su
+                    // flyout.
+                    if !self.workspace.focus(dock::DockPanel::Lospec) {
+                        dock::set_open(ctx, Some(dock::DockPanel::Lospec));
+                    }
                 }
                 groom::GroomAction::UseLayer => {
                     let (name, image) = self.current_layer_image();

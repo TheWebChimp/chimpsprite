@@ -50,7 +50,27 @@ pub type DockPanel = crate::panel_registry::PanelId;
 pub struct DockOutput {
     /// El panel abierto: cuál y dónde, para [`flyout`] (la app lo dibuja con su registro).
     pub app_panel: Option<(DockPanel, Anchor)>,
+    /// Sacar un panel de la tira (lo resuelve la app con su workspace).
+    pub request: Option<StripRequest>,
+    /// El panel cuyo ícono se arrastra fuera de la tira y dónde está el puntero (para resaltar
+    /// dónde caería).
+    pub dragging: Option<(DockPanel, egui::Pos2)>,
 }
+
+/// Lo que se pidió desde la tira para uno de sus paneles.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StripRequest {
+    /// Su ícono se arrastró y se soltó con el puntero ahí, fuera de la tira.
+    Drop(DockPanel, egui::Pos2),
+    /// "Dock" de su menú contextual: al grupo con el foco de la columna.
+    Dock(DockPanel),
+    /// "Float" de su menú: en una ventana con la esquina ahí, junto a la tira.
+    Float(DockPanel, egui::Pos2),
+}
+
+/// El nombre de las opciones del menú contextual de un ícono de la tira.
+pub(crate) const MENU_DOCK: &str = "Dock";
+pub(crate) const MENU_FLOAT: &str = "Float";
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (prendido, `on`, con el
 /// marco rosa de la herramienta elegida) y el ícono `icon` centrado (o `plain`, si el skin no lo
@@ -130,7 +150,10 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
 }
 
 /// El dock: un botón por panel de la tira (`strip`, los que no están acoplados ni flotando) y el
-/// panel abierto, flotando a la izquierda de su botón.
+/// panel abierto, flotando a la izquierda de su botón. Un clic en un botón abre (o cierra) su
+/// panel; arrastrarlo más de lo que egui todavía cuenta como clic (6 puntos) lo levanta (con un
+/// fantasma bajo el puntero) y soltarlo fuera de la tira pide sacarlo ([`StripRequest::Drop`]);
+/// su menú contextual tiene "Dock" y "Float".
 pub fn show(
     ui: &mut Ui,
     skin: Option<&Skin>,
@@ -146,6 +169,8 @@ pub fn show(
     let open = open_panel(ui.ctx());
     let mut anchors = Vec::new();
     ui.spacing_mut().item_spacing.y = BUTTON_GAP;
+    // Soltar un ícono sobre la tira no lo saca.
+    let strip_rect = ui.max_rect();
     let mut column = ui.max_rect();
     if skin.is_some() {
         ui.add_space(TOP_AIR);
@@ -170,9 +195,36 @@ pub fn show(
                 )
                 .tip(panel.label()),
         };
+        // También se arrastra (egui lo cuenta como clic mientras no se mueva más de 6 puntos).
+        let response = response.interact(Sense::click_and_drag());
         if response.clicked() {
             set_open(ui.ctx(), (!is_open).then_some(panel));
         }
+        let pointer = ui.input(|i| i.pointer.latest_pos());
+        let outside = pointer.filter(|p| !strip_rect.contains(*p));
+        if response.dragged() {
+            let delta = response.total_drag_delta().unwrap_or_default();
+            ghost(ui, skin, panel, response.rect.translate(delta.round()));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            out.dragging = outside.map(|p| (panel, p));
+        }
+        if response.drag_stopped()
+            && let Some(p) = outside
+        {
+            out.request = Some(StripRequest::Drop(panel, p));
+        }
+        crate::menus::context_menu(&response, |ui| {
+            if ui.add(crate::menus::plain(MENU_DOCK)).clicked() {
+                out.request = Some(StripRequest::Dock(panel));
+                ui.close();
+            }
+            if ui.add(crate::menus::plain(MENU_FLOAT)).clicked() {
+                let at = response.rect.left_top()
+                    - vec2(flyout_reach(panel.spec().reference_width), 0.0);
+                out.request = Some(StripRequest::Float(panel, at.round()));
+                ui.close();
+            }
+        });
         anchors.push((panel, response.rect));
     }
     // Hasta abajo del dock, el del timeline y arriba de él, el del preview.
@@ -205,12 +257,70 @@ pub fn show(
         | DockPanel::Model => out.app_panel = Some((panel, anchor)),
         #[cfg(not(target_arch = "wasm32"))]
         DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
-        // Los que no son botones del dock (no están en `PanelId::DOCK`): si llegan a la tira (un
-        // grupo colapsado), su botón todavía no abre nada.
-        // TODO(tarea 6): Color no debe poder colapsarse a la tira (o necesita un flyout).
+        // Los que no son botones del dock (no están en `PanelId::DOCK`) nunca llegan a la tira:
+        // el botón « de un grupo deja a Color donde está (`Workspace::goes_to_strip`).
         DockPanel::Tools | DockPanel::Color | DockPanel::Timeline | DockPanel::Preview => {}
     }
     out
+}
+
+/// El fantasma del ícono de `panel` que se arrastra, con el botón en `button` (donde quedó el
+/// suyo, corrido lo que se arrastró): con Pixel UI, el botón del kit con su ícono y, a su derecha,
+/// la pestaña del kit con su título (como quedaría acoplado); sin él, el título en un recuadro.
+fn ghost(ui: &Ui, skin: Option<&Skin>, panel: DockPanel, button: Rect) {
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("dock_ghost"),
+    ));
+    let title = panel.spec().title;
+    let Some(skin) = skin else {
+        let galley = painter.layout_no_wrap(
+            title.to_owned(),
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        );
+        let rect = Rect::from_min_size(button.min, galley.size() + vec2(8.0, 4.0));
+        painter.add(egui::Frame::popup(ui.style()).inner_margin(0).paint(rect));
+        painter.galley(rect.min + vec2(4.0, 2.0), galley, ui.visuals().text_color());
+        return;
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    let state = crate::kit::button::ButtonState::Hover;
+    let mut shapes = crate::kit::button::frame_shapes(
+        skin,
+        button.with_max_y(button.bottom() + 1.0),
+        state,
+        ppp,
+    );
+    shapes.extend(pixel_draw::piece_centered(
+        skin,
+        panel.spec().icon,
+        button,
+        ppp,
+    ));
+    let item = crate::kit::tabs::TabItem::new(title);
+    let width = crate::kit::tabs::natural_width(ui, &item);
+    let top = button.top() + ((BUTTON_SIZE.y - crate::kit::tabs::ACTIVE_HEIGHT) / 2.0).round();
+    let row = Rect::from_min_size(
+        egui::pos2(button.right() + 2.0, top),
+        vec2(width, crate::kit::tabs::HEIGHT),
+    );
+    let look = crate::kit::tabs::TabLook {
+        active: true,
+        hovered: false,
+        mark_hovered: false,
+    };
+    shapes.extend(crate::kit::tabs::tab_shapes(
+        ui, skin, row, &item, title, look,
+    ));
+    painter.extend(shapes);
+    // Si el skin no trae el ícono, su texto (como `plain_icon`, en la capa del fantasma).
+    if skin.piece(panel.spec().icon, WidgetState::Normal).is_none() {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let color = skin.colors().text;
+        let (center, plain) = (button.center(), panel.spec().plain);
+        painter.text(center, egui::Align2::CENTER_CENTER, plain, font, color);
+    }
 }
 
 /// El panel flotante de `panel` a la izquierda de su botón, de `width` de contenido. Arriba va

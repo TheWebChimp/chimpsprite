@@ -41,14 +41,134 @@ pub(crate) enum DockTarget {
     /// Partiendo el grupo `(superficie, nodo)`: el panel va del lado `Split`.
     Split(SurfaceIndex, NodeIndex, Split),
     /// En el grupo con el foco de la superficie principal (o el primero que haya).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "solo los tests por ahora; la tarea 6 acopla desde la tira"
-        )
-    )]
     Focused,
+}
+
+/// Dónde cae un panel que se suelta (ver [`drop_target`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum DropTarget {
+    /// Como pestaña del grupo `(superficie, nodo)`: el puntero en su centro.
+    Tab(SurfaceIndex, NodeIndex),
+    /// Partiendo el grupo: el puntero en la franja de un borde ([`EDGE_ZONE`] de su lado); el
+    /// panel va de ese lado.
+    Split(SurfaceIndex, NodeIndex, Split),
+    /// En una ventana nueva con la esquina en el puntero.
+    Float(egui::Pos2),
+}
+
+/// La franja de cada borde de un grupo donde soltar un panel lo parte: 1/4 de su ancho (a los
+/// lados) o de su alto (arriba y abajo).
+const EDGE_ZONE: f32 = 0.25;
+
+/// Dónde cae un panel soltado con el puntero en `pointer`, con los rects de los grupos del frame
+/// pasado: sobre una ventana flotante, en su grupo; sobre la columna acoplada (`dock_rect`), en
+/// el grupo bajo el puntero (o el más cercano, si cae en un divisor); en el centro de un grupo,
+/// como pestaña, y en la franja de un borde, partiéndolo. En cualquier otro lado, flotando.
+pub(crate) fn drop_target(w: &Workspace, pointer: egui::Pos2, dock_rect: egui::Rect) -> DropTarget {
+    let leaves: Vec<(NodePath, egui::Rect)> = w
+        .state
+        .iter_leaves()
+        .filter(|(_, leaf)| !leaf.tabs.is_empty() && leaf.rect.is_positive())
+        .map(|(path, leaf)| (path, leaf.rect))
+        .collect();
+    // Las ventanas van encima de la columna y del lienzo.
+    let window = leaves
+        .iter()
+        .find(|(path, rect)| !path.surface.is_main() && rect.contains(pointer));
+    let docked = || {
+        leaves
+            .iter()
+            .filter(|(path, _)| path.surface.is_main())
+            .min_by(|a, b| {
+                let d = |r: &egui::Rect| r.distance_sq_to_pos(pointer);
+                d(&a.1).total_cmp(&d(&b.1))
+            })
+    };
+    let hit = match window {
+        Some(hit) => Some(hit),
+        None if dock_rect.contains(pointer) => match docked() {
+            Some(hit) => Some(hit),
+            // La columna vacía (Color se fue a una ventana): a la superficie principal.
+            None => return DropTarget::Tab(SurfaceIndex::main(), NodeIndex::root()),
+        },
+        None => None,
+    };
+    match hit {
+        Some(&(path, rect)) => match edge_of(rect, pointer) {
+            Some(side) => DropTarget::Split(path.surface, path.node, side),
+            None => DropTarget::Tab(path.surface, path.node),
+        },
+        None => DropTarget::Float(pointer),
+    }
+}
+
+/// El borde de `rect` en cuya franja ([`EDGE_ZONE`]) está `p`; si está en dos (una esquina), el
+/// más cercano en proporción a su franja.
+fn edge_of(rect: egui::Rect, p: egui::Pos2) -> Option<Split> {
+    let (w, h) = (rect.width() * EDGE_ZONE, rect.height() * EDGE_ZONE);
+    [
+        (p.x - rect.left(), w, Split::Left),
+        (rect.right() - p.x, w, Split::Right),
+        (p.y - rect.top(), h, Split::Above),
+        (rect.bottom() - p.y, h, Split::Below),
+    ]
+    .into_iter()
+    .filter(|&(d, zone, _)| zone > 0.0 && d < zone)
+    .min_by(|a, b| (a.0 / a.1).total_cmp(&(b.0 / b.1)))
+    .map(|(_, _, side)| side)
+}
+
+/// Lo que ocupa un panel soltado en `target` (para resaltarlo mientras se arrastra): el grupo
+/// entero, si va como pestaña; su mitad de ese lado, si lo parte; nada si va a flotar.
+fn drop_zone(w: &Workspace, target: DropTarget) -> Option<egui::Rect> {
+    let leaf_rect = |surface, node| {
+        w.state
+            .leaf(NodePath { surface, node })
+            .ok()
+            .map(|leaf| leaf.rect)
+    };
+    match target {
+        DropTarget::Tab(surface, node) => leaf_rect(surface, node),
+        DropTarget::Split(surface, node, side) => {
+            let r = leaf_rect(surface, node)?;
+            let c = r.center();
+            Some(match side {
+                Split::Left => r.with_max_x(c.x),
+                Split::Right => r.with_min_x(c.x),
+                Split::Above => r.with_max_y(c.y),
+                Split::Below => r.with_min_y(c.y),
+            })
+        }
+        DropTarget::Float(_) => None,
+    }
+    .filter(|r| r.is_positive())
+    .map(|r| egui::Rect::from_min_max(r.min.round(), r.max.round()))
+}
+
+/// Resalta dónde caería el panel que se arrastra desde la tira (encima de todo salvo el
+/// fantasma): con Pixel UI, la zona de destino de egui_dock (la franja de selección en el marco
+/// `menu.side`); sin él, un rect con el color de selección de egui.
+pub(crate) fn paint_drop_zone(
+    ui: &egui::Ui,
+    skin: Option<&Skin>,
+    w: &Workspace,
+    target: DropTarget,
+) {
+    let Some(rect) = drop_zone(w, target) else {
+        return;
+    };
+    let ctx = ui.ctx();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("workspace_drop_zone"),
+    ));
+    match skin {
+        Some(skin) => painter.extend(skin::drop_shapes(skin, rect, ctx.pixels_per_point())),
+        None => {
+            let color = ui.visuals().selection.bg_fill.gamma_multiply(0.4);
+            painter.rect_filled(rect, 0.0, color);
+        }
+    }
 }
 
 /// El acomodo de los paneles: el árbol de egui_dock (acoplados y flotantes) y la tira de íconos.
@@ -124,10 +244,7 @@ impl Workspace {
     }
 
     /// Si `id` está flotando (en una ventana).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "solo los tests por ahora; lo lee la tarea 6")
-    )]
+    #[cfg_attr(not(test), expect(dead_code, reason = "solo lo leen los tests"))]
     pub(crate) fn floating(&self, id: PanelId) -> bool {
         self.state
             .find_tab(&id)
@@ -260,17 +377,94 @@ impl Workspace {
         not(test),
         expect(
             dead_code,
-            reason = "solo los tests por ahora; el botón de colapsar es de la tarea 6"
+            reason = "el botón « usa `collapse_to_icons`, que deja a Color donde está"
         )
     )]
     pub(crate) fn collapse_leaf(&mut self, surface: SurfaceIndex, node: NodeIndex) {
-        let tabs = match self.state.leaf(NodePath { surface, node }) {
-            Ok(leaf) => leaf.tabs.clone(),
-            Err(_) => return,
-        };
-        for id in tabs {
+        for id in self.tabs_of(surface, node) {
             self.to_strip(id);
         }
+    }
+
+    /// Los paneles del grupo `(surface, node)` (ninguno si no existe).
+    fn tabs_of(&self, surface: SurfaceIndex, node: NodeIndex) -> Vec<PanelId> {
+        self.state
+            .leaf(NodePath { surface, node })
+            .map(|leaf| leaf.tabs.clone())
+            .unwrap_or_default()
+    }
+
+    /// Si `id` puede ir a la tira: los del dock, que tienen un flyout que su botón abre. Color no
+    /// (su botón no abriría nada): se queda acoplado o flotando.
+    pub(crate) fn goes_to_strip(id: PanelId) -> bool {
+        PanelId::DOCK.contains(&id)
+    }
+
+    /// Si el botón « del grupo `(surface, node)` mandaría algo a la tira.
+    pub(crate) fn collapsible(&self, surface: SurfaceIndex, node: NodeIndex) -> bool {
+        self.tabs_of(surface, node)
+            .into_iter()
+            .any(Workspace::goes_to_strip)
+    }
+
+    /// El botón « ("Collapse to Icons") del grupo `(surface, node)`: sus paneles a la tira, salvo
+    /// los que no van ahí (Color, que se queda en el grupo).
+    pub(crate) fn collapse_to_icons(&mut self, surface: SurfaceIndex, node: NodeIndex) {
+        for id in self.tabs_of(surface, node) {
+            if Workspace::goes_to_strip(id) {
+                self.to_strip(id);
+            }
+        }
+    }
+
+    /// Pone `id` (acoplado o flotando) como la pestaña activa de su grupo y le da el foco.
+    /// Devuelve si estaba en el árbol.
+    pub(crate) fn focus(&mut self, id: PanelId) -> bool {
+        self.check_not_lent();
+        let Some(path) = self.state.find_tab(&id) else {
+            return false;
+        };
+        // Los dos solo fallan si el camino no existe, y lo acaba de dar `find_tab`.
+        let _ = self.state.set_active_tab(path);
+        self.state.set_focused_node_and_surface(path.node_path());
+        true
+    }
+
+    /// Pone `id` donde cayó (ver [`drop_target`]).
+    pub(crate) fn drop_panel(&mut self, id: PanelId, target: DropTarget) {
+        match target {
+            DropTarget::Tab(surface, node) => self.dock(id, DockTarget::Leaf(surface, node)),
+            DropTarget::Split(surface, node, side) => {
+                self.dock(id, DockTarget::Split(surface, node, side));
+            }
+            DropTarget::Float(at) => self.float(id, at),
+        }
+    }
+
+    /// Le da a cada grupo de la superficie principal su rect dentro de `rect`, como lo haría
+    /// [`show`] (sin el ancho de los divisores): para probar [`drop_target`] sin dibujar.
+    #[cfg(test)]
+    pub(crate) fn layout_for_test(&mut self, rect: egui::Rect) {
+        fn place(tree: &mut Tree<PanelId>, node: NodeIndex, rect: egui::Rect) {
+            if node.0 >= tree.len() {
+                return;
+            }
+            tree[node].set_rect(rect);
+            let (a, b) = match &tree[node] {
+                Node::Horizontal(s) => {
+                    let x = rect.left() + rect.width() * s.fraction;
+                    (rect.with_max_x(x), rect.with_min_x(x))
+                }
+                Node::Vertical(s) => {
+                    let y = rect.top() + rect.height() * s.fraction;
+                    (rect.with_max_y(y), rect.with_min_y(y))
+                }
+                _ => return,
+            };
+            place(tree, node.left(), a);
+            place(tree, node.right(), b);
+        }
+        place(self.state.main_surface_mut(), NodeIndex::root(), rect);
     }
 
     /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
@@ -772,6 +966,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     for id in closed {
         workspace.to_strip(id);
     }
+    if let Some((surface, node)) = collapse_buttons(ui, skin, &workspace, modal) {
+        workspace.collapse_to_icons(surface, node);
+    }
     // Si un panel se soltó en otro grupo, la barra de algún grupo cambia: este frame ya se dibujó
     // con la de antes, así que se descarta y se vuelve a dibujar (sin el parpadeo de un frame).
     if workspace.refresh_tab_bars() {
@@ -786,6 +983,83 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     for action in actions {
         app.apply_panel_action(ui.ctx(), action);
     }
+}
+
+/// El nombre del botón « de un grupo acoplado (su tooltip y su etiqueta accesible).
+pub(crate) const COLLAPSE: &str = "Collapse to Icons";
+
+/// El botón « ("Collapse to Icons") de cada grupo acoplado que tenga algo que mandar a la tira
+/// (ver [`Workspace::collapsible`]), la flecha de atrás de las pestañas del kit: al final de su
+/// barra de pestañas o, en un grupo sin barra, en la punta derecha de su franja de agarre mientras
+/// el puntero anda por la franja o por el botón (y nada se arrastra). Devuelve el grupo cuyo
+/// botón se apretó.
+fn collapse_buttons(
+    ui: &mut egui::Ui,
+    skin: Option<&Skin>,
+    w: &Workspace,
+    modal: bool,
+) -> Option<(SurfaceIndex, NodeIndex)> {
+    use crate::pixel_ui::Tip as _;
+    let ctx = ui.ctx().clone();
+    let pointer = ctx.input(|i| i.pointer.hover_pos());
+    let dragging = ctx.dragged_id().is_some() && ctx.input(|i| i.pointer.is_decidedly_dragging());
+    // Sin otra capa encima (una ventana flotante, un menú).
+    let ours = |p: egui::Pos2| ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id());
+    let size = egui::Vec2::splat(kit::tabs::ARROW_SIZE);
+    let mut pressed = None;
+    for (path, leaf) in w.state.iter_leaves() {
+        if !path.surface.is_main()
+            || !leaf.rect.is_positive()
+            || !w.collapsible(path.surface, path.node)
+        {
+            continue;
+        }
+        let at = egui::pos2(
+            leaf.rect.right() - 1.0 - size.x,
+            leaf.rect.top() + kit::tabs::ARROWS_TOP,
+        );
+        let rect = egui::Rect::from_min_size(at.round(), size);
+        if leaf.tab_bar_hidden {
+            let strip = egui::Rect::from_min_size(
+                leaf.rect.min,
+                egui::vec2(leaf.rect.width(), skin::GRAB_STRIP),
+            );
+            let near = pointer.is_some_and(|p| strip.union(rect).contains(p) && ours(p));
+            if dragging || !near {
+                continue;
+            }
+        }
+        let id = egui::Id::new(("workspace_collapse", path.surface, path.node));
+        let response = ui
+            .interact(rect, id, egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !modal, COLLAPSE));
+        let hovered = !modal && response.hovered();
+        match skin {
+            Some(skin) => {
+                let shapes = kit::tabs::arrow_shapes(ui, skin, rect, true, (hovered, !modal));
+                ui.painter().extend(shapes);
+            }
+            None => {
+                let visuals = ui.style().interact(&response);
+                ui.painter()
+                    .rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "«",
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    visuals.text_color(),
+                );
+            }
+        }
+        let response = response.tip(COLLAPSE);
+        if !modal && response.clicked() {
+            pressed = Some((path.surface, path.node));
+        }
+    }
+    pressed
 }
 
 /// La × del kit de cada pestaña que se puede cerrar, encima de la de egui_dock (en su capa):
@@ -886,6 +1160,114 @@ mod tests {
         w.collapse_leaf(surface, node);
         assert!(!w.docked(PanelId::Library) && !w.docked(PanelId::Color));
         assert!(w.strip().contains(&PanelId::Library) && w.strip().contains(&PanelId::Color));
+    }
+
+    #[test]
+    fn the_drop_target_is_a_tab_in_the_middle_a_split_at_the_edge_and_a_window_outside() {
+        let mut w = Workspace::essentials();
+        let dock_rect =
+            egui::Rect::from_min_size(egui::pos2(1000.0, 50.0), egui::vec2(220.0, 600.0));
+        w.layout_for_test(dock_rect); // da a las hojas su rect como lo haría show()
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        assert!(
+            matches!(drop_target(&w, egui::pos2(1110.0, 350.0), dock_rect), DropTarget::Tab(ss, nn) if (ss, nn) == (s, n))
+        );
+        assert!(matches!(
+            drop_target(&w, egui::pos2(1110.0, 640.0), dock_rect),
+            DropTarget::Split(_, _, egui_dock::Split::Below)
+        ));
+        assert!(matches!(
+            drop_target(&w, egui::pos2(400.0, 300.0), dock_rect),
+            DropTarget::Float(_)
+        ));
+    }
+
+    #[test]
+    fn the_drop_target_finds_the_group_under_the_pointer_and_each_edge() {
+        let mut w = Workspace::essentials();
+        let (s, color) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Groom, DockTarget::Split(s, color, Split::Below));
+        let dock_rect =
+            egui::Rect::from_min_size(egui::pos2(1000.0, 50.0), egui::vec2(200.0, 600.0));
+        w.layout_for_test(dock_rect);
+        // Color arriba (50..350), Groom abajo (350..650).
+        let groom = w.leaf_of(PanelId::Groom).unwrap();
+        let color = w.leaf_of(PanelId::Color).unwrap();
+        let at = |x, y| drop_target(&w, egui::pos2(x, y), dock_rect);
+        assert_eq!(at(1100.0, 500.0), DropTarget::Tab(groom.0, groom.1));
+        assert_eq!(at(1100.0, 200.0), DropTarget::Tab(color.0, color.1));
+        assert_eq!(
+            at(1010.0, 500.0),
+            DropTarget::Split(groom.0, groom.1, Split::Left)
+        );
+        assert_eq!(
+            at(1190.0, 200.0),
+            DropTarget::Split(color.0, color.1, Split::Right)
+        );
+        assert_eq!(
+            at(1100.0, 60.0),
+            DropTarget::Split(color.0, color.1, Split::Above)
+        );
+        // La esquina: el borde más cercano en proporción a su franja (10 de 50 a la izquierda,
+        // 50 de 75 abajo).
+        assert_eq!(
+            at(1010.0, 600.0),
+            DropTarget::Split(groom.0, groom.1, Split::Left)
+        );
+        // Y lo que se suelta ahí, ahí queda.
+        w.drop_panel(PanelId::Library, at(1100.0, 500.0));
+        assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Groom));
+        w.drop_panel(PanelId::Lumen, DropTarget::Float(egui::pos2(300.0, 200.0)));
+        assert!(w.floating(PanelId::Lumen));
+        assert!(!w.strip().contains(&PanelId::Library) && !w.strip().contains(&PanelId::Lumen));
+    }
+
+    #[test]
+    fn collapsing_to_icons_leaves_color_where_it_is() {
+        let mut w = Workspace::essentials();
+        // Color solo: nada que mandar a la tira (su botón no abriría nada).
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        assert!(!w.collapsible(s, n));
+        w.collapse_to_icons(s, n);
+        assert!(w.docked(PanelId::Color) && !w.strip().contains(&PanelId::Color));
+        // Con Library al lado: Library a la tira, Color se queda.
+        w.dock(PanelId::Library, DockTarget::Focused);
+        let (s, n) = w.leaf_of(PanelId::Library).unwrap();
+        assert!(w.collapsible(s, n));
+        w.collapse_to_icons(s, n);
+        assert!(w.docked(PanelId::Color) && !w.strip().contains(&PanelId::Color));
+        assert!(!w.docked(PanelId::Library));
+        assert_eq!(w.strip(), PanelId::DOCK);
+        // Groom solo debajo de Color: a la tira, y su grupo desaparece.
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Groom, DockTarget::Split(s, n, Split::Below));
+        let (s, n) = w.leaf_of(PanelId::Groom).unwrap();
+        w.collapse_to_icons(s, n);
+        assert_eq!(w.strip(), PanelId::DOCK);
+        assert_eq!(w.state.iter_leaves().count(), 1);
+    }
+
+    #[test]
+    fn focusing_a_panel_makes_its_tab_the_active_one() {
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Lospec, DockTarget::Focused);
+        w.dock(PanelId::Groom, DockTarget::Focused);
+        let active = |w: &Workspace| {
+            let (s, n) = w.leaf_of(PanelId::Lospec).unwrap();
+            let leaf = w
+                .state
+                .leaf(NodePath {
+                    surface: s,
+                    node: n,
+                })
+                .unwrap();
+            leaf.tabs[leaf.active.0]
+        };
+        assert_eq!(active(&w), PanelId::Groom);
+        assert!(w.focus(PanelId::Lospec));
+        assert_eq!(active(&w), PanelId::Lospec);
+        // En la tira no hay pestaña que enfocar.
+        assert!(!w.focus(PanelId::Slices));
     }
 
     /// Cuántas veces está cada panel: en la tira y en el árbol.

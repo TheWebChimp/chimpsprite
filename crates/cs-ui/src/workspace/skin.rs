@@ -270,7 +270,7 @@ fn etched_in(rect: Rect, colors: &SkinColors, ppp: f32) -> Shape {
 }
 
 /// La zona de destino: la franja de selección a media luz dentro del marco `menu.side`.
-fn drop_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
+pub(super) fn drop_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
     let fill = match skin.piece(DROP_FILL, WidgetState::Normal) {
         Some(p) => pixel_ui::piece_shapes(p, rect.shrink(2.0), ppp),
         None => vec![Shape::rect_filled(rect, 0.0, skin.colors().text_selection)],

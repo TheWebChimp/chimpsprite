@@ -1591,6 +1591,27 @@ impl ChimpApp {
                 })
                 .inner
         };
+        // Sacar un panel de la tira: soltado en la columna (como pestaña o partiendo un grupo) o
+        // fuera de ella (en una ventana), o desde su menú contextual. Mientras se arrastra, dónde
+        // caería.
+        let column = palette_panel.response.rect;
+        if let Some((_, pointer)) = dock_out.dragging {
+            let target = workspace::drop_target(&self.workspace, pointer, column);
+            workspace::paint_drop_zone(ui, skin, &self.workspace, target);
+        }
+        if let Some(request) = dock_out.request {
+            match request {
+                dock::StripRequest::Drop(id, pointer) => {
+                    let target = workspace::drop_target(&self.workspace, pointer, column);
+                    self.workspace.drop_panel(id, target);
+                }
+                dock::StripRequest::Dock(id) => {
+                    self.workspace.dock(id, workspace::DockTarget::Focused);
+                }
+                dock::StripRequest::Float(id, at) => self.workspace.float(id, at),
+            }
+            ui.ctx().request_repaint();
+        }
         // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
         // Tampoco en la pestaña de un modelo en modo Texture (el activo es su textura).
         if self.view.timeline && PanelId::Timeline.available(self) {

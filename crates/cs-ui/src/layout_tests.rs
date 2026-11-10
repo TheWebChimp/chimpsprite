@@ -11518,3 +11518,202 @@ fn with_a_panel_docked_a_click_does_not_change_the_columns_width() {
         assert_eq!(h.app.view.palette_width, Some(after), "saved {saved}");
     }
 }
+
+// --- Fase C, tarea 6: sacar paneles de la tira ---
+
+/// Arrastra con el botón principal de `from` a `to` como una mano: mover, apretar, varias
+/// movidas (la primera de más de 6 puntos lo levanta) y soltar, un frame cada uno. Devuelve los
+/// textos dibujados a medio camino (el fantasma).
+fn drag_in_steps(h: &mut LayoutHarness, from: Pos2, to: Pos2) -> Vec<String> {
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    let mut midway = Vec::new();
+    for t in [0.1, 0.4, 0.7, 1.0] {
+        let at = from + (to - from) * t;
+        h.frame_with(vec![Event::PointerMoved(at)]);
+        if t == 0.7 {
+            midway = h.texts.iter().map(|(t, _)| t.clone()).collect();
+        }
+    }
+    h.frame_with(vec![press(to, false)]);
+    h.frame();
+    h.frame();
+    midway
+}
+
+#[test]
+fn dragging_a_strip_icon_to_the_middle_of_the_column_docks_it_beside_color() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let from = h.button("Groom").center();
+    let to = h.panel("palette").center();
+    let midway = drag_in_steps(&mut h, from, to);
+    // A medio camino, el fantasma con su título (ningún botón de la tira lo escribe).
+    assert!(midway.iter().any(|t| t == "Groom"), "the ghost: {midway:?}");
+    // Suelto en el centro del grupo de Color: su pestaña, al lado de la de Color.
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Groom));
+    assert_eq!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
+    assert!(!w.strip().contains(&PanelId::Groom));
+    assert_eq!(buttons_in(&h, "Groom", "dock"), 0);
+    assert_eq!(buttons_in(&h, "Groom", "palette"), 1);
+    assert_eq!(buttons_in(&h, "Color", "palette"), 1);
+    // Y el flyout no se abrió.
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
+}
+
+#[test]
+fn dragging_a_strip_icon_to_the_bottom_edge_of_the_column_splits_it() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let from = h.button("Groom").center();
+    let column = h.panel("palette");
+    let to = pos2(column.center().x, column.bottom() - 20.0);
+    drag_in_steps(&mut h, from, to);
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Groom));
+    assert_ne!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
+    let groom = w.leaf_rect(PanelId::Groom).unwrap();
+    let color = w.leaf_rect(PanelId::Color).unwrap();
+    assert!(groom.top() > color.top(), "{groom:?} below {color:?}");
+}
+
+#[test]
+fn dragging_a_strip_icon_onto_the_canvas_floats_it_there() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let from = h.button("Groom").center();
+    let to = h.canvas.expect("the canvas").center();
+    drag_in_steps(&mut h, from, to);
+    let w = &h.app.workspace;
+    assert!(w.floating(PanelId::Groom));
+    assert!(!w.docked(PanelId::Groom) && !w.strip().contains(&PanelId::Groom));
+    // La ventana, con la esquina en el puntero (más su marco).
+    let leaf = w.leaf_rect(PanelId::Groom).unwrap();
+    assert!(
+        (leaf.left() - to.x).abs() <= 8.0,
+        "{leaf:?} at the pointer {to:?}"
+    );
+    assert_eq!(buttons_in(&h, "Groom", "dock"), 0);
+}
+
+#[test]
+fn dropping_a_strip_icon_back_on_the_strip_leaves_it_there() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let from = h.button("Groom").center();
+    let to = h.button("Artboards").center();
+    drag_in_steps(&mut h, from, to);
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
+}
+
+#[test]
+fn a_click_on_a_strip_icon_still_opens_its_flyout_even_if_it_moves_a_little() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let at = h.button("Groom").center();
+    h.click(at, PointerButton::Primary);
+    assert_eq!(crate::dock::open_panel(&h.ctx), Some(PanelId::Groom));
+    h.click(at, PointerButton::Primary);
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
+    // Apretado, 4 puntos de temblor y suelto: sigue siendo un clic.
+    h.drag(at, at + vec2(4.0, 0.0));
+    assert_eq!(crate::dock::open_panel(&h.ctx), Some(PanelId::Groom));
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+}
+
+#[test]
+fn the_context_menu_of_a_strip_icon_docks_or_floats_it() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("Groom").center(), PointerButton::Secondary);
+    h.click(h.button("Dock").center(), PointerButton::Primary);
+    assert!(h.app.workspace.docked(PanelId::Groom));
+    assert_eq!(
+        h.app.workspace.leaf_of(PanelId::Groom),
+        h.app.workspace.leaf_of(PanelId::Color)
+    );
+    // "Float": en una ventana a la izquierda de la tira.
+    let strip = h.panel("dock");
+    h.click(h.button("Library").center(), PointerButton::Secondary);
+    h.click(h.button("Float").center(), PointerButton::Primary);
+    assert!(h.app.workspace.floating(PanelId::Library));
+    let leaf = h.app.workspace.leaf_rect(PanelId::Library).unwrap();
+    assert!(leaf.right() <= strip.left(), "{leaf:?} left of {strip:?}");
+    assert!(!h.app.workspace.strip().contains(&PanelId::Library));
+}
+
+#[test]
+fn collapse_to_icons_sends_a_group_to_the_strip_but_color_stays() {
+    use crate::panel_registry::PanelId;
+    // Color solo: no hay botón « (no tiene a dónde ir).
+    let h = LayoutHarness::new(pixel_ui(), true);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Collapse to Icons"));
+    // Library junto a Color: el « al final de la barra de pestañas.
+    let mut h = library_beside_color();
+    let collapse = h.button("Collapse to Icons");
+    let palette = h.panel("palette");
+    assert!(
+        palette.contains_rect(collapse),
+        "{collapse:?} in {palette:?}"
+    );
+    h.click(collapse.center(), PointerButton::Primary);
+    assert!(h.app.workspace.docked(PanelId::Color));
+    assert!(!h.app.workspace.docked(PanelId::Library));
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    assert_eq!(buttons_in(&h, "Library", "dock"), 1);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Collapse to Icons"));
+}
+
+#[test]
+fn a_lone_docked_panel_collapses_from_its_grab_strip() {
+    use crate::panel_registry::PanelId;
+    let mut h = groom_below_color(300.0);
+    // En reposo no se ve (Groom va solo, sin barra).
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Collapse to Icons"));
+    // Con el puntero en la franja de arriba de Groom, el « en su punta derecha.
+    let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
+    h.frame_with(vec![Event::PointerMoved(pos2(
+        leaf.center().x,
+        leaf.top() + 1.0,
+    ))]);
+    h.frame();
+    let collapse = h.button("Collapse to Icons");
+    assert!(leaf.contains_rect(collapse), "{collapse:?} in {leaf:?}");
+    assert!(collapse.right() > leaf.right() - 16.0, "at the right end");
+    h.click(collapse.center(), PointerButton::Primary);
+    assert!(!h.app.workspace.docked(PanelId::Groom));
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    assert!(h.app.workspace.docked(PanelId::Color));
+}
+
+#[test]
+fn browse_lospec_from_groom_brings_a_docked_lospec_to_the_front() {
+    use crate::app_panels::PanelAction;
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.dock(PanelId::Lospec, DockTarget::Focused);
+    h.app.workspace.dock(PanelId::Groom, DockTarget::Focused);
+    h.frame();
+    h.frame();
+    let on = |h: &LayoutHarness, label: &str| h.selected.iter().any(|(l, s)| l == label && *s);
+    assert!(on(&h, "Groom") && !on(&h, "Lospec"));
+    let ctx = h.ctx.clone();
+    h.app.apply_panel_action(
+        &ctx,
+        PanelAction::Groom(crate::groom::GroomAction::BrowseLospec),
+    );
+    h.frame();
+    h.frame();
+    assert!(on(&h, "Lospec") && !on(&h, "Groom"));
+    // Ningún flyout (Lospec no está en la tira).
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
+}
