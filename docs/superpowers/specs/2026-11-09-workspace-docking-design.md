@@ -137,7 +137,19 @@ egui_taffy y solo `workspace` conoce egui_dock.
   **Pendiente para antes de la fase C:** un test de barrido de anchos de `MIN_WIDTH` a 600 por
   panel; una variante de `run_at` a escala 2; reservar el ancho de la barra de scroll en los
   paneles acoplados; medir el costo de recalcular taffy al arrastrar los splits.
-- **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia.
+- **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia. **HECHA**:
+  `crates/cs-ui/src/panel_registry.rs` tiene `PanelId` (13 paneles), `PanelSpec { title, icon, plain,
+  reference_width, min_width, closable, host }`, `Host::{Left, Right, Bottom, Window, Flyout(Body)}`,
+  `Body::{Fit, Tall, Fixed}`, `ALL` y `DOCK` (`dock::DockPanel` es un alias). `app_panels.rs` tiene
+  `PanelAction`, `draw_panel(ui, id)`, `draw_panel_modal(ui, id, modal)`, `apply_panel_action(ctx,
+  action)` y `panel_flyout(ctx, id, anchor, modal)`: todos los flyouts del dock, Artboards/Slices,
+  Tools, Color, Timeline, el panel fijo de la pestaña de modelo y el contenido de Preview
+  (`Preview::contents`) dibujan por ahí; los hosts no cambiaron.
+
+  **Para la fase C:** el modal de Color tiene que llegar por `draw_panel_modal`; `ClosePreview` solo
+  limpia `view.preview` (parar la reproducción vive en `Preview::show`); el fondo de la lista de
+  Lospec es un parámetro privado de `draw_panel_in`; `min_width` de Tools y Color son marcadores
+  (min == referencia); `PanelSpec.closable` todavía no se lee.
 - **C. Docking del lado derecho:** la tira de íconos y sus flyouts + el panel de color pasan a
   egui_dock (colapsado a íconos, flotantes, arrastrar).
 - **D. El resto al árbol:** toolbar, timeline y preview; workspaces de fábrica y del usuario; menú
