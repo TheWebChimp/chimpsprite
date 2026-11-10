@@ -76,10 +76,14 @@ impl PanelId {
 }
 
 impl ChimpApp {
-    /// Abre el frame de los paneles: lo dibujado en el anterior pasa a `was_drawn` y se empieza de
-    /// cero.
+    /// Abre el frame de los paneles: se empieza de cero (en los tests, lo dibujado en el anterior
+    /// pasa a `was_drawn`).
     pub(crate) fn begin_panel_frame(&mut self) {
-        self.panels_drawn_prev = std::mem::take(&mut self.panels_drawn);
+        #[cfg(test)]
+        {
+            self.panels_drawn_prev = self.panels_drawn.clone();
+        }
+        self.panels_drawn.clear();
     }
 
     /// El panel `id` se dibujó en este frame (hasta ahora).
@@ -87,8 +91,8 @@ impl ChimpApp {
         self.panels_drawn.contains(&id)
     }
 
-    /// El panel `id` se dibujó en el frame anterior.
-    #[allow(dead_code, reason = "lo leerá el docking (fase C)")]
+    /// El panel `id` se dibujó en el frame anterior (solo lo leen los tests).
+    #[cfg(test)]
     pub(crate) fn was_drawn(&self, id: PanelId) -> bool {
         self.panels_drawn_prev.contains(&id)
     }

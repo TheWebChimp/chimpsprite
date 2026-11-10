@@ -485,6 +485,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     // para soltarlo, `,hover` para solo pasar el puntero por `x0,y0` o `,menu` para un clic
     // derecho ahí): p. ej. un ícono de la tira levantado sobre la columna.
     if let Some(drag) = dev_var("CHIMPSPRITE_DEMO_DRAG").and_then(DemoDrag::parse) {
+        // Lo que acomoda un arrastre soltado tampoco pisa el guardado del usuario al cerrar.
+        if drag.drop {
+            app.save_workspace = false;
+        }
         ctx.add_plugin(drag);
     }
     // Desarrollo: la pestaña UI Catalog a la vista, para capturas.

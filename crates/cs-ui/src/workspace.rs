@@ -594,20 +594,6 @@ impl Workspace {
         node_min(self.state.main_surface(), NodeIndex::root(), &m, sep, bar).x
     }
 
-    /// Regresa a la tira todos los paneles del grupo `(surface, node)`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "el botón « usa `collapse_to_icons`, que deja a Color donde está"
-        )
-    )]
-    pub(crate) fn collapse_leaf(&mut self, surface: SurfaceIndex, node: NodeIndex) {
-        for id in self.tabs_of(surface, node) {
-            self.to_strip(id);
-        }
-    }
-
     /// Los paneles del grupo `(surface, node)` (ninguno si no existe).
     fn tabs_of(&self, surface: SurfaceIndex, node: NodeIndex) -> Vec<PanelId> {
         self.state
@@ -1528,16 +1514,6 @@ mod tests {
         w.dock(PanelId::Library, DockTarget::Focused);
         w.refresh_tab_bars();
         assert!(!w.tab_bar_hidden_of(PanelId::Color));
-    }
-
-    #[test]
-    fn collapsing_a_group_sends_its_tabs_to_the_strip() {
-        let mut w = Workspace::essentials();
-        w.dock(PanelId::Library, DockTarget::Focused);
-        let (surface, node) = w.leaf_of(PanelId::Library).unwrap();
-        w.collapse_leaf(surface, node);
-        assert!(!w.docked(PanelId::Library) && !w.docked(PanelId::Color));
-        assert!(w.strip().contains(&PanelId::Library) && w.strip().contains(&PanelId::Color));
     }
 
     #[test]

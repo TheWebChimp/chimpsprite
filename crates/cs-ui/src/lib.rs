@@ -263,8 +263,9 @@ pub struct ChimpApp {
     /// El panel Lospec del dock (mientras está abierto).
     lospec_dock: Option<palette_ui::PresetsWindow>,
     /// Los paneles que se dibujaron en este frame (los llena `draw_panel`, se vacía al empezar el
-    /// frame de paneles) y en el anterior.
+    /// frame de paneles) y, en los tests, en el anterior.
     panels_drawn: Vec<panel_registry::PanelId>,
+    #[cfg(test)]
     panels_drawn_prev: Vec<panel_registry::PanelId>,
     /// Dónde está cada panel: en la tira, acoplado o flotando (lo muestra `workspace::show`).
     workspace: workspace::Workspace,
@@ -435,6 +436,7 @@ impl ChimpApp {
             presets_window: None,
             lospec_dock: None,
             panels_drawn: Vec::new(),
+            #[cfg(test)]
             panels_drawn_prev: Vec::new(),
             workspace: workspace::Workspace::essentials(),
             preset_name: None,
