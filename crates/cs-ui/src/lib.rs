@@ -141,14 +141,17 @@ const KEYMAP_KEY: &str = "chimpsprite.keymap";
 const MASCOT_KEY: &str = "chimpsprite.mascot";
 /// Lo último que se exportó con GIF settings (ChimpCAD).
 const GIF_KEY: &str = "chimpsprite.gif";
+/// El acomodo de los paneles (la tira, lo acoplado y lo flotante).
+const WORKSPACE_KEY: &str = "chimpsprite.workspace";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
 
 pub struct ChimpApp {
-    /// El ancho guardado de la columna de colores ya rige y el usuario la tocó (o la eligió):
-    /// desde ahí se guarda lo que él arrastre. Antes, el ancho guardado se impone cada cuadro.
-    palette_width_settled: bool,
+    /// Sin un ancho elegido para la columna derecha (`view.palette_width`), el que tomó sola la
+    /// última vez que no la ensanchaba el mínimo de un panel acoplado: a ese vuelve cuando el
+    /// panel se va. No se guarda.
+    palette_natural_width: Option<f32>,
     /// Documento de la pestaña activa (un marcador vacío si se está en Home).
     doc: tabs::DocState,
     tabs: tabs::Tabs,
@@ -325,6 +328,9 @@ impl ChimpApp {
             .storage
             .and_then(|s| eframe::get_value(s, GIF_KEY))
             .unwrap_or_default();
+        if let Some(storage) = cc.storage {
+            app.restore_workspace(storage);
+        }
         if launch.demo {
             app.open_demo();
         }
@@ -358,7 +364,7 @@ impl ChimpApp {
         palettes: palette_library::PaletteLibrary,
     ) -> Self {
         Self {
-            palette_width_settled: false,
+            palette_natural_width: None,
             doc: tabs::DocState::untitled(""),
             tabs: tabs::Tabs::default(),
             capture: capture::Capture::from_env(),
@@ -433,6 +439,15 @@ impl ChimpApp {
             pixel: appearance::PixelUi::from_env(),
             tool_options: editor::ToolOptions::default(),
             gif_settings: Default::default(),
+        }
+    }
+
+    /// El acomodo de los paneles guardado (`WORKSPACE_KEY`). Sin él (una configuración de antes)
+    /// o ilegible, se queda el de fábrica; de uno que se lee se descarta lo que no sirva (ver
+    /// `Workspace::from_saved`).
+    fn restore_workspace(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(saved) = eframe::get_value(storage, WORKSPACE_KEY) {
+            self.workspace = workspace::Workspace::from_saved(saved);
         }
     }
 
@@ -1487,19 +1502,26 @@ impl ChimpApp {
             .unwrap_or(color_panel::DEFAULT_WIDTH)
             .max(column_min)
             .max(1.0);
-        // Los primeros cuadros egui guarda el ancho del panel con medidas que todavía cambian
-        // (la fuente y la escala del skin rigen después): el guardado se impone hasta que el
-        // usuario toca algo, y recién entonces se guarda lo que arrastre.
+        // El ancho que se ve es el elegido (`view.palette_width`, que solo cambia cuando el
+        // usuario arrastra el borde) o, sin uno, el que la columna tomó sola; nunca menos que el
+        // mínimo. Se impone cada cuadro (egui guarda el ancho del panel, que un panel acoplado
+        // ancho estiró: al irse, la columna vuelve), salvo mientras se arrastra el borde. Los
+        // primeros cuadros egui guarda medidas que todavía cambian (la fuente y la escala del skin
+        // rigen después): también por eso se impone el elegido desde el primero.
         let palette_id = egui::Id::new("palette");
-        if !self.palette_width_settled {
-            if ui.input(|i| i.pointer.any_down()) {
-                self.palette_width_settled = true;
-            } else if let (Some(width), Some(state)) = (
-                self.view.palette_width,
-                egui::containers::panel::PanelState::load(ui.ctx(), palette_id),
-            ) {
+        // El asa del borde: egui 0.36 la registra con `id.with("__resize")` (`resize_widget_id`,
+        // privado). Si cambia al subir de versión, lo notan los tests de arrastrar el borde.
+        let resizing = ui
+            .ctx()
+            .read_response(palette_id.with("__resize"))
+            .is_some_and(|r| r.dragged() || r.drag_stopped());
+        let preferred = self.view.palette_width.or(self.palette_natural_width);
+        let load = |ui: &egui::Ui| egui::containers::panel::PanelState::load(ui.ctx(), palette_id);
+        if !resizing && let (Some(width), Some(state)) = (preferred, load(ui)) {
+            let width = width.max(column_min).max(1.0);
+            if state.outer_rect.width() != width {
                 let mut outer_rect = state.outer_rect;
-                outer_rect.min.x = outer_rect.max.x - width.max(column_min).max(1.0);
+                outer_rect.min.x = outer_rect.max.x - width;
                 ui.data_mut(|d| {
                     d.insert_persisted(
                         palette_id,
@@ -1508,6 +1530,7 @@ impl ChimpApp {
                 });
             }
         }
+        let before = load(ui).map(|state| state.outer_rect.width());
         // El margen de Color lo pone el cuerpo de su grupo (ver `workspace`): el panel va sin él y
         // el `DockArea` lo llena de borde a borde.
         let mut panel = egui::Panel::right("palette")
@@ -1524,10 +1547,14 @@ impl ChimpApp {
             // instancia (lo decide el panel); los demás paneles acoplados se apagan.
             workspace::show(self, ui, modal);
         });
-        // Lo que el usuario arrastró se guarda con la vista (el panel ya respetó su mínimo).
+        // Lo que el usuario arrastró se guarda con la vista (el panel ya respetó su mínimo); un
+        // clic en el borde que no lo movió no cuenta.
         let width = palette_panel.response.rect.width();
-        if self.palette_width_settled && self.view.palette_width != Some(width) {
+        if resizing && before != Some(width) {
             self.view.palette_width = Some(width);
+        } else if self.view.palette_width.is_none() && width > column_min + 1.0 {
+            // Más ancha que el mínimo: es su ancho propio, no el de un panel acoplado.
+            self.palette_natural_width = Some(width);
         }
         // Con Pixel UI, la línea del borde grabada (la oscura y su brillo), como las demás. Arriba,
         // la oscura cruza el brillo de la línea de la barra de opciones (como los separadores de
@@ -1809,6 +1836,7 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
         eframe::set_value(storage, MASCOT_KEY, &self.mascot.settings);
         eframe::set_value(storage, GIF_KEY, &self.gif_settings);
+        eframe::set_value(storage, WORKSPACE_KEY, &self.workspace.to_saved());
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,

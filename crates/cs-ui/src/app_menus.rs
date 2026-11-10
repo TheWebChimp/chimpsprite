@@ -323,6 +323,12 @@ impl ChimpApp {
         {
             canvas.request_zoom(view::ZoomRequest::Fit);
         }
+        // El acomodo de los paneles (no hay menú Window: va con Timeline y los demás de la vista).
+        menus::separator(ui);
+        if ui.add(menus::plain("Reset Workspace")).clicked() {
+            self.reset_workspace();
+            ui.close();
+        }
     }
 
     /// El menú Frame, como el de Aseprite.

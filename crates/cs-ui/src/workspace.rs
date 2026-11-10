@@ -21,7 +21,7 @@ mod skin;
 use std::collections::HashMap;
 
 use eframe::egui;
-use egui_dock::{DockArea, DockState, Node, NodePath, TabViewer, Tree};
+use egui_dock::{DockArea, DockState, Node, NodePath, Surface, TabIndex, TabViewer, Tree};
 pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 
 use crate::ChimpApp;
@@ -171,6 +171,26 @@ pub(crate) fn paint_drop_zone(
     }
 }
 
+/// El acomodo como se guarda en la configuración de la app (`chimpsprite.workspace`): cada panel
+/// por su llave estable, para que lo de otra versión o de otra plataforma se lea igual (lo que no
+/// se conozca se descarta al leerlo: ver [`Workspace::from_saved`]). El ancho de la columna derecha
+/// no va aquí: es `ViewSettings::palette_width`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct SavedWorkspace {
+    /// El árbol de egui_dock: lo acoplado y las ventanas flotantes.
+    pub state: DockState<String>,
+    /// Los paneles de la tira, en orden. Al leer no hace falta (la tira es lo del dock que no está
+    /// en el árbol), pero así el archivo se entiende solo.
+    pub strip: Vec<String>,
+}
+
+impl Default for SavedWorkspace {
+    fn default() -> Self {
+        Workspace::essentials().to_saved()
+    }
+}
+
 /// El acomodo de los paneles: el árbol de egui_dock (acoplados y flotantes) y la tira de íconos.
 #[derive(Clone, Debug)]
 pub(crate) struct Workspace {
@@ -180,6 +200,9 @@ pub(crate) struct Workspace {
     /// Es el que queda en `app.workspace` mientras [`show`] tiene prestado el de verdad (los
     /// paneles se dibujan con la app entera): cambiarlo no serviría de nada.
     lent: bool,
+    /// Las ventanas de un acomodo leído y el rect que tenía lo de adentro de cada una (ver
+    /// [`Workspace::place_restored_windows`]).
+    placements: Vec<(SurfaceIndex, egui::Rect)>,
 }
 
 impl Default for Workspace {
@@ -196,7 +219,164 @@ impl Workspace {
             state: DockState::new(vec![PanelId::Color]),
             strip: PanelId::DOCK.to_vec(),
             lent: false,
+            placements: Vec::new(),
         }
+    }
+
+    /// Lo que se guarda del acomodo. Las ventanas flotantes llevan en su árbol el rect de lo de
+    /// adentro (el de su grupo de arriba): de ahí sale dónde reabrirlas (ver
+    /// [`Workspace::place_restored_windows`]).
+    pub(crate) fn to_saved(&self) -> SavedWorkspace {
+        SavedWorkspace {
+            state: self.state.map_tabs(|p| p.key().to_owned()),
+            strip: self.strip.iter().map(|p| p.key().to_owned()).collect(),
+        }
+    }
+
+    /// El rect del nodo de arriba de la superficie `surface` (lo de adentro de una ventana) en el
+    /// último frame, si tiene uno.
+    fn root_rect(&self, surface: SurfaceIndex) -> Option<egui::Rect> {
+        self.state
+            .iter_surfaces_indexed()
+            .find(|(s, _)| *s == surface)
+            .and_then(|(_, s)| s.node_tree())
+            .filter(|tree| !tree.is_empty())
+            .and_then(|tree| tree[NodeIndex::root()].rect())
+            .filter(|r| r.is_finite() && r.is_positive())
+    }
+
+    /// Las ventanas de un acomodo leído, con lo de adentro donde estaba y de su tamaño. Cada frame
+    /// hasta que se aprieta un botón del puntero: los primeros frames la escala y el estilo de
+    /// Pixel UI todavía cambian (egui acomoda la ventana en una pantalla que no es la de después).
+    /// La esquina y el tamaño que se le piden a la ventana son los de su área (con el marco): el
+    /// marco se mide en el frame anterior (lo que su área tiene de más que lo de adentro).
+    fn place_restored_windows(&mut self, ctx: &egui::Context) {
+        if self.placements.is_empty() {
+            return;
+        }
+        if ctx.input(|i| i.pointer.any_down()) {
+            self.placements.clear();
+            return;
+        }
+        for (surface, want) in self.placements.clone() {
+            let area = ctx.memory(|m| m.area_rect(skin::window_area_id(surface)));
+            let (at, size) = match (area, self.root_rect(surface)) {
+                (Some(area), Some(now)) => (
+                    area.min + (want.min - now.min),
+                    want.size() + (area.size() - now.size()),
+                ),
+                _ => (want.min, want.size()),
+            };
+            if let Some(window) = self.state.get_window_state_mut(surface) {
+                window.set_position(at.round());
+                window.set_size(size.round());
+            }
+        }
+    }
+
+    /// El acomodo guardado, sin confiar en él (puede ser de otra versión, de otra plataforma o
+    /// estar roto): un árbol mal armado da [`Workspace::essentials`] (con un aviso en el log); de
+    /// lo demás se descartan los paneles que no se conocen (en la web, dafont), los que no van en
+    /// el árbol y los repetidos. Los del dock que no quedan en el árbol van a la tira, y Color, si
+    /// no quedó en ningún lado, a la superficie principal. Sin nada en el árbol, también
+    /// Essentials.
+    pub(crate) fn from_saved(saved: SavedWorkspace) -> Workspace {
+        let essentials = |why: &str| {
+            log::warn!("discarding the saved workspace: {why}");
+            Workspace::essentials()
+        };
+        if !sound(&saved.state) {
+            return essentials("its dock tree is malformed");
+        }
+        let in_tree = |id: PanelId| id == PanelId::Color || Workspace::goes_to_strip(id);
+        let mut state: DockState<Option<PanelId>> = saved
+            .state
+            .map_tabs(|k| PanelId::from_key(k).filter(|&id| in_tree(id)));
+        // Los que sobran se quitan uno por uno con `remove_tab` de egui_dock, que acomoda bien lo
+        // que queda (`filter_map_tabs` deja huecos si el hermano de lo que quita es un split).
+        loop {
+            let mut seen = Vec::new();
+            let extra = state.iter_all_tabs().find_map(|(path, tab)| match tab {
+                Some(id) if !seen.contains(id) => {
+                    seen.push(*id);
+                    None
+                }
+                _ => Some(path),
+            });
+            match extra {
+                Some(path) => {
+                    state.remove_tab(path);
+                }
+                None => break,
+            }
+        }
+        let mut state = state.filter_map_tabs(|tab| *tab);
+        if state.iter_all_tabs().next().is_none() {
+            return essentials("no known panel in it");
+        }
+        // Lo que egui_dock da por bueno al dibujar: la pestaña activa y el grupo con el foco de
+        // cada árbol, existentes.
+        for (_, leaf) in state.iter_leaves_mut() {
+            if leaf.active.0 >= leaf.tabs.len() {
+                leaf.active = TabIndex(0);
+            }
+        }
+        for surface in state.iter_surfaces_mut() {
+            if let Some(tree) = surface.node_tree_mut() {
+                let focused = tree
+                    .focused_leaf()
+                    .is_some_and(|n| n.0 < tree.len() && tree[n].is_leaf());
+                if !focused {
+                    let first = first_leaf(tree).unwrap_or(NodeIndex(tree.len()));
+                    tree.set_focused_node(first);
+                }
+            }
+        }
+        if state.find_tab(&PanelId::Color).is_none() {
+            let main = state.main_surface_mut();
+            if first_leaf(main).is_some() {
+                main.push_to_focused_leaf(PanelId::Color);
+            } else {
+                *main = Tree::new(vec![PanelId::Color]);
+            }
+        }
+        // El foco, en el grupo de Color (o el primero) de la superficie principal.
+        let main = state.main_surface();
+        let node = main
+            .find_tab(&PanelId::Color)
+            .map(|(node, _)| node)
+            .or_else(|| first_leaf(main))
+            .unwrap_or(NodeIndex(main.len()));
+        state.set_focused_node_and_surface(NodePath {
+            surface: SurfaceIndex::main(),
+            node,
+        });
+        if !sound(&state) {
+            return essentials("its dock tree is malformed");
+        }
+        let mut w = Workspace {
+            state,
+            ..Workspace::essentials()
+        };
+        // Lo guardado de cada ventana: el rect de lo de adentro.
+        w.placements = w
+            .state
+            .iter_surfaces_indexed()
+            .filter(|(s, _)| !s.is_main())
+            .filter_map(|(s, _)| w.root_rect(s).map(|r| (s, r)))
+            .collect();
+        w.strip = PanelId::DOCK
+            .iter()
+            .copied()
+            .filter(|p| w.state.find_tab(p).is_none())
+            .collect();
+        w
+    }
+
+    /// Todos los paneles del árbol (acoplados y flotantes), con repetidos si los hubiera.
+    #[cfg(test)]
+    pub(crate) fn state_tabs(&self) -> Vec<PanelId> {
+        self.state.iter_all_tabs().map(|(_, p)| *p).collect()
     }
 
     /// Lo que queda en `app.workspace` mientras [`show`] dibuja los paneles.
@@ -491,6 +671,37 @@ impl Workspace {
             keep
         });
     }
+}
+
+/// Si un árbol leído se puede usar: la superficie principal primero (y solo ella), y en cada árbol
+/// cada split con sus dos lados y cada nodo colgando de un split; cada ventana, con algún grupo.
+/// egui_dock no revisa nada de eso al leer, y con un árbol así se cae al dibujarlo.
+fn sound<T>(state: &DockState<T>) -> bool {
+    let mut surfaces = state.iter_surfaces();
+    let main = matches!(surfaces.next(), Some(Surface::Main(tree)) if tree_sound(tree));
+    main && surfaces.all(|s| match s {
+        Surface::Empty => true,
+        Surface::Main(_) => false,
+        Surface::Window(tree, _) => tree_sound(tree) && first_leaf(tree).is_some(),
+    })
+}
+
+/// Si en `tree` cada split tiene sus dos lados y cada nodo cuelga de un split.
+fn tree_sound<T>(tree: &Tree<T>) -> bool {
+    (0..tree.len()).map(NodeIndex).all(|n| {
+        let node = &tree[n];
+        let hangs = node.is_empty() || n.parent().is_none_or(|p| tree[p].is_parent());
+        let sides = !node.is_parent()
+            || (n.right().0 < tree.len()
+                && !tree[n.left()].is_empty()
+                && !tree[n.right()].is_empty());
+        hangs && sides
+    })
+}
+
+/// El primer grupo de `tree` (por índice), si tiene alguno.
+fn first_leaf<T>(tree: &Tree<T>) -> Option<NodeIndex> {
+    (0..tree.len()).map(NodeIndex).find(|&n| tree[n].is_leaf())
 }
 
 /// Lo que egui_dock ve de los paneles: los dibuja con [`ChimpApp::draw_panel`] y junta lo que
@@ -853,6 +1064,7 @@ fn dock_id() -> egui::Id {
 pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     let mut workspace = std::mem::replace(&mut app.workspace, Workspace::placeholder());
     workspace.tidy();
+    workspace.place_restored_windows(ui.ctx());
     workspace.refresh_tab_bars();
     let shared_skin = app.pixel.shared_skin();
     let skin: Option<&Skin> = shared_skin.as_deref();
@@ -1315,6 +1527,104 @@ mod tests {
         let w = Workspace::demo("float").unwrap();
         assert!(w.floating(PanelId::Lumen));
         assert!(Workspace::demo("nope").is_none());
+    }
+
+    // --- Guardar y leer el acomodo ---
+
+    #[test]
+    fn a_saved_workspace_round_trips() {
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Library, DockTarget::Focused);
+        w.float(PanelId::Lumen, egui::pos2(300.0, 200.0));
+        let ron = ron::to_string(&w.to_saved()).unwrap();
+        let back = Workspace::from_saved(ron::from_str(&ron).unwrap());
+        assert!(back.docked(PanelId::Library) && back.floating(PanelId::Lumen));
+        assert_eq!(back.strip().len(), w.strip().len());
+    }
+
+    #[test]
+    fn unknown_or_repeated_panels_are_dropped_and_missing_ones_go_to_the_strip() {
+        let mut saved = Workspace::essentials().to_saved();
+        saved.state.push_to_focused_leaf("nope".to_string());
+        saved.state.push_to_focused_leaf("color".to_string()); // repetido
+        saved.strip.retain(|k| k != "groom"); // falta
+        let w = Workspace::from_saved(saved);
+        assert!(w.strip().contains(&PanelId::Groom));
+        assert_eq!(
+            w.state_tabs()
+                .iter()
+                .filter(|p| **p == PanelId::Color)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_group_or_a_window_of_unknown_panels_goes_away_without_breaking_the_tree() {
+        // Lo de escritorio leído en la web: "nope" a la izquierda de un split (Color sobre Groom) y
+        // otro solo en una ventana (como dafont).
+        let mut saved = Workspace::demo("split").unwrap().to_saved();
+        saved
+            .state
+            .main_surface_mut()
+            .split_left(NodeIndex::root(), 0.3, vec!["nope".to_string()]);
+        saved.state.add_window(vec!["dafont?".to_string()]);
+        let w = Workspace::from_saved(saved);
+        assert!(sound(&w.state));
+        assert_eq!(w.state_tabs(), vec![PanelId::Color, PanelId::Groom]);
+        assert_ne!(w.leaf_of(PanelId::Color), w.leaf_of(PanelId::Groom));
+        assert!(w.docked(PanelId::Color) && w.docked(PanelId::Groom));
+        assert_eq!(w.state.iter_surfaces().count(), 1, "no windows left");
+        // Y se puede seguir usando: acoplar, flotar y volver a la tira.
+        let mut w = w;
+        w.dock(PanelId::Library, DockTarget::Focused);
+        assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+        w.to_strip(PanelId::Groom);
+        assert_eq!(w.state_tabs(), vec![PanelId::Color, PanelId::Library]);
+    }
+
+    #[test]
+    fn color_missing_from_a_saved_workspace_goes_back_to_the_main_surface() {
+        let mut saved = Workspace::demo("library-tab").unwrap().to_saved();
+        saved.state.retain_tabs(|k| k != "color");
+        let w = Workspace::from_saved(saved);
+        assert!(w.docked(PanelId::Color) && w.docked(PanelId::Library));
+        assert!(!w.strip().contains(&PanelId::Library));
+        // Color flotando (la columna vacía) se respeta.
+        let mut w = Workspace::essentials();
+        w.float(PanelId::Color, egui::pos2(100.0, 100.0));
+        let back = Workspace::from_saved(w.to_saved());
+        assert!(back.floating(PanelId::Color) && !back.docked(PanelId::Color));
+        assert_eq!(back.strip(), PanelId::DOCK);
+    }
+
+    #[test]
+    fn a_malformed_or_empty_saved_workspace_gives_essentials() {
+        let is_essentials = |w: &Workspace| {
+            w.state_tabs() == vec![PanelId::Color]
+                && w.docked(PanelId::Color)
+                && w.strip() == PanelId::DOCK
+        };
+        // Un split sin uno de sus lados.
+        let mut saved = Workspace::demo("split").unwrap().to_saved();
+        saved.state.main_surface_mut()[NodeIndex(2)] = Node::Empty;
+        assert!(is_essentials(&Workspace::from_saved(saved)));
+        // Nada que se conozca.
+        let saved = SavedWorkspace {
+            state: DockState::new(vec!["nope".to_string()]),
+            strip: Vec::new(),
+        };
+        assert!(is_essentials(&Workspace::from_saved(saved)));
+        // Sin campos: el de fábrica.
+        let saved: SavedWorkspace = ron::from_str("()").unwrap();
+        assert!(is_essentials(&Workspace::from_saved(saved)));
+        // Sin la tira: se arma sola.
+        let mut saved = Workspace::demo("split").unwrap().to_saved();
+        saved.strip.clear();
+        let w = Workspace::from_saved(saved);
+        assert!(w.docked(PanelId::Groom));
+        assert!(!w.strip().contains(&PanelId::Groom));
+        assert_eq!(w.strip().len(), PanelId::DOCK.len() - 1);
     }
 
     // --- `show` en un frame sin ventana ---

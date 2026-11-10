@@ -11515,7 +11515,8 @@ fn with_a_panel_docked_a_click_does_not_change_the_columns_width() {
             h.screen().right(),
             "saved {saved}"
         );
-        assert_eq!(h.app.view.palette_width, Some(after), "saved {saved}");
+        // La preferencia no cambia con el clic (tarea 7: solo arrastrando el borde).
+        assert_eq!(h.app.view.palette_width, Some(saved), "saved {saved}");
     }
 }
 
@@ -11716,4 +11717,125 @@ fn browse_lospec_from_groom_brings_a_docked_lospec_to_the_front() {
     assert!(on(&h, "Lospec") && !on(&h, "Groom"));
     // Ningún flyout (Lospec no está en la tira).
     assert_eq!(crate::dock::open_panel(&h.ctx), None);
+}
+
+// --- Fase C, tarea 7: el ancho de la columna, guardar el acomodo y Reset Workspace ---
+
+#[test]
+fn the_columns_width_preference_changes_only_when_its_edge_is_dragged() {
+    use crate::panel_registry::PanelId;
+    // Con 137 (la del usuario), Groom acoplado la ensancha a su mínimo.
+    let mut h = groom_below_color(137.0);
+    let grown = h.panel("palette").width();
+    assert!(grown > 137.0, "{grown}");
+    // Un clic en otro lado (el aire del grupo de Groom): la preferencia no cambia.
+    let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
+    h.click(
+        leaf.left_bottom() + Vec2::new(3.0, -3.0),
+        PointerButton::Primary,
+    );
+    assert_eq!(h.panel("palette").width(), grown);
+    assert_eq!(h.app.view.palette_width, Some(137.0));
+    // Groom de vuelta a la tira: la columna vuelve a la preferencia.
+    h.app.workspace.to_strip(PanelId::Groom);
+    h.frame();
+    h.frame();
+    assert_eq!(h.panel("palette").width(), 137.0);
+    assert_eq!(h.app.view.palette_width, Some(137.0));
+    // Arrastrar el borde sí la cambia.
+    let panel = h.panel("palette");
+    let edge = pos2(panel.left(), panel.center().y);
+    drag(&mut h, edge, edge + vec2(-40.0, 0.0));
+    assert_eq!(h.panel("palette").width(), 177.0);
+    assert_eq!(h.app.view.palette_width, Some(177.0));
+}
+
+#[test]
+fn without_a_preference_the_column_also_returns_to_its_own_width() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let factory = h.panel("palette");
+    // Groom a la derecha de Color: los dos mínimos lado a lado no caben en el ancho de fábrica.
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Right));
+    for _ in 0..4 {
+        h.frame();
+    }
+    assert!(h.panel("palette").width() > factory.width());
+    let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
+    h.click(
+        leaf.left_bottom() + Vec2::new(3.0, -3.0),
+        PointerButton::Primary,
+    );
+    assert_eq!(h.app.view.palette_width, None);
+    h.app.workspace.to_strip(PanelId::Groom);
+    h.frame();
+    h.frame();
+    assert_eq!(h.panel("palette"), factory);
+    assert_eq!(h.app.view.palette_width, None);
+}
+
+#[test]
+fn the_workspace_is_saved_and_a_new_app_restores_it() {
+    use crate::panel_registry::PanelId;
+    let mut h = groom_below_color(300.0);
+    h.app.workspace.float(PanelId::Lumen, pos2(320.0, 120.0));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let lumen = h.app.workspace.leaf_rect(PanelId::Lumen).unwrap();
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut storage);
+    // Una app nueva con esa configuración (como `ChimpApp::new`) y un contexto de egui nuevo (sin
+    // la memoria de la sesión de antes).
+    let view: ViewSettings = eframe::get_value(&storage, crate::VIEW_KEY).expect("saved");
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
+    app.restore_workspace(&storage);
+    app.new_document();
+    let mut back = LayoutHarness::start(app);
+    back.frame();
+    let w = &back.app.workspace;
+    assert!(w.docked(PanelId::Color) && w.docked(PanelId::Groom));
+    assert_ne!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
+    assert!(w.floating(PanelId::Lumen));
+    assert_eq!(w.strip(), h.app.workspace.strip());
+    // Lumen, donde estaba y del mismo tamaño; la columna, igual.
+    assert_eq!(w.leaf_rect(PanelId::Lumen).unwrap(), lumen);
+    assert_eq!(back.panel("palette"), h.panel("palette"));
+    // Sin la clave (una configuración de antes): Essentials.
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+    app.restore_workspace(&MemoryStorage::default());
+    assert!(app.workspace.docked(PanelId::Color));
+    assert_eq!(app.workspace.strip(), PanelId::DOCK);
+}
+
+#[test]
+fn reset_workspace_goes_back_to_essentials_in_one_step() {
+    use crate::panel_registry::PanelId;
+    let mut h = groom_below_color(137.0);
+    h.app.workspace.float(PanelId::Lumen, pos2(320.0, 120.0));
+    for _ in 0..2 {
+        h.frame();
+    }
+    assert!(h.panel("palette").width() > 137.0, "Groom widens it");
+    let undo = h.app.doc.editor.history.done_count();
+    open_menu(&mut h, "View");
+    h.click(h.button("Reset Workspace").center(), PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Color));
+    assert!(!w.docked(PanelId::Groom) && !w.floating(PanelId::Lumen));
+    assert_eq!(w.strip(), PanelId::DOCK);
+    // La columna vuelve al ancho elegido (sin Groom, que la ensanchaba).
+    assert_eq!(h.app.view.palette_width, Some(137.0));
+    assert_eq!(h.panel("palette").width(), 137.0);
+    // No es del documento: nada que deshacer.
+    assert_eq!(h.app.doc.editor.history.done_count(), undo);
 }

@@ -63,3 +63,5 @@ web-sys = { version = "0.3", features = [
 [dev-dependencies]
 # Para decodificar los GIF de GIF settings en los tests (la misma versión que usa cs-io).
 gif = "0.14"
+# Para leer y escribir el acomodo guardado en los tests como lo guarda eframe (la misma versión).
+ron = "0.12"
