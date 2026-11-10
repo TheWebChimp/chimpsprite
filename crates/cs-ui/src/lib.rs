@@ -1379,8 +1379,14 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
-        use crate::app_panels::PanelAction;
+        use crate::app_panels::{PanelAction, PanelCtx};
         use crate::panel_registry::PanelId;
+        // Cómo se hospedan las regiones fijas: apagadas con un diálogo abierto (Color, solo sus
+        // menús y la instancia); ninguna es Lospec, así que el fondo no importa.
+        let fixed = PanelCtx {
+            modal,
+            bottom: None,
+        };
         // El skin compartido: el contenido de cada región toma prestada la app entera
         // (`draw_panel`) mientras su panel se dibuja con el skin.
         let shared_skin = self.pixel.shared_skin();
@@ -1444,8 +1450,9 @@ impl ChimpApp {
             .show_separator_line(skin.is_none())
             .show(ui, |ui| {
                 // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
+                // El scroll es del anfitrión; lo que apaga el modal, de `draw_panel` (adentro).
                 panels::tools_scroll_area().show(ui, |ui| {
-                    ui.add_enabled_ui(!modal, |ui| self.draw_panel(ui, PanelId::Tools));
+                    self.draw_panel(ui, PanelId::Tools, &fixed);
                 });
             });
         // El panel derecho antes que la línea de tiempo: va a todo el alto, hasta la barra de
@@ -1492,7 +1499,7 @@ impl ChimpApp {
         let palette_panel = panel.show(ui, |ui| {
             // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la
             // instancia (lo decide el panel).
-            color_action = self.draw_panel_modal(ui, PanelId::Color, modal);
+            color_action = self.draw_panel(ui, PanelId::Color, &fixed);
         });
         // Lo que el usuario arrastró se guarda con la vista (el panel ya respetó su mínimo).
         let width = palette_panel.response.rect.width();
@@ -1537,9 +1544,7 @@ impl ChimpApp {
                 .show_separator_line(skin.is_none())
                 .show(ui, |ui| {
                     dock::fixed_panel(ui, skin, model_panel::REFERENCE_WIDTH, |ui| {
-                        ui.add_enabled_ui(!modal, |ui| {
-                            model_action = self.draw_panel(ui, PanelId::Model);
-                        });
+                        model_action = self.draw_panel(ui, PanelId::Model, &fixed);
                     });
                 });
             dock::DockOutput::default()
@@ -1573,10 +1578,7 @@ impl ChimpApp {
                     .show_separator_line(false);
             }
             let timeline_action = panel
-                .show(ui, |ui| {
-                    ui.add_enabled_ui(!modal, |ui| self.draw_panel(ui, PanelId::Timeline))
-                        .inner
-                })
+                .show(ui, |ui| self.draw_panel(ui, PanelId::Timeline, &fixed))
                 .inner;
             // New Tilemap Layer: su diálogo.
             if let Some(action) = timeline_action {

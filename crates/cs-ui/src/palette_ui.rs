@@ -327,8 +327,8 @@ impl ChimpApp {
 
     /// El contenido del panel Lospec del dock (ver `ChimpApp::draw_panel`): lo mismo que la
     /// pestaña Lospec de Palette Presets. Su estado vive mientras está abierto (ver
-    /// `close_lospec_panel`); la franja del logo la pone el que lo hospeda, fuera de lo que el
-    /// modal apaga. Con `bottom`, la lista llega hasta esa altura (la de abajo de la columna del
+    /// `close_lospec_panel`); la franja del logo la pone `draw_panel`, fuera de lo que el modal
+    /// apaga. Con `bottom`, la lista llega hasta esa altura (la de abajo de la columna del
     /// dock).
     pub(crate) fn draw_lospec(
         &mut self,
@@ -696,7 +696,7 @@ pub(crate) const LOSPEC_PANEL_W: f32 = 364.0;
 const BAND_H: f32 = 29.0;
 const BAND_STRIPE: f32 = 25.0;
 const BAND_LOGO: egui::Vec2 = egui::vec2(5.0, 6.0);
-const BAND_COLORS: [egui::Color32; 12] = [
+pub(crate) const BAND_COLORS: [egui::Color32; 12] = [
     egui::Color32::from_rgb(158, 68, 145),
     egui::Color32::from_rgb(99, 54, 98),
     egui::Color32::from_rgb(144, 61, 98),
