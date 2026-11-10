@@ -1167,10 +1167,9 @@ fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Opti
                 label_with_hint(ui, &title, &hint);
                 // Con nombre, para los lectores de pantalla (y los tests).
                 let rect = ui.min_rect();
+                let info = crate::panel_kit::label_info(ui, &title);
                 ui.interact(rect, ui.id().with("title"), Sense::hover())
-                    .widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &title)
-                    });
+                    .widget_info(|| info.clone());
             });
         });
         for (id, style) in &members {

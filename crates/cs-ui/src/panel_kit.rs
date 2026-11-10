@@ -43,8 +43,15 @@ pub(crate) fn text_wrapped(ui: &mut Ui, text: &str) {
     let width = ui.available_width().max(1.0);
     let galley = ui.painter().layout(text.to_string(), font, color, width);
     let (rect, response) = ui.allocate_exact_size(galley.size().ceil(), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    let info = label_info(ui, text);
+    response.widget_info(|| info.clone());
     ui.painter().galley(rect.min, galley, color);
+}
+
+/// Lo que los lectores de pantalla saben de una etiqueta con `text` en `ui`: deshabilitada si
+/// `ui` lo está.
+pub(crate) fn label_info(ui: &Ui, text: &str) -> egui::WidgetInfo {
+    egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text)
 }
 
 /// Entre la tinta de un texto y su nota.

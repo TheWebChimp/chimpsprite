@@ -312,7 +312,8 @@ pub(crate) fn label_width(ui: &Ui, text: &str) -> f32 {
 pub(crate) fn label(ui: &mut Ui, text: &str, width: f32) {
     let (rect, response) =
         ui.allocate_exact_size(vec2(width, crate::kit::input::HEIGHT), egui::Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    let info = crate::panel_kit::label_info(ui, text);
+    response.widget_info(|| info.clone());
     crate::pixel_ui::small_text_at(ui, rect, text);
 }
 /// Para los tests de los paneles: dibuja en un `Ui` de `width` (con el skin y las fuentes de la
@@ -329,6 +330,9 @@ pub(crate) mod testing {
         /// Las imágenes pintadas (las piezas del skin también): su textura y lo que se ve de
         /// ellas (con su recorte).
         pub images: Vec<(egui::TextureId, Rect)>,
+        /// Los nombres de los controles de `widgets` que los lectores de pantalla ven
+        /// deshabilitados.
+        pub disabled: Vec<String>,
     }
 
     /// Lo que se mide: hojas que el usuario ve (no los grupos que las contienen).
@@ -353,6 +357,7 @@ pub(crate) mod testing {
         let mut widgets = Vec::new();
         let mut texts = Vec::new();
         let mut images = Vec::new();
+        let mut disabled = Vec::new();
         // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
         for _ in 0..3 {
             let input = RawInput {
@@ -381,6 +386,7 @@ pub(crate) mod testing {
                 .accesskit_update
                 .map(|u| u.nodes)
                 .unwrap_or_default();
+            disabled.clear();
             widgets = nodes
                 .iter()
                 .filter(|(_, n)| LEAVES.contains(&n.role()))
@@ -395,6 +401,9 @@ pub(crate) mod testing {
                         Some(label) => label.to_string(),
                         None => n.value()?.to_string(),
                     };
+                    if n.is_disabled() {
+                        disabled.push(name.clone());
+                    }
                     Some((name, rect))
                 })
                 .collect();
@@ -403,6 +412,7 @@ pub(crate) mod testing {
             widgets,
             texts,
             images,
+            disabled,
         }
     }
 
@@ -547,6 +557,32 @@ mod tests {
         let narrow = run_at(120.0, sample);
         let (g, x) = (narrow.rect("Generate"), narrow.rect("Export"));
         assert!(x.top() > g.top(), "the buttons wrap at 120: {g:?} {x:?}");
+    }
+
+    /// Las etiquetas (las de `label` y los textos de `text_wrapped`) salen deshabilitadas para los
+    /// lectores de pantalla donde lo de alrededor lo está.
+    #[test]
+    fn labels_follow_the_enabled_state() {
+        let probe = run_at(300.0, |ui| {
+            for enabled in [true, false] {
+                ui.add_enabled_ui(enabled, |ui| {
+                    label(ui, &format!("Label {enabled}"), 60.0);
+                    crate::panel_kit::text_wrapped(ui, &format!("Help {enabled}"));
+                });
+            }
+        });
+        let mut disabled = probe.disabled.clone();
+        disabled.sort();
+        assert_eq!(disabled, ["Help false", "Label false"]);
+        probe.rect("Label true");
+        probe.rect("Help true");
+        // Lo que reciben (en los eventos y en el nodo), no solo lo que egui agrega por su cuenta.
+        run_at(300.0, |ui| {
+            assert!(crate::panel_kit::label_info(ui, "On").enabled);
+            ui.add_enabled_ui(false, |ui| {
+                assert!(!crate::panel_kit::label_info(ui, "Off").enabled);
+            });
+        });
     }
 
     #[test]
