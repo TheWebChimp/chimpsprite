@@ -1221,11 +1221,11 @@ fn header(ui: &mut egui::Ui, font: &DafontFont) {
     }
     let license = (!font.license.is_empty()).then(|| galley(font.license.to_uppercase(), &small));
     if let Some(license) = license {
-        let left = rect.right() - HEADER_PAD - license.size().x;
-        // Sin lugar (una barra angosta), no va: está en la página de la fuente.
-        if left >= end + HEADER_PAD {
+        let left = (rect.right() - HEADER_PAD - license.size().x).round();
+        // Sin lugar sin encimarse (una barra angosta), no va: está en la página de la fuente.
+        if left >= end {
             painter.galley(
-                crate::tab_bar::text_pos(&license, left.round(), small_top, ppp),
+                crate::tab_bar::text_pos(&license, left, small_top, ppp),
                 license,
                 Color32::WHITE,
             );
@@ -1604,10 +1604,18 @@ mod tests {
             } else {
                 assert!(use_font.top() > downloads.bottom(), "at {width}");
             }
-            // La licencia de una barra no tapa al autor (sin lugar, no se pinta).
-            let (_, by) = probe.text("BY SOMEBODY");
-            if let Some((_, license)) = probe.texts.iter().find(|(t, _)| t.starts_with("PUBLIC")) {
-                assert!(license.left() > by.right(), "{license:?} {by:?} at {width}");
+            // La licencia de una barra no tapa al autor ni al tamaño (sin lugar, no se pinta);
+            // desde el ancho del diseño, las dos caben.
+            let licenses = [("PUBLIC", "BY SOMEBODY"), ("100% FREE", "16PX")];
+            for (license, left_of_it) in licenses {
+                let (_, before) = probe.text(left_of_it);
+                let shown = probe.texts.iter().find(|(t, _)| t.starts_with(license));
+                if width >= REFERENCE_WIDTH {
+                    assert!(shown.is_some(), "{license} at {width}");
+                }
+                if let Some((_, r)) = shown {
+                    assert!(r.left() >= before.right(), "{r:?} {before:?} at {width}");
+                }
             }
 
             let (probe, _) = panel_at(width, true);
@@ -1626,6 +1634,25 @@ mod tests {
                 assert!(r.right() <= width || *r == logo, "{r:?} past {width}");
             }
         }
+    }
+
+    /// La licencia de una barra se pinta en cuanto cabe sin encimarse con el autor (aunque quede
+    /// pegada a él) y, si no cabe, no.
+    #[test]
+    fn a_license_that_fits_is_painted() {
+        let (wide, _) = panel_at(600.0, false);
+        let (_, license) = wide.text("PUBLIC");
+        let (_, by) = wide.text("BY SOMEBODY");
+        let card = 600.0 - SCROLL_GAP;
+        assert_eq!(license.right().round(), card - HEADER_PAD, "{license:?}");
+        // El ancho del panel en que la licencia llega justo al autor.
+        let just = by.right() + license.width() + HEADER_PAD + SCROLL_GAP;
+        let painted = |width: f32| {
+            let (probe, _) = panel_at(width, false);
+            probe.texts.iter().any(|(t, _)| t.starts_with("PUBLIC"))
+        };
+        assert!(painted(just.ceil() + 1.0), "at {}", just.ceil() + 1.0);
+        assert!(!painted(just.floor() - 1.0), "at {}", just.floor() - 1.0);
     }
 
     /// Un error que no cabe se parte en líneas y Retry baja debajo; uno corto lleva Retry al lado.
