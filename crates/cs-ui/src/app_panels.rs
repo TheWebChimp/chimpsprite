@@ -1,4 +1,5 @@
-//! Los paneles del dock que pone la app (Groom, Lumen, FontForge, 3D, Library, Dafont, Lospec):
+//! Los paneles flotantes del dock (Artboards, Slices, Groom, Lumen, FontForge, 3D, Library, Dafont,
+//! Lospec):
 //! se dibujan con `draw_panel`, que solo toma prestados los campos que cada uno usa, y lo que
 //! piden se aplica después con `apply_panel_action`, con la app entera. `panel_flyout` los
 //! hospeda flotando junto a su botón, con lo que dice su ficha del registro.
@@ -9,8 +10,8 @@ use eframe::egui;
 use crate::dafont;
 use crate::panel_registry::{Body, Host, PanelId};
 use crate::{
-    ChimpApp, dock, font_panel, groom, library_panel, lumen, model_panel, palette_ui, platform,
-    view,
+    ChimpApp, dock, font_panel, groom, library_panel, lumen, model_panel, palette_ui, panels,
+    platform, view,
 };
 
 /// Lo que pidió un panel de la app al dibujarse: se aplica con [`ChimpApp::apply_panel_action`].
@@ -24,11 +25,13 @@ pub(crate) enum PanelAction {
     #[cfg(not(target_arch = "wasm32"))]
     Dafont(dafont::Picked),
     Lospec(palette_ui::LospecAction),
+    /// Abrir el diálogo Canvas Size (desde Artboards).
+    OpenCanvasSize,
 }
 
 impl ChimpApp {
-    /// El contenido del panel `id` en `ui` y lo que pidió. Los que dibuja el mismo dock
-    /// (Artboards, Slices) y los que no son del dock no ponen nada.
+    /// El contenido del panel `id` en `ui` y lo que pidió. Los que no son paneles flotantes
+    /// del dock no ponen nada.
     #[cfg_attr(
         not(test),
         expect(
@@ -85,13 +88,23 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             PanelId::Dafont => self.dafont.ui(ui).map(PanelAction::Dafont),
             PanelId::Lospec => self.draw_lospec(ui, lospec_bottom).map(PanelAction::Lospec),
-            // Artboards y Slices los dibuja el dock; los demás no son paneles flotantes.
-            PanelId::Artboards
-            | PanelId::Slices
-            | PanelId::Tools
-            | PanelId::Color
-            | PanelId::Timeline
-            | PanelId::Preview => None,
+            PanelId::Artboards => {
+                let (editor, name) = (&mut self.doc.editor, &mut self.doc.artboard_name);
+                let canvas_size = match skin {
+                    Some(skin) => panels::pixel_artboards(ui, editor, name, skin),
+                    None => panels::artboards(ui, editor, name),
+                };
+                canvas_size.then_some(PanelAction::OpenCanvasSize)
+            }
+            PanelId::Slices => {
+                match skin {
+                    Some(skin) => panels::pixel_slices(ui, &mut self.doc.editor, skin),
+                    None => panels::slices(ui, &mut self.doc.editor),
+                }
+                None
+            }
+            // Los demás no son paneles flotantes.
+            PanelId::Tools | PanelId::Color | PanelId::Timeline | PanelId::Preview => None,
         }
     }
 
@@ -167,6 +180,7 @@ impl ChimpApp {
                 style.antialias = false;
             }
             PanelAction::Lospec(action) => self.lospec_action(Some(action)),
+            PanelAction::OpenCanvasSize => self.open_canvas_size(),
         }
     }
 
@@ -282,8 +296,13 @@ mod tests {
 
     /// La app con Pixel UI y una pestaña nueva.
     fn test_app() -> ChimpApp {
+        test_app_with(true)
+    }
+
+    /// La app con (o sin) Pixel UI y una pestaña nueva.
+    fn test_app_with(pixel_ui: bool) -> ChimpApp {
         let view = ViewSettings {
-            pixel_ui: true,
+            pixel_ui,
             ..Default::default()
         };
         let palettes = PaletteLibrary::new(Box::new(NoPresets));
@@ -330,5 +349,36 @@ mod tests {
                 assert!(app.draw_panel(ui, id).is_none(), "{id:?}");
             });
         }
+    }
+
+    #[test]
+    fn artboards_and_slices_draw_through_the_registry_with_and_without_pixel_ui() {
+        use crate::panel_registry::PanelId;
+        for pixel_ui in [true, false] {
+            let mut app = test_app_with(pixel_ui);
+            let ctx = egui::Context::default();
+            for _ in 0..2 {
+                frame(&ctx, &mut app, |_, _| {});
+            }
+            for id in [PanelId::Artboards, PanelId::Slices] {
+                frame(&ctx, &mut app, |app, ui| {
+                    ui.set_width(id.spec().reference_width);
+                    // Dibujarlos solos no pide nada: Canvas Size es un botón.
+                    assert!(
+                        app.draw_panel(ui, id).is_none(),
+                        "{id:?} pixel_ui={pixel_ui}"
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn open_canvas_size_action_opens_the_dialog() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        assert!(app.canvas_size.is_none());
+        app.apply_panel_action(&ctx, super::PanelAction::OpenCanvasSize);
+        assert!(app.canvas_size.is_some());
     }
 }

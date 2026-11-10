@@ -1582,14 +1582,7 @@ impl ChimpApp {
                 .show_separator_line(skin.is_none())
                 .show(ui, |ui| {
                     ui.add_enabled_ui(!modal, |ui| {
-                        dock::show(
-                            ui,
-                            &mut self.doc.editor,
-                            &mut self.doc.artboard_name,
-                            skin,
-                            &mut self.view.timeline,
-                            &mut self.view.preview,
-                        )
+                        dock::show(ui, skin, &mut self.view.timeline, &mut self.view.preview)
                     })
                     .inner
                 })
@@ -1622,9 +1615,6 @@ impl ChimpApp {
         // Después de los paneles: lo pedido desde el derecho necesita `self` entero.
         if let Some(action) = palette_action {
             self.palette_action(ui.ctx(), action);
-        }
-        if dock_out.canvas_size {
-            self.open_canvas_size();
         }
         self.model_action(model_action);
         let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);

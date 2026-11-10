@@ -1,18 +1,15 @@
 //! La columna de "otros paneles" entre el lienzo y el panel derecho (como el dock de Illustrator):
-//! un botón por panel (Artboards, Slices) que lo abre flotando a su izquierda. Así esas secciones
+//! un botón por panel (Artboards, Slices, Library…) que lo abre flotando a su izquierda. Así esas secciones
 //! no le quitan lugar a la paleta y al editor de color. Hasta abajo, el que prende y apaga el
 //! timeline y arriba de él, el de la ventanita de preview.
 
 use eframe::egui::{self, Rect, Sense, Shape, Ui, Vec2, vec2};
 
-use crate::editor::Editor;
 use crate::panel_registry::Body;
-use crate::panels;
 use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
-use cs_core::ArtboardId;
 
 /// Los botones del dock (mockup de componentes, frame 9): `button` del skin en 9-slice, con el
 /// cuerpo de 23×23 y la línea clara debajo (24 en total, como en el mockup), uno cada 27.
@@ -51,9 +48,7 @@ pub type DockPanel = crate::panel_registry::PanelId;
 /// Lo que pidió el dock y la app resuelve (necesita más que el editor).
 #[derive(Default)]
 pub struct DockOutput {
-    /// Abrir el diálogo Canvas Size (desde Artboards).
-    pub canvas_size: bool,
-    /// El panel abierto es de la app (Lospec, Dafont): cuál y dónde, para [`flyout`].
+    /// El panel abierto: cuál y dónde, para [`flyout`] (la app lo dibuja con su registro).
     pub app_panel: Option<(DockPanel, Anchor)>,
 }
 
@@ -137,8 +132,6 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
 /// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón.
 pub fn show(
     ui: &mut Ui,
-    editor: &mut Editor,
-    name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
     timeline: &mut bool,
     preview: &mut bool,
@@ -194,30 +187,18 @@ pub fn show(
         .map(|(_, r)| *r)
         .unwrap_or(Rect::NOTHING);
     let anchor = Anchor { button, column };
-    let enabled = ui.is_enabled();
+    // Todos los paneles abiertos los dibuja la app (`ChimpApp::panel_flyout`).
     match panel {
-        DockPanel::Artboards | DockPanel::Slices => {
-            flyout(ui.ctx(), panel, anchor, skin, FLYOUT_WIDTH, false, |ui| {
-                ui.add_enabled_ui(enabled, |ui| match (panel, skin) {
-                    (DockPanel::Artboards, Some(skin)) => {
-                        out.canvas_size = panels::pixel_artboards(ui, editor, name_buffer, skin);
-                    }
-                    (DockPanel::Artboards, None) => {
-                        out.canvas_size = panels::artboards(ui, editor, name_buffer);
-                    }
-                    (DockPanel::Slices, Some(skin)) => panels::pixel_slices(ui, editor, skin),
-                    (_, _) => panels::slices(ui, editor),
-                });
-            });
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
-        DockPanel::Lospec
+        DockPanel::Artboards
+        | DockPanel::Slices
+        | DockPanel::Lospec
         | DockPanel::Groom
         | DockPanel::Lumen
         | DockPanel::Library
         | DockPanel::Font
         | DockPanel::Model => out.app_panel = Some((panel, anchor)),
+        #[cfg(not(target_arch = "wasm32"))]
+        DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
         // Los que no son botones del dock (no están en `PanelId::DOCK`).
         DockPanel::Tools | DockPanel::Color | DockPanel::Timeline | DockPanel::Preview => {}
     }
