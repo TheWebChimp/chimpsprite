@@ -28,7 +28,7 @@ pub const REFERENCE_WIDTH: f32 = 434.0;
 pub const MIN_WIDTH: f32 = 216.0;
 /// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno) y abrir y
 /// quitar van en la caja de cada mapa (sin su fila de botones).
-const MIN_HEIGHT: f32 = 391.0;
+pub(crate) const MIN_HEIGHT: f32 = 391.0;
 /// El encabezado: el logo (sobre el margen del panel) y, a la derecha, el crédito del algoritmo
 /// (con `HEADER_GAP` entre ellos; si no cabe, debajo del logo). La línea grabada va
 /// `HEADER_LINE` debajo y los mapas empiezan `BODY_AIR` debajo.

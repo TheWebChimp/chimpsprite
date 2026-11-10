@@ -48,6 +48,20 @@ pub(crate) struct PanelCtx {
     pub bottom: Option<f32>,
 }
 
+impl PanelId {
+    /// Si ahora tiene sentido mostrar el panel: la línea de tiempo no va en un artboard de fuente
+    /// o de modelo (sus frames son los glifos) ni en la pestaña de un modelo, y el preview se
+    /// esconde en la pestaña de un modelo. No cuenta si el usuario lo apagó (`view.timeline`).
+    pub(crate) fn available(self, app: &ChimpApp) -> bool {
+        let editor = &app.doc.editor;
+        match self {
+            PanelId::Timeline => !editor.is_structure_locked() && !editor.model_edit_on(),
+            PanelId::Preview => !editor.model_edit_on(),
+            _ => true,
+        }
+    }
+}
+
 impl ChimpApp {
     /// El panel `id` en `ui`, hospedado según `panel`, y lo que pidió. Lo apaga entero con un
     /// diálogo modal (salvo Color, que lo maneja adentro) y pone la franja del logo de Lospec
@@ -347,13 +361,14 @@ impl ChimpApp {
         modal: bool,
     ) {
         let spec = id.spec();
-        let Host::Flyout(body) = spec.host else {
+        if !matches!(spec.host, Host::Flyout) {
             debug_assert!(
                 false,
                 "{id:?} no es un panel flotante (su host no es Flyout)"
             );
             return;
-        };
+        }
+        let body = spec.body;
         // El skin compartido: el contenido toma prestada la app entera mientras se dibuja.
         let skin = self.pixel.shared_skin();
         let skin = skin.as_deref();
@@ -629,6 +644,36 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn availability_follows_the_structure_lock_and_the_model_tab() {
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        for &id in PanelId::ALL {
+            assert!(id.available(&app), "{id:?} in a sprite");
+        }
+        // Un artboard de fuente: sin timeline (sus frames son los glifos); el preview sigue.
+        let mode = cs_core::FontMode::OneBit;
+        assert!(app.doc.editor.new_font("Pix", (8, 8), mode));
+        let id = app.doc.editor.workspace().expect("the workspace");
+        app.tabs.open_view(&mut app.doc, id);
+        assert!(app.doc.editor.is_structure_locked());
+        assert!(!PanelId::Timeline.available(&app));
+        assert_eq!(
+            PanelId::Timeline.available(&app),
+            !app.doc.editor.is_structure_locked() && !app.doc.editor.model_edit_on()
+        );
+        assert!(PanelId::Preview.available(&app));
+        // La pestaña de un modelo: ni timeline ni preview.
+        let mut app = test_app();
+        assert!(app.doc.editor.new_model("Ship", (32, 32)));
+        let id = app.doc.editor.workspace().expect("the workspace");
+        app.tabs.open_view(&mut app.doc, id);
+        assert!(app.doc.editor.model_edit_on());
+        assert!(!PanelId::Timeline.available(&app));
+        assert!(!PanelId::Preview.available(&app));
+        assert!(PanelId::Color.available(&app));
     }
 
     #[test]
