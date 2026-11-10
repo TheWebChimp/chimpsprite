@@ -115,6 +115,7 @@ mod tween_ops;
 mod undo_history;
 mod view;
 mod widgets;
+mod workspace;
 
 use cs_core::{ColorMode, Sprite};
 use eframe::egui::{self, Key, Modifiers};
@@ -259,6 +260,8 @@ pub struct ChimpApp {
     /// frame de paneles) y en el anterior.
     panels_drawn: Vec<panel_registry::PanelId>,
     panels_drawn_prev: Vec<panel_registry::PanelId>,
+    /// Dónde está cada panel: en la tira, acoplado o flotando (lo muestra `workspace::show`).
+    workspace: workspace::Workspace,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
     /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
@@ -423,6 +426,7 @@ impl ChimpApp {
             lospec_dock: None,
             panels_drawn: Vec::new(),
             panels_drawn_prev: Vec::new(),
+            workspace: workspace::Workspace::essentials(),
             preset_name: None,
             palette_confirm: None,
             pasted: false,

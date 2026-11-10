@@ -1,0 +1,501 @@
+//! La piel pixel art de egui_dock (portada del prototipo `proto_workspace`, aprobado por el
+//! usuario). egui_dock no deja dibujar sus pestañas ni sus divisores con otra cosa que colores, así
+//! que se usan dos trucos:
+//!
+//! - **Colores marcador.** egui_dock pinta los divisores, la zona de destino y el marco de las
+//!   ventanas flotantes con un color único; [`SkinRewriter`] (un plugin de egui) cambia esos rects
+//!   por piezas del skin antes de teselar (la línea grabada, la franja de destino en el marco
+//!   `menu.side` y el marco `menu.side`).
+//! - **Pestañas encima.** Las de egui_dock van 100 % transparentes y la pestaña del kit se pinta
+//!   encima, en su misma capa, con el rect de `TabViewer::on_tab_button` (ver [`paint_tabs`]).
+//!
+//! Además, [`snap`] y [`snap_windows`] dejan los divisores y las ventanas en puntos enteros
+//! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin).
+//!
+//! **Depende de detalles internos de egui_dock 0.21.1** (por eso la versión va fija en
+//! `Cargo.toml`): los ids de [`window_area_id`], [`is_dragged_tab`] y
+//! [`hidden_strip_dragged`], y que el estilo transparente siga pintando rects llenos con los colores
+//! de [`dock_style`]. Al subir de versión hay que revisarlos.
+
+use std::sync::Arc;
+
+use eframe::egui::{
+    self, Color32, CornerRadius, Id, LayerId, Margin, Order, Rect, Shape, Stroke, vec2,
+};
+use egui_dock::{DockState, Node, NodePath, OverlayType, SurfaceIndex};
+
+use crate::kit;
+use crate::kit::tabs::{Strip, TabItem, TabLook};
+use crate::panel_registry::PanelId;
+use crate::pixel_ui;
+use crate::skin::{Skin, SkinColors, WidgetState};
+
+// Colores marcador: únicos, los cambia `SkinRewriter`. Opacos (la atenuación de egui_dock los
+// multiplica por 1.0 y la vuelta por el espacio lineal no los cambia; ver el test).
+const M_SEP_IDLE: Color32 = Color32::from_rgb(1, 0, 2);
+const M_SEP_HOVER: Color32 = Color32::from_rgb(1, 0, 3);
+const M_SEP_DRAG: Color32 = Color32::from_rgb(1, 0, 4);
+const M_DROP: Color32 = Color32::from_rgb(1, 0, 5);
+const M_WINDOW: Color32 = Color32::from_rgb(1, 0, 6);
+/// Todos los marcadores (para los tests: no tiene que quedar ninguno en la salida).
+#[cfg(test)]
+pub(super) const MARKERS: [Color32; 5] = [M_SEP_IDLE, M_SEP_HOVER, M_SEP_DRAG, M_DROP, M_WINDOW];
+
+/// El alto de la barra de pestañas: las del kit (15) más la línea grabada (2).
+pub(super) const TAB_BAR_H: f32 = kit::tabs::ACTIVE_HEIGHT;
+/// La franja de arriba de un grupo sin barra de pestañas: de ahí se agarra para arrastrarlo (con
+/// el puntero encima se pinta la línea grabada resaltada, como un divisor).
+pub(super) const GRAB_STRIP: f32 = 3.0;
+/// El marco de las ventanas flotantes y de la zona de destino (el de los paneles del dock).
+const FLYOUT: &str = "menu.side";
+/// El relleno de la zona de destino (la franja rosa de las listas, a media luz).
+const DROP_FILL: &str = "select.item.hover";
+/// La opacidad del relleno de la zona de destino y del contorno de "ventana nueva".
+const DROP_ALPHA: f32 = 0.45;
+const NEW_WINDOW_ALPHA: f32 = 0.6;
+
+/// El estilo de egui_dock con la piel: barra y pestañas transparentes (las del kit van encima),
+/// divisores y zona de destino con colores marcador, sin los botones de egui_dock (son líneas).
+pub(super) fn dock_style(ui_style: &egui::Style, skin: &Skin) -> egui_dock::Style {
+    let colors = *skin.colors();
+    let mut style = plain_style(ui_style);
+    style.tab_bar.height = TAB_BAR_H;
+    style.tab_bar.bg_fill = colors.background;
+    style.tab_bar.hline_color = Color32::TRANSPARENT;
+    style.tab_bar.corner_radius = CornerRadius::ZERO;
+    style.tab_bar.inner_margin = Margin::ZERO;
+    style.tab_bar.show_scroll_bar_on_overflow = false;
+    for t in [
+        &mut style.tab.active,
+        &mut style.tab.inactive,
+        &mut style.tab.focused,
+        &mut style.tab.hovered,
+        &mut style.tab.active_with_kb_focus,
+        &mut style.tab.inactive_with_kb_focus,
+        &mut style.tab.focused_with_kb_focus,
+    ] {
+        t.bg_fill = Color32::TRANSPARENT;
+        t.outline_color = Color32::TRANSPARENT;
+        t.text_color = Color32::TRANSPARENT;
+        t.corner_radius = CornerRadius::ZERO;
+    }
+    style.tab.spacing = kit::tabs::GAP;
+    style.tab.hline_below_active_tab_name = false;
+    style.tab.tab_body.bg_fill = colors.background;
+    style.separator.width = pixel_ui::ETCHED_SIZE;
+    style.separator.extra_interact_width = 4.0;
+    style.separator.color_idle = M_SEP_IDLE;
+    style.separator.color_hovered = M_SEP_HOVER;
+    style.separator.color_dragged = M_SEP_DRAG;
+    style.overlay.overlay_type = OverlayType::HighlightedAreas;
+    style.overlay.selection_color = M_DROP;
+    style.overlay.selection_stroke_width = 2.0;
+    style
+}
+
+/// Lo que va igual con y sin Pixel UI: sin borde ni aire alrededor, la franja para agarrar un
+/// grupo sin barra, sin el triángulo de "mostrar la barra" (la barra la decide el workspace cada
+/// frame) y sin atenuar (los marcadores tienen que llegar intactos).
+pub(super) fn plain_style(ui_style: &egui::Style) -> egui_dock::Style {
+    let mut style = egui_dock::Style::from_egui(ui_style);
+    style.dock_area_padding = None;
+    style.main_surface_border_stroke = Stroke::NONE;
+    style.tab.tab_body.stroke = Stroke::NONE;
+    style.tab.tab_body.corner_radius = CornerRadius::ZERO;
+    style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
+    style.buttons.show_tab_bar_size = 0.0;
+    style.buttons.show_tab_bar_hover_expand = 0.0;
+    style.buttons.show_tab_bar_color = Color32::TRANSPARENT;
+    style.buttons.show_tab_bar_active_color = Color32::TRANSPARENT;
+    style.overlay.hovered_leaf_highlight.color = Color32::TRANSPARENT;
+    style.overlay.hovered_leaf_highlight.stroke = Stroke::NONE;
+    style.overlay.surface_fade_opacity = 1.0;
+    style
+}
+
+/// El estilo de egui para el `Ui` donde va el `DockArea`: el marco de sus ventanas flotantes
+/// (`Frame::window`) con el color marcador, sin borde ni sombra y con el margen de `menu.side`.
+/// Solo lo leen los marcos: el contenido de cada pestaña usa el estilo del contexto.
+pub(super) fn window_visuals(style: &mut egui::Style, skin: &Skin) {
+    style.visuals.window_fill = M_WINDOW;
+    style.visuals.window_stroke = Stroke::NONE;
+    style.visuals.window_shadow = egui::epaint::Shadow::NONE;
+    style.visuals.window_corner_radius = CornerRadius::ZERO;
+    style.spacing.window_margin = flyout_margin(skin);
+}
+
+/// Los bordes de `menu.side` (lo de fuera del centro de su 9-slice).
+fn flyout_margin(skin: &Skin) -> Margin {
+    match skin
+        .piece(FLYOUT, WidgetState::Normal)
+        .and_then(|p| p.center.map(|c| (p, c)))
+    {
+        Some((p, c)) => Margin {
+            left: c.x as i8,
+            top: c.y as i8,
+            right: (p.size[0] - c.x - c.w) as i8,
+            bottom: (p.size[1] - c.y - c.h) as i8,
+        },
+        None => Margin::same(2),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// El plugin que cambia los marcadores.
+
+/// Cambia los rects de color marcador por piezas del skin, en los frames en que se mostró el
+/// workspace (ver [`arm`]).
+#[derive(Default)]
+pub(super) struct SkinRewriter;
+
+/// Donde [`arm`] deja el skin del frame.
+fn rewriter_id() -> Id {
+    Id::new("workspace_skin_rewriter")
+}
+
+/// Registra el plugin (una vez por contexto) y le deja `skin` para este frame.
+pub(super) fn arm(ctx: &egui::Context, skin: Arc<Skin>) {
+    if ctx.plugin_opt::<SkinRewriter>().is_none() {
+        ctx.add_plugin(SkinRewriter);
+    }
+    ctx.data_mut(|d| d.insert_temp(rewriter_id(), Some(skin)));
+}
+
+impl egui::Plugin for SkinRewriter {
+    fn debug_name(&self) -> &'static str {
+        "workspace_skin_rewriter"
+    }
+
+    fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
+        // Solo si el workspace se mostró en este frame (y con Pixel UI).
+        let skin = ctx.data_mut(|d| d.remove_temp::<Option<Arc<Skin>>>(rewriter_id()));
+        let Some(skin) = skin.flatten() else {
+            return;
+        };
+        let ppp = output.pixels_per_point;
+        for clipped in &mut output.shapes {
+            rewrite(&mut clipped.shape, &skin, ppp);
+        }
+    }
+}
+
+/// Cambia los marcadores de `shape` (y de lo que lleva adentro).
+fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32) {
+    match shape {
+        Shape::Vec(shapes) => {
+            for s in shapes {
+                rewrite(s, skin, ppp);
+            }
+        }
+        Shape::Rect(r) => {
+            let colors = *skin.colors();
+            if [M_SEP_IDLE, M_SEP_HOVER, M_SEP_DRAG].contains(&r.fill) {
+                // Con el puntero encima o arrastrándolo, la línea oscura en el color de selección.
+                let mut c = colors;
+                if r.fill != M_SEP_IDLE {
+                    c.canvas = colors.text_selection;
+                }
+                *shape = etched_in(r.rect, &c, ppp);
+            } else if r.fill == M_DROP {
+                *shape = Shape::Vec(drop_shapes(skin, r.rect, ppp));
+            } else if r.fill == M_WINDOW {
+                *shape = Shape::Vec(frame_shapes(skin, r.rect, ppp));
+            } else if r.stroke.color == M_DROP {
+                // El contorno de "soltar aquí = ventana nueva".
+                let mut s = Shape::Vec(frame_shapes(skin, r.rect, ppp));
+                fade(&mut s, NEW_WINDOW_ALPHA);
+                *shape = s;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Multiplica la opacidad de los rects llenos de `shape` (las piezas son rects con textura).
+fn fade(shape: &mut Shape, alpha: f32) {
+    match shape {
+        Shape::Vec(v) => v.iter_mut().for_each(|s| fade(s, alpha)),
+        Shape::Rect(r) => r.fill = r.fill.gamma_multiply(alpha),
+        _ => {}
+    }
+}
+
+/// Una línea grabada a lo largo del rect: vertical si es alto, horizontal si es ancho.
+fn etched_in(rect: Rect, colors: &SkinColors, ppp: f32) -> Shape {
+    if rect.height() >= rect.width() {
+        pixel_ui::etched_vline(rect.left(), rect.y_range(), colors, ppp)
+    } else {
+        pixel_ui::etched_hline(rect.x_range(), rect.top(), colors, ppp)
+    }
+}
+
+/// La zona de destino: la franja de selección a media luz dentro del marco `menu.side`.
+fn drop_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
+    let fill = match skin.piece(DROP_FILL, WidgetState::Normal) {
+        Some(p) => pixel_ui::piece_shapes(p, rect.shrink(2.0), ppp),
+        None => vec![Shape::rect_filled(rect, 0.0, skin.colors().text_selection)],
+    };
+    let mut fill = Shape::Vec(fill);
+    fade(&mut fill, DROP_ALPHA);
+    let mut out = vec![fill];
+    out.extend(frame_shapes(skin, rect, ppp));
+    out
+}
+
+/// El marco `menu.side` en 9-slice.
+fn frame_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
+    match skin.piece(FLYOUT, WidgetState::Normal) {
+        Some(p) => pixel_ui::piece_shapes(p, rect, ppp),
+        None => vec![Shape::rect_filled(rect, 0.0, skin.colors().background)],
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ids internos de egui_dock 0.21.1 (ver el comentario del módulo).
+
+/// El área de egui de la ventana flotante `surface` (`show/window_surface.rs`). Su rect real:
+/// `WindowState::rect()` viene vacío.
+pub(super) fn window_area_id(surface: SurfaceIndex) -> Id {
+    Id::new(format!("window {surface:?}"))
+}
+
+/// Si `response` (la que llega a `on_tab_button`) es la de una pestaña que se está arrastrando:
+/// mientras se arrastra, egui_dock la pinta aparte y da la respuesta de `id.with("dragged")`
+/// (`show/leaf.rs`).
+pub(super) fn is_dragged_tab(response: &egui::Response) -> bool {
+    response
+        .ctx
+        .dragged_id()
+        .is_some_and(|d| d == response.id || d.with("dragged") == response.id)
+        && response.ctx.input(|i| i.pointer.is_decidedly_dragging())
+}
+
+/// Si se está arrastrando el grupo `path` (sin barra de pestañas) desde su franja de arriba
+/// (`hidden_tab_bar_controls` en `show/leaf.rs`).
+pub(super) fn hidden_strip_dragged(ctx: &egui::Context, dock_id: Id, path: NodePath) -> bool {
+    let id = dock_id
+        .with((path.surface, "surface"))
+        .with((path.node, "node"))
+        .with("hidden_tab_bar_drag");
+    ctx.is_being_dragged(id) && ctx.input(|i| i.pointer.is_decidedly_dragging())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Puntos enteros.
+
+/// Los divisores a puntos enteros (para el frame siguiente): la fracción de cada split, de modo
+/// que el punto medio caiga en un entero.
+pub(super) fn snap<T>(state: &mut DockState<T>) {
+    for surface in state.iter_surfaces_mut() {
+        let Some(tree) = surface.node_tree_mut() else {
+            continue;
+        };
+        for node in tree.iter_mut() {
+            let (split, horizontal) = match node {
+                Node::Horizontal(s) => (s, true),
+                Node::Vertical(s) => (s, false),
+                _ => continue,
+            };
+            let (min, len) = if horizontal {
+                (split.rect.min.x, split.rect.width())
+            } else {
+                (split.rect.min.y, split.rect.height())
+            };
+            if len > 1.0 && len.is_finite() {
+                let mid = (min + len * split.fraction).round();
+                split.fraction = ((mid - min) / len).clamp(0.0, 1.0);
+            }
+        }
+    }
+}
+
+/// Las ventanas flotantes a puntos enteros al soltarlas (arrastradas quedan en x.5).
+pub(super) fn snap_windows<T>(ctx: &egui::Context, state: &mut DockState<T>) {
+    if ctx.input(|i| i.pointer.any_down()) {
+        return;
+    }
+    let windows: Vec<SurfaceIndex> = state
+        .iter_surfaces_indexed()
+        .filter(|(i, s)| !i.is_main() && !s.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    for s in windows {
+        let Some(rect) = ctx.memory(|m| m.area_rect(window_area_id(s))) else {
+            continue;
+        };
+        let at = rect.min.round();
+        if at != rect.min
+            && let Some(window) = state.get_window_state_mut(s)
+        {
+            window.set_position(at);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Las pestañas del kit.
+
+/// La pestaña de un panel que dibujó egui_dock (transparente) en este frame.
+pub(super) struct TabHit {
+    pub id: PanelId,
+    pub response: egui::Response,
+}
+
+/// La pestaña del kit de `id`: con su × si se puede cerrar.
+pub(super) fn tab_item(id: PanelId) -> TabItem {
+    let title = id.spec().title;
+    if id.spec().closable {
+        TabItem::closable(title, false)
+    } else {
+        TabItem::new(title)
+    }
+}
+
+/// La fila de una pestaña (sin lo que la activa baja) a partir del rect de egui_dock.
+pub(super) fn tab_row(rect: Rect) -> Rect {
+    Rect::from_min_size(rect.min, vec2(rect.width(), kit::tabs::HEIGHT))
+}
+
+/// Las pestañas del kit sobre las de egui_dock, en su misma capa: por cada grupo con barra, la
+/// línea grabada cortada debajo de la activa y sus pestañas (la activa al final, tapa a sus
+/// vecinas); la que se arrastra, además, como fantasma bajo el puntero. En los grupos sin barra
+/// (`hidden`), la franja de arriba resaltada con el puntero encima, y su fantasma al arrastrarla.
+pub(super) fn paint_tabs(
+    ui: &egui::Ui,
+    skin: &Skin,
+    state: &DockState<PanelId>,
+    hits: &[TabHit],
+    dock_id: Id,
+) {
+    let ctx = ui.ctx();
+    let pointer = ui.input(|i| i.pointer.interact_pos());
+    let press = ui.input(|i| i.pointer.press_origin());
+    let hit_of = |p: PanelId| hits.iter().find(|h| h.id == p);
+    let ghost = |row: Rect, id: PanelId| {
+        if let (Some(p), Some(o)) = (pointer, press) {
+            let painter =
+                ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("workspace_ghost")));
+            let item = tab_item(id);
+            let look = TabLook {
+                active: true,
+                hovered: false,
+                mark_hovered: false,
+            };
+            let row = row.translate((p - o).round());
+            painter.extend(kit::tabs::tab_shapes(
+                ui,
+                skin,
+                row,
+                &item,
+                &item.label,
+                look,
+            ));
+        }
+    };
+    for (path, leaf) in state.iter_leaves() {
+        let Some(&active) = leaf.tabs.get(leaf.active.0) else {
+            continue;
+        };
+        if leaf.tab_bar_hidden {
+            let strip = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), GRAB_STRIP));
+            let dragged = hidden_strip_dragged(ctx, dock_id, path);
+            if dragged || (ctx.dragged_id().is_none() && ui.rect_contains_pointer(strip)) {
+                let mut c = *skin.colors();
+                c.canvas = c.text_selection;
+                let line = pixel_ui::etched_hline(
+                    strip.x_range(),
+                    strip.top(),
+                    &c,
+                    ctx.pixels_per_point(),
+                );
+                ui.painter().with_clip_rect(strip).add(line);
+            }
+            if dragged {
+                let width = kit::tabs::natural_width(ui, &tab_item(active));
+                ghost(
+                    Rect::from_min_size(strip.min, vec2(width, kit::tabs::HEIGHT)),
+                    active,
+                );
+            }
+            continue;
+        }
+        // Sin pestañas dibujadas (el grupo no se ve), nada.
+        let Some(first) = leaf.tabs.first().and_then(|&t| hit_of(t)) else {
+            continue;
+        };
+        let bar = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), TAB_BAR_H));
+        let painter = ctx
+            .layer_painter(first.response.layer_id)
+            .with_clip_rect(bar.intersect(first.response.ctx.content_rect()));
+        let active_rect = hit_of(active).map(|h| {
+            Rect::from_min_size(
+                h.response.rect.min,
+                vec2(h.response.rect.width(), kit::tabs::ACTIVE_HEIGHT),
+            )
+        });
+        let strip = Strip::new(bar.left(), bar.right(), bar.top());
+        painter.extend(kit::tabs::line_shapes(ui, skin, &strip, active_rect));
+        let mut order: Vec<PanelId> = leaf.tabs.clone();
+        order.sort_by_key(|&p| p == active);
+        for id in order {
+            let Some(h) = hit_of(id) else { continue };
+            let row = tab_row(h.response.rect);
+            let item = tab_item(id);
+            let mark_hovered = pointer.is_some_and(|p| {
+                item.mark != kit::tabs::TabMark::None
+                    && kit::tabs::mark_rect(row).expand(2.0).contains(p)
+            });
+            let look = TabLook {
+                active: id == active,
+                hovered: id != active && h.response.hovered(),
+                mark_hovered,
+            };
+            painter.extend(kit::tabs::tab_shapes(
+                ui,
+                skin,
+                row,
+                &item,
+                &item.label,
+                look,
+            ));
+            if is_dragged_tab(&h.response) {
+                ghost(row, id);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markers_survive_egui_docks_fade() {
+        // egui_dock atenúa sus colores con `linear_multiply(surface_fade_opacity)` (1.0): la vuelta
+        // por el espacio lineal no tiene que cambiar un marcador.
+        for m in MARKERS {
+            assert_eq!(m.linear_multiply(1.0), m, "{m:?}");
+        }
+    }
+
+    #[test]
+    fn snapping_puts_a_split_on_a_whole_point() {
+        let mut state = DockState::new(vec![PanelId::Color]);
+        let [_, _] = state.main_surface_mut().split_below(
+            egui_dock::NodeIndex::root(),
+            0.37,
+            vec![PanelId::Library],
+        );
+        let root = &mut state.main_surface_mut()[egui_dock::NodeIndex::root()];
+        root.set_rect(Rect::from_min_size(
+            egui::pos2(0.0, 10.0),
+            vec2(200.0, 301.0),
+        ));
+        snap(&mut state);
+        let Node::Vertical(split) = &state.main_surface()[egui_dock::NodeIndex::root()] else {
+            panic!("a vertical split");
+        };
+        let mid = split.rect.min.y + split.rect.height() * split.fraction;
+        assert!((mid - mid.round()).abs() < 1e-3, "{mid}");
+    }
+}

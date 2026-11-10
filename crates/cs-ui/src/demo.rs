@@ -394,6 +394,13 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         let now = ctx.input(|i| i.time);
         app.mascot.force(id, now, &app.keymap);
     }
+    // Desarrollo: un acomodo del workspace para capturas (`library-tab`: Library junto a Color;
+    // `split`: Groom debajo de Color; `float`: Lumen flotando).
+    if let Some(workspace) =
+        dev_var("CHIMPSPRITE_DEMO_WORKSPACE").and_then(workspace::Workspace::demo)
+    {
+        app.workspace = workspace;
+    }
     // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_CATALOG").is_some() {
         app.show_page(tabs::Page::Catalog);

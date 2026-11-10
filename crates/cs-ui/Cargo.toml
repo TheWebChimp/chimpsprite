@@ -27,6 +27,9 @@ fontdue = "0.9"
 # Formas responsivas (flexbox / grid de taffy) para los paneles: solo las usa `forms`. Versión
 # fija: es la que pide egui 0.36.
 egui_taffy = "=0.14.0"
+# El acomodo de los paneles (acoplar, pestañas, flotantes): solo lo usa `workspace`. Versión fija:
+# la piel depende de detalles internos suyos (dos ids y cómo pinta; ver `workspace/skin.rs`).
+egui_dock = { version = "=0.21.1", features = ["serde"] }
 
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
