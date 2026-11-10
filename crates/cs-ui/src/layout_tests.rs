@@ -8648,9 +8648,9 @@ fn place_on_canvas_of_a_model_puts_an_instance_on_the_canvas() {
 
 /// Los botones del dock dibujados en el último frame (los de los paneles y los de abajo).
 fn dock_buttons(h: &LayoutHarness) -> Vec<String> {
-    let labels: Vec<&str> = crate::dock::DockPanel::ALL
+    let labels: Vec<&str> = crate::panel_registry::PanelId::DOCK
         .iter()
-        .map(|p| p.label())
+        .map(|p| p.spec().title)
         .chain(["Timeline", "Preview"])
         .collect();
     h.buttons

@@ -1,17 +1,15 @@
 //! La columna de "otros paneles" entre el lienzo y el panel derecho (como el dock de Illustrator):
-//! un botón por panel (Artboards, Slices) que lo abre flotando a su izquierda. Así esas secciones
+//! un botón por panel (Artboards, Slices, Library…) que lo abre flotando a su izquierda. Así esas secciones
 //! no le quitan lugar a la paleta y al editor de color. Hasta abajo, el que prende y apaga el
 //! timeline y arriba de él, el de la ventanita de preview.
 
 use eframe::egui::{self, Rect, Sense, Shape, Ui, Vec2, vec2};
 
-use crate::editor::Editor;
-use crate::panels;
+use crate::panel_registry::Body;
 use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
-use cs_core::ArtboardId;
 
 /// Los botones del dock (mockup de componentes, frame 9): `button` del skin en 9-slice, con el
 /// cuerpo de 23×23 y la línea clara debajo (24 en total, como en el mockup), uno cada 27.
@@ -27,7 +25,7 @@ pub const RIGHT_MARGIN: i8 = 3;
 /// Del borde de la caja del lienzo a los botones (x 754 → 758 en el diseño).
 pub const LEFT_AIR: i8 = 3;
 /// Ancho del contenido de los paneles flotantes.
-const FLYOUT_WIDTH: f32 = 210.0;
+pub(crate) const FLYOUT_WIDTH: f32 = 210.0;
 /// Marco de los paneles flotantes (mockup de componentes, frame 9, la "T" junto a la columna):
 /// el del menú de las herramientas (`menu.side`: borde (89,77,77), brillo arriba y a la derecha,
 /// bisel a la izquierda y abajo), con la pestaña que envuelve al botón apretado; y su aire adentro.
@@ -44,105 +42,13 @@ pub struct Anchor {
     pub column: Rect,
 }
 
-/// Los paneles del dock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DockPanel {
-    Artboards,
-    Slices,
-    /// Las paletas de Lospec y las fuentes de dafont (solo escritorio): su contenido lo pone la
-    /// app (ver [`DockOutput::app_panel`]).
-    Lospec,
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    Dafont,
-    /// Groom: de pixel art falso a pixel art de verdad (su contenido lo pone la app).
-    Groom,
-    /// Lumen: normales y luz para el sprite (su contenido lo pone la app).
-    Lumen,
-    /// Los símbolos de la biblioteca (su contenido lo pone la app).
-    Library,
-    /// La fuente pixel del artboard activo: su mapa de caracteres (su contenido lo pone la app).
-    Font,
-    /// El modelo 3D del artboard activo: sus objetos (su contenido lo pone la app).
-    Model,
-}
-
-impl DockPanel {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [DockPanel; 9] = [
-        DockPanel::Artboards,
-        DockPanel::Library,
-        DockPanel::Slices,
-        DockPanel::Lospec,
-        DockPanel::Dafont,
-        DockPanel::Groom,
-        DockPanel::Lumen,
-        DockPanel::Font,
-        DockPanel::Model,
-    ];
-    /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
-    #[cfg(target_arch = "wasm32")]
-    pub const ALL: [DockPanel; 8] = [
-        DockPanel::Artboards,
-        DockPanel::Library,
-        DockPanel::Slices,
-        DockPanel::Lospec,
-        DockPanel::Groom,
-        DockPanel::Lumen,
-        DockPanel::Font,
-        DockPanel::Model,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            DockPanel::Artboards => "Artboards",
-            DockPanel::Slices => "Slices",
-            DockPanel::Lospec => "Lospec",
-            DockPanel::Dafont => "Dafont",
-            DockPanel::Groom => "Groom",
-            DockPanel::Lumen => "Lumen",
-            DockPanel::Library => "Library",
-            DockPanel::Font => "FontForge",
-            DockPanel::Model => "3D",
-        }
-    }
-
-    /// Su ícono: una pieza del skin.
-    fn icon(self) -> &'static str {
-        match self {
-            DockPanel::Artboards => "icon.dock.artboards",
-            DockPanel::Slices => "icon.dock.slices",
-            DockPanel::Lospec => "icon.dock.lospec",
-            DockPanel::Dafont => "icon.dock.dafont",
-            DockPanel::Groom => "icon.dock.groom",
-            DockPanel::Lumen => "icon.dock.lumen",
-            DockPanel::Library => "icon.dock.library",
-            DockPanel::Font => "icon.dock.font",
-            DockPanel::Model => "icon.dock.model",
-        }
-    }
-
-    /// Texto del botón sin Pixel UI.
-    fn plain(self) -> &'static str {
-        match self {
-            DockPanel::Artboards => "🗋",
-            DockPanel::Slices => "#",
-            DockPanel::Lospec => "L",
-            DockPanel::Dafont => "Aa",
-            DockPanel::Groom => "▦",
-            DockPanel::Lumen => "☀",
-            DockPanel::Library => "▣",
-            DockPanel::Font => "FF",
-            DockPanel::Model => "3D",
-        }
-    }
-}
+/// Los paneles del dock: son los del registro (ver [`crate::panel_registry`]).
+pub type DockPanel = crate::panel_registry::PanelId;
 
 /// Lo que pidió el dock y la app resuelve (necesita más que el editor).
 #[derive(Default)]
 pub struct DockOutput {
-    /// Abrir el diálogo Canvas Size (desde Artboards).
-    pub canvas_size: bool,
-    /// El panel abierto es de la app (Lospec, Dafont): cuál y dónde, para [`flyout`].
+    /// El panel abierto: cuál y dónde, para [`flyout`] (la app lo dibuja con su registro).
     pub app_panel: Option<(DockPanel, Anchor)>,
 }
 
@@ -187,11 +93,13 @@ fn plain_icon(ui: &Ui, skin: &Skin, icon: &str, plain: &str, rect: Rect) {
 }
 
 /// El botón del timeline: lo muestra o lo esconde.
-const TIMELINE: &str = "Timeline";
-const TIMELINE_ICON: &str = "icon.timeline";
+pub(crate) const TIMELINE: &str = "Timeline";
+pub(crate) const TIMELINE_ICON: &str = "icon.timeline";
+/// El alto de fábrica de la línea de tiempo.
+pub(crate) const TIMELINE_DEFAULT_HEIGHT: f32 = 190.0;
 /// El botón de la ventanita de preview: la abre o la cierra.
-const PREVIEW: &str = "Preview";
-const PREVIEW_ICON: &str = "icon.preview";
+pub(crate) const PREVIEW: &str = "Preview";
+pub(crate) const PREVIEW_ICON: &str = "icon.preview";
 
 /// Un botón del dock que prende o apaga `on`: con Pixel UI, el del skin; sin él, el de egui con
 /// `plain`.
@@ -224,8 +132,6 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
 /// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón.
 pub fn show(
     ui: &mut Ui,
-    editor: &mut Editor,
-    name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
     timeline: &mut bool,
     preview: &mut bool,
@@ -240,19 +146,19 @@ pub fn show(
         column.min.y += TOP_AIR;
         column.max.y -= BOTTOM_AIR;
     }
-    for panel in DockPanel::ALL {
+    for &panel in DockPanel::DOCK {
         let is_open = open == Some(panel);
         let response = match skin {
             Some(skin) => pixel_button(
                 ui,
                 skin,
                 panel.label(),
-                (panel.icon(), panel.plain()),
+                (panel.spec().icon, panel.spec().plain),
                 is_open,
             ),
             None => ui
                 .add(
-                    egui::Button::new(panel.plain())
+                    egui::Button::new(panel.spec().plain)
                         .selected(is_open)
                         .min_size(BUTTON_SIZE),
                 )
@@ -281,29 +187,20 @@ pub fn show(
         .map(|(_, r)| *r)
         .unwrap_or(Rect::NOTHING);
     let anchor = Anchor { button, column };
-    let enabled = ui.is_enabled();
+    // Todos los paneles abiertos los dibuja la app (`ChimpApp::panel_flyout`).
     match panel {
-        DockPanel::Artboards | DockPanel::Slices => {
-            flyout(ui.ctx(), panel, anchor, skin, FLYOUT_WIDTH, false, |ui| {
-                ui.add_enabled_ui(enabled, |ui| match (panel, skin) {
-                    (DockPanel::Artboards, Some(skin)) => {
-                        out.canvas_size = panels::pixel_artboards(ui, editor, name_buffer, skin);
-                    }
-                    (DockPanel::Artboards, None) => {
-                        out.canvas_size = panels::artboards(ui, editor, name_buffer);
-                    }
-                    (DockPanel::Slices, Some(skin)) => panels::pixel_slices(ui, editor, skin),
-                    (_, _) => panels::slices(ui, editor),
-                });
-            });
-        }
-        DockPanel::Lospec
-        | DockPanel::Dafont
+        DockPanel::Artboards
+        | DockPanel::Slices
+        | DockPanel::Lospec
         | DockPanel::Groom
         | DockPanel::Lumen
         | DockPanel::Library
         | DockPanel::Font
         | DockPanel::Model => out.app_panel = Some((panel, anchor)),
+        #[cfg(not(target_arch = "wasm32"))]
+        DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
+        // Los que no son botones del dock (no están en `PanelId::DOCK`).
+        DockPanel::Tools | DockPanel::Color | DockPanel::Timeline | DockPanel::Preview => {}
     }
     out
 }
@@ -338,17 +235,6 @@ pub fn flyout_fixed(
     add_contents: impl FnOnce(&mut Ui),
 ) {
     flyout_with(ctx, panel, anchor, skin, width, Body::Fixed, add_contents);
-}
-
-/// Cómo va el contenido de un panel flotante.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Body {
-    /// Con scroll, del alto de su contenido.
-    Fit,
-    /// Con scroll, de la columna entera.
-    Tall,
-    /// Sin scroll, de la columna entera.
-    Fixed,
 }
 
 fn flyout_with(
@@ -417,9 +303,16 @@ fn flyout_with(
                 let ppp = ui.ctx().pixels_per_point();
                 let rect = Rect::from_min_size(rect.min.round(), rect.size().round());
                 let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
-                shapes.extend(tab_shapes(skin, piece, panel.icon(), rect, button, ppp));
+                shapes.extend(tab_shapes(
+                    skin,
+                    piece,
+                    panel.spec().icon,
+                    rect,
+                    button,
+                    ppp,
+                ));
                 ui.painter().set(background, Shape::Vec(shapes));
-                plain_icon(ui, skin, panel.icon(), panel.plain(), button);
+                plain_icon(ui, skin, panel.spec().icon, panel.spec().plain, button);
             }
         });
 }

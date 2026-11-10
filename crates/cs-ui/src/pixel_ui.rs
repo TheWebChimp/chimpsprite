@@ -429,6 +429,9 @@ fn box_inset(skin: &Skin) -> f32 {
         .max(0.0)
 }
 
+/// El ancho de la barra de herramientas sin Pixel UI (la de los nombres).
+pub(crate) const TOOLBAR_WIDTH_PLAIN: f32 = 184.0;
+
 /// Ancho de la barra de íconos sin la línea que la separa del lienzo: la caja `toolbar.box` más
 /// `TOOLBAR_MARGIN` a cada lado. Sale de las piezas, así sigue al skin.
 pub fn toolbar_width(skin: &Skin) -> f32 {

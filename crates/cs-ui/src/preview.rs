@@ -18,7 +18,7 @@ use cs_core::{AnimDirection, ArtboardId, Playback};
 /// El lugar del dibujo, de fábrica.
 pub const VIEW: Vec2 = vec2(192.0, 144.0);
 /// Lo más chico y lo más grande que se puede hacer con la agarradera.
-const MIN_VIEW: Vec2 = vec2(96.0, 64.0);
+pub(crate) const MIN_VIEW: Vec2 = vec2(96.0, 64.0);
 const MAX_VIEW: Vec2 = vec2(720.0, 540.0);
 /// La agarradera: un cuadro de este lado en la esquina de abajo a la derecha de la vista.
 const GRIP: f32 = 9.0;
@@ -56,7 +56,7 @@ pub struct Preview {
     /// El tamaño de la vista.
     size: Vec2,
     play: Option<Play>,
-    /// La textura del lienzo de este frame (ver `show`).
+    /// La textura del lienzo de este frame (ver `contents`).
     canvas: Option<(egui::TextureId, Vec2)>,
 }
 
@@ -77,8 +77,7 @@ impl Default for Preview {
 }
 
 impl Preview {
-    /// La ventana. `canvas`: la textura del lienzo con el frame del editor tal cual, si la hay
-    /// (se usa en vez de componer otra). Devuelve si se cerró con la ×.
+    /// La ventana, con [`Self::contents`] adentro. Devuelve si se cerró con la ×.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -86,7 +85,6 @@ impl Preview {
         skin: Option<&Skin>,
         canvas: Option<(egui::TextureId, Vec2)>,
     ) -> bool {
-        self.canvas = canvas;
         let anchor = (Align2::RIGHT_BOTTOM, OFFSET);
         let closed = match skin {
             // Con Pixel UI, play o pausa (si hay animación) y centrar van en la barra de título,
@@ -102,7 +100,7 @@ impl Preview {
                     "Preview",
                     true,
                     anchor,
-                    |ui| self.contents(ui, editor, Some(skin), false),
+                    |ui| self.contents(ui, editor, Some(skin), canvas),
                     |ui, bar| (play, center) = bar_icons(ui, skin, bar, animated, playing),
                 );
                 if play {
@@ -116,7 +114,7 @@ impl Preview {
             }
             None => {
                 crate::pixel_ui::app_window(ctx, None, "preview", "Preview", true, anchor, |ui| {
-                    self.contents(ui, editor, None, true)
+                    self.contents(ui, editor, None, canvas)
                 })
                 .1
             }
@@ -239,11 +237,19 @@ impl Preview {
         self.shown = self.texture.as_ref().map(|t| (t.id(), t.size_vec2()));
     }
 
-    /// Lo de adentro; con `play_button`, arriba el botón de play (sin Pixel UI, que no tiene la
-    /// barra del diseño).
-    fn contents(&mut self, ui: &mut Ui, editor: &Editor, skin: Option<&Skin>, play_button: bool) {
+    /// Lo de adentro de la ventana. `canvas`: la textura del lienzo con el frame del editor tal
+    /// cual, si la hay (se usa en vez de componer otra). Sin Pixel UI, arriba el botón de play
+    /// (con Pixel UI va en la barra de título del diseño, que es de la ventana).
+    pub fn contents(
+        &mut self,
+        ui: &mut Ui,
+        editor: &Editor,
+        skin: Option<&Skin>,
+        canvas: Option<(egui::TextureId, Vec2)>,
+    ) {
+        self.canvas = canvas;
         ui.spacing_mut().item_spacing.y = ROW_GAP;
-        if play_button {
+        if skin.is_none() {
             let label = if self.playing() { "Pause" } else { "Play" };
             if ui.selectable_label(self.playing(), label).clicked() {
                 self.toggle_play(editor);

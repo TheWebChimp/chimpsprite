@@ -741,6 +741,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     if std::env::var_os("CHIMPSPRITE_DEMO_LOSPEC").is_some() && app.has_doc() {
         dock::set_open(ctx, Some(dock::DockPanel::Lospec));
     }
+    // Desarrollo: el panel Slices del dock abierto, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_SLICES").is_some() && app.has_doc() {
+        dock::set_open(ctx, Some(dock::DockPanel::Slices));
+    }
     // Desarrollo: el panel Artboards con muchos artboards más (uno de nombre largo), para
     // capturas de sus pestañas.
     if std::env::var_os("CHIMPSPRITE_DEMO_ARTBOARDS").is_some() && app.has_doc() {

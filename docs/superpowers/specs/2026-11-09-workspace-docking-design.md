@@ -137,7 +137,48 @@ egui_taffy y solo `workspace` conoce egui_dock.
   **Pendiente para antes de la fase C:** un test de barrido de anchos de `MIN_WIDTH` a 600 por
   panel; una variante de `run_at` a escala 2; reservar el ancho de la barra de scroll en los
   paneles acoplados; medir el costo de recalcular taffy al arrastrar los splits.
-- **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia.
+- **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia. **HECHA**:
+  `crates/cs-ui/src/panel_registry.rs` tiene `PanelId` (13 paneles; 12 en web, sin Dafont),
+  `PanelSpec { title, icon, plain, reference_width, min_width, closable, host }`, `Host::{Left,
+  Right, Bottom, Window, Flyout(Body)}`, `Body::{Fit, Tall, Fixed}`, `ALL` y `DOCK`
+  (`dock::DockPanel` es un alias). `app_panels.rs` tiene `PanelAction`, `draw_panel(ui, id)`,
+  `draw_panel_modal(ui, id, modal)`, `apply_panel_action(ctx, action)` y `panel_flyout(ctx, id,
+  anchor, modal)`: todos los flyouts del dock, Artboards/Slices, Tools, Color, Timeline y el panel
+  fijo de la pestaña de modelo dibujan por ahí. La ventana real de Preview sigue llamando
+  `Preview::show` → `contents`; `draw_panel(ui, PanelId::Preview)` existe pero aún no tiene host
+  real (para la fase C). Los hosts no cambiaron.
+
+  **Para la fase C** (notas de la revisión final):
+  - `min_width` de Tools y Color son marcadores (min == referencia) y `PanelSpec.closable` todavía
+    no se lee.
+  - Una sola entrada que maneje el modal y la franja del logo de Lospec (hoy Color usa
+    `draw_panel_modal` y el host pone `lospec_band` fuera de `add_enabled_ui`): algo como
+    `draw_panel(ui, id, &PanelCtx { modal, bottom })`.
+  - Ciclo de vida de Lospec: `close_lospec_panel()` corre cada frame en que el `app_panel` del dock
+    no es Lospec (`lib.rs` ~1616); acoplado, eso borraría su estado cada frame y lanzaría
+    `start_search` sin parar: hace falta "visible este frame" por id; y el fondo disponible debe
+    ser genérico (`ui.max_rect().bottom()`), no exclusivo de Lospec (hoy es un parámetro privado de
+    `draw_panel_in`).
+  - Color depende del host: sincronización de `palette_locked` antes/después (moverla a
+    `draw_color`), mínimo que depende del skin (`color_panel::panel_min_size`) y el apretón de
+    manos de `palette_width_settled`.
+  - Preview: play/pausa y centrar viven en la barra de título de la ventana (`Preview::show`);
+    acoplado hay que llevarlos a `contents`; y `ClosePreview` solo limpia `view.preview`: debe parar
+    la reproducción (p. ej. `Preview::stop()`).
+  - Disponibilidad por panel (gate del timeline `is_structure_locked`/`model_edit_on`, Preview
+    escondido en pestaña de modelo, Dafont en wasm): `PanelId::available(&ChimpApp) -> bool`.
+  - Model tiene dos hosts (flyout y panel fijo de la pestaña de modelo): imponer una instancia por
+    `PanelId` por frame (estado de `model_panel` e ids globales de `forms::form`).
+  - `PanelSpec` necesita: `body` como campo propio (no dentro de `Host::Flyout`), `min_height`
+    (Groom/Lumen tienen `MIN_HEIGHT`), tamaños que dependen del skin (Tools con Pixel UI),
+    `default_size: Vec2` (Timeline usa el "ancho" como alto) y una `key` estable para
+    serde/memoria (hoy el título es la identidad).
+  - Layouts guardados en desktop con Dafont deben poder leerse en web (`#[serde(other)]` o variante
+    en todos los targets y filtrada).
+  - Patrón del TabViewer: `mem::take` del `DockState`, juntar `PanelAction`s en un `Vec` y
+    aplicarlas después de `DockArea::show_inside`.
+  - Ediciones de Artboards/Slices ahora se aplican después de dibujar timeline/color/preview (un
+    frame de latencia, igual que Library/Font): aceptado.
 - **C. Docking del lado derecho:** la tira de íconos y sus flyouts + el panel de color pasan a
   egui_dock (colapsado a íconos, flotantes, arrastrar).
 - **D. El resto al árbol:** toolbar, timeline y preview; workspaces de fábrica y del usuario; menú

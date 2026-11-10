@@ -141,7 +141,7 @@ fn lospec_preset(p: &LospecPalette) -> (NamedPalette, Vec<String>) {
 }
 
 /// Clic en un botón de una fila de Lospec.
-enum LospecAction {
+pub(crate) enum LospecAction {
     Apply(LospecPalette),
     Append(LospecPalette),
     Save(LospecPalette),
@@ -325,14 +325,17 @@ impl ChimpApp {
         self.lospec_dock.is_some()
     }
 
-    /// El panel Lospec del dock, flotando junto a su botón (`anchor`): lo mismo que la pestaña
-    /// Lospec de Palette Presets. Su estado vive mientras está abierto (ver `close_lospec_panel`).
-    pub(crate) fn lospec_panel(
+    /// El contenido del panel Lospec del dock (ver `ChimpApp::draw_panel`): lo mismo que la
+    /// pestaña Lospec de Palette Presets. Su estado vive mientras está abierto (ver
+    /// `close_lospec_panel`); la franja del logo la pone el que lo hospeda, fuera de lo que el
+    /// modal apaga. Con `bottom`, la lista llega hasta esa altura (la de abajo de la columna del
+    /// dock).
+    pub(crate) fn draw_lospec(
         &mut self,
-        ctx: &egui::Context,
-        anchor: crate::dock::Anchor,
-        modal: bool,
-    ) {
+        ui: &mut egui::Ui,
+        bottom: Option<f32>,
+    ) -> Option<LospecAction> {
+        let ctx = ui.ctx().clone();
         let mut window = match self.lospec_dock.take() {
             Some(window) => window,
             None => {
@@ -350,34 +353,16 @@ impl ChimpApp {
                         window.lospec.count_kind = CountKind::Exact;
                     }
                     window.lospec.sort = LospecSort::Newest;
-                    start_search(ctx, &mut window.lospec, &mut window.requests);
+                    start_search(&ctx, &mut window.lospec, &mut window.requests);
                 }
                 window
             }
         };
-        poll_lospec(ctx, &mut window);
-        let mut action = None;
+        poll_lospec(&ctx, &mut window);
         let library = &self.palettes;
-        let skin = self.pixel.skin();
-        crate::dock::flyout(
-            ctx,
-            crate::dock::DockPanel::Lospec,
-            anchor,
-            skin,
-            LOSPEC_PANEL_W,
-            true,
-            |ui| {
-                lospec_band(ui, skin);
-                ui.add_enabled_ui(!modal, |ui| {
-                    // La lista hasta abajo de la columna del dock.
-                    let bottom = anchor.column.bottom() - crate::dock::FLYOUT_MARGIN as f32;
-                    action =
-                        lospec_ui(ui, &mut window, |name| library.has_user(name), Some(bottom));
-                });
-            },
-        );
-        self.lospec_action(action);
+        let action = lospec_ui(ui, &mut window, |name| library.has_user(name), bottom);
         self.lospec_dock = Some(window);
+        action
     }
 
     /// Cerrado el panel Lospec, se sueltan sus imágenes y peticiones.
@@ -385,7 +370,7 @@ impl ChimpApp {
         self.lospec_dock = None;
     }
 
-    fn lospec_action(&mut self, action: Option<LospecAction>) {
+    pub(crate) fn lospec_action(&mut self, action: Option<LospecAction>) {
         match action {
             Some(LospecAction::Apply(p)) => {
                 self.doc.editor.apply_palette(p.palette.clone());
@@ -705,7 +690,7 @@ fn confirm_window(
 const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
 
 /// El panel Lospec del dock: el ancho de su contenido.
-const LOSPEC_PANEL_W: f32 = 364.0;
+pub(crate) const LOSPEC_PANEL_W: f32 = 364.0;
 /// La franja de arriba del panel (frame 8): el logo de Lospec y las franjas de colores (de 25 px,
 /// contra la luz de la derecha), de 29 de alto, debajo de la luz de arriba.
 const BAND_H: f32 = 29.0;
@@ -728,7 +713,7 @@ const BAND_COLORS: [egui::Color32; 12] = [
 
 /// Arriba del panel Lospec, de borde a borde: el logo (clic: lospec.com) y las franjas; debajo,
 /// la línea grabada. Ocupa su lugar en `ui`.
-fn lospec_band(ui: &mut egui::Ui, skin: Option<&crate::skin::Skin>) {
+pub(crate) fn lospec_band(ui: &mut egui::Ui, skin: Option<&crate::skin::Skin>) {
     use eframe::emath::GuiRounding as _;
     let margin = f32::from(crate::dock::FLYOUT_MARGIN);
     let content = ui.max_rect();

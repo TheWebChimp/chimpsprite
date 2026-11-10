@@ -26,10 +26,6 @@ pub const REFERENCE_WIDTH: f32 = 434.0;
 /// línea (147) y, en la fila de una familia (corrida, con su miniatura y ×99), un estilo largo
 /// como Bold Italic Condensed entero (152). Más angosto, los nombres se cortan con "…" y los
 /// textos se parten en líneas.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
-)]
 pub const MIN_WIDTH: f32 = 160.0;
 /// Alto de la caja de la vista previa.
 const PREVIEW_HEIGHT: f32 = 96.0;

@@ -36,10 +36,6 @@ pub const REFERENCE_WIDTH: f32 = 227.0;
 /// de la derecha de la fila) y el select de la textura muestra su nombre. Más angosto que el de
 /// referencia se parten las filas: por debajo de 217, la de la cámara (los presets bajan), la de
 /// las ventanas y la de los botones del objeto; por debajo de 211, Pitch baja debajo de Yaw.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "el dock lo usará cuando deje achicar los paneles")
-)]
 pub const MIN_WIDTH: f32 = 200.0;
 /// El encabezado del outliner, 5 filas debajo de la línea que parte el panel (3 de aire después
 /// de sus dos filas), sobre su propia línea grabada a [`kit::tabs::HEIGHT`] (donde estaba la
