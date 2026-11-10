@@ -18,7 +18,8 @@ dejar de dibujarse con coordenadas absolutas para un ancho fijo y acomodarse al 
 - El dock (`dock.rs`) abre un flyout a la vez; no guarda nada. `DockPanel` (9 variantes, con
   título e ícono) es la semilla del registro de paneles.
 - 6 de los 9 paneles del dock dibujan en coordenadas absolutas para un ancho fijo del mockup:
-  Groom, Lumen y Library (434), Dafont y Lospec (364), FontForge (304), Modelo (227).
+  Groom, Lumen y Library (434), Dafont y Lospec (364), FontForge (314: 304 de contenido + la
+  barra de 10), Modelo (227).
 - 356 tests de layout (`layout_tests.rs`, 11 285 líneas) fijan posiciones exactas.
 
 ## Decisiones del usuario
@@ -122,10 +123,19 @@ egui_taffy y solo `workspace` conoce egui_dock.
   en el prototipo), Groom, Lumen, Library, Dafont, Modelo (y Lospec si hace falta). En su ancho de
   referencia se ven igual que hoy; a otros anchos se reacomodan. **HECHA** (guía en `docs/forms.md`):
   `crates/cs-ui/src/forms.rs` + los seis paneles migrados, cada uno con `REFERENCE_WIDTH` /
-  `MIN_WIDTH`: FontForge 314 / 314 (`MIN_WIDTH = REFERENCE_WIDTH` por ahora: solo la vista Config
-  se migró y llega a `CONFIG_MIN_WIDTH` = 150), Groom 434 / 216, Lumen 434 / 216, Library 434 / 160, Dafont
+  `MIN_WIDTH`: FontForge 314 / CONFIG 150 (`MIN_WIDTH` = 314 por ahora: solo la vista Config se
+  migró y llega a `CONFIG_MIN_WIDTH` = 150), Groom 434 / 216, Lumen 434 / 216, Library 434 / 160, Dafont
   364 / 210, Modelo 227 / 200. El dock sigue abriendo cada panel a su `REFERENCE_WIDTH` hasta la
-  fase C. (Lospec no se migró.)
+  fase C. (Lospec no se migró: queda a ancho fijo; se revisa en la fase C.)
+
+  **Excepciones a propósito a "idéntico en `REFERENCE_WIDTH`":** el logo de Groom, Lumen y Dafont
+  ahora muestra su fila de arriba completa; la vista previa de Library baja medio punto a escala 2
+  (antes estaba a medio pixel del skin); el Export de Luminance en Lumen ya no se sale del panel
+  (Generate 50, Modify 45 y Export 41 en la columna de 140, como el mockup).
+
+  **Pendiente para antes de la fase C:** un test de barrido de anchos de `MIN_WIDTH` a 600 por
+  panel; una variante de `run_at` a escala 2; reservar el ancho de la barra de scroll en los
+  paneles acoplados; medir el costo de recalcular taffy al arrastrar los splits.
 - **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia.
 - **C. Docking del lado derecho:** la tira de íconos y sus flyouts + el panel de color pasan a
   egui_dock (colapsado a íconos, flotantes, arrastrar).

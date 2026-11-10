@@ -36,7 +36,8 @@ pub(crate) fn hint_wrapped(ui: &mut Ui, text: &str, width: f32) {
 
 /// Un texto como el de `egui::Label` con `wrap` (en varias líneas si no cabe en el ancho de `ui`),
 /// pero en puntos enteros: su rect llega al punto de arriba (el de egui medía lo que mide el texto,
-/// con fracciones).
+/// con fracciones). A propósito no emite nodos `TextRun` ni se puede seleccionar: es texto de
+/// ayuda (los lectores de pantalla lo leen como una etiqueta).
 pub(crate) fn text_wrapped(ui: &mut Ui, text: &str) {
     let color = ui.visuals().text_color();
     let font = egui::TextStyle::Body.resolve(ui.style());

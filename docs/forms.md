@@ -15,8 +15,12 @@ Todo va en puntos enteros (con la escala 2 de la UI, un punto es un pixel del sk
 - Modificadores: `weight`, `full_height`, `fill_height(_auto)`, `min_height`, `air_above/below/right`,
   `push_right`.
 - Entrada: `form(ui, id, gap, |tui| ..)` y `form_in_flow` (una forma entre widgets de egui).
+  El `id` de una forma es global (no se combina con `ui.id()`): dos formas con el mismo `id` en
+  un frame comparten el estado de taffy y, anidadas, truenan; las que se repiten (una por
+  elemento de una lista) llevan algo que no se repita, como su índice.
   `canvas` es una hoja que no se mide (vistas previas y mapas que llenan lo que les toca);
-  `label` y `label_width` ponen etiquetas en la fila de 17 de los controles del kit.
+  `label` dibuja una etiqueta en la fila de 17 de los controles del kit y `label_width` mide el
+  ancho que necesita.
 
 ## Ejemplo
 
@@ -44,9 +48,10 @@ forms::form(ui, "mi_panel", 4.0, |tui| {
 
 ## Arnés de pruebas
 
-`forms::testing::run_at(width, |ui| ..)` dibuja en un `Ui` de ese ancho y devuelve un `Probe` con
-los rects de los controles (`rect(name)`), los textos y las imágenes. Cada panel lo corre a
-`MIN_WIDTH`, `REFERENCE_WIDTH` y 600 con `assert_whole_px`, `assert_within(width)` y
+`forms::testing` es solo `#[cfg(test)]`. `forms::testing::run_at(width, |ui| ..)` dibuja en un
+`Ui` de ese ancho y devuelve un `Probe` con los rects de los controles (`rect(name)`), los que
+están deshabilitados, los textos y las imágenes. Cada panel lo corre a varios anchos, entre ellos
+`MIN_WIDTH`, `REFERENCE_WIDTH` y 600, con `assert_whole_px`, `assert_within(width)` y
 `assert_no_overlap`.
 
 ## Rarezas de taffy 0.9
