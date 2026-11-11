@@ -949,13 +949,17 @@ pub fn min_width(ui: &Ui, skin: &Skin) -> f32 {
     header.max(buttons).max(grid).ceil()
 }
 
-/// El ancho mínimo del panel derecho con Pixel UI: `min_width` más los márgenes del panel (los de
-/// su marco y la línea que lo separa del lienzo).
+/// El ancho mínimo de Color con Pixel UI en un grupo del workspace: `min_width` más los márgenes
+/// de su cuerpo (los del marco de los paneles de egui). Sin la línea del panel derecho de antes:
+/// pegado a la columna derecha, el workspace le resta su divisor al mínimo y al margen izquierdo
+/// (ver `workspace::show::beside_minima`), así que la columna mínima es este ancho con el
+/// divisor y lo de adentro mide justo `min_width`; en otro lugar, igual.
 pub fn panel_min_size(ui: &Ui, skin: &Skin) -> f32 {
-    let style = ui.style();
-    let frame = egui::Frame::side_top_panel(style).total_margin().sum().x;
-    let line = style.visuals.widgets.noninteractive.bg_stroke.width.round();
-    min_width(ui, skin) + frame + line
+    let frame = egui::Frame::side_top_panel(ui.style())
+        .total_margin()
+        .sum()
+        .x;
+    min_width(ui, skin) + frame
 }
 
 /// El alto mínimo del panel de color con Pixel UI (en un grupo partido del workspace): el aire

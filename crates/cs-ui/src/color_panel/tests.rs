@@ -1337,19 +1337,18 @@ fn with_pixel_ui_the_minimum_width_fits_the_rgba_group_and_the_top_buttons() {
     });
     // 2 + la punta de R (3) + 4 tramos de 27 + 3 líneas + la punta derecha (2) + 2.
     assert_eq!(min, 120.0);
-    // Con los márgenes del panel (8 de cada lado) y la línea contra el lienzo.
-    assert_eq!(panel, 137.0);
-    // En ese ancho, todo se ve. La columna mide eso con su divisor (2) en lugar de la línea (1)
-    // del panel de antes, y el margen izquierdo de Color cuenta desde la línea del divisor (8 − 2):
-    // 137 − 2 − 6 − 8 = 121, un punto más que con el panel de antes (137 − 1 − 8 − 8 = 120).
-    h.app.view.palette_width = Some(panel);
+    // Con los márgenes de su cuerpo (8 de cada lado).
+    assert_eq!(panel, 136.0);
+    // Más angosta no se puede: la columna se queda en ese mínimo (con su divisor de 2, del que
+    // cuenta el margen izquierdo de Color: 136 − 2 − (8 − 2) − 8) y, ahí, todo se ve.
+    h.app.view.palette_width = Some(panel - 20.0);
     h.set_primary(Rgba::new(10, 20, 30, 200));
     h.frame(vec![]);
     assert_eq!(
         h.app.workspace.column_rect().map(|r| r.width()),
         Some(panel)
     );
-    assert_eq!(h.palette_box().width(), min + 1.0);
+    assert_eq!(h.palette_box().width(), min);
     assert_header_fits(&h);
     let column = h.palette_box();
     let mask = h.node("Mask");

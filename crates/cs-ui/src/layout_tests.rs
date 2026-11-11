@@ -2743,9 +2743,9 @@ fn with_pixel_ui_the_right_panel_can_not_be_narrower_than_its_minimum() {
     drag(&mut h, edge, edge + Vec2::new(500.0, 0.0));
     let narrow = h.column();
     assert!(narrow.width() < panel.width(), "{panel:?} -> {narrow:?}");
-    // 120 de la fila de RGBA, 16 de márgenes y la línea contra el lienzo: el ancho mínimo de la
-    // columna derecha de Essentials (con su divisor), de lo que trata este test.
-    assert_eq!(narrow.width(), 137.0, "{narrow:?}");
+    // 120 de la fila de RGBA y 16 de márgenes (el izquierdo cuenta desde la línea del divisor): el
+    // ancho mínimo de la columna derecha de Essentials (con su divisor), de lo que trata este test.
+    assert_eq!(narrow.width(), 136.0, "{narrow:?}");
     for label in ["Copy color", "R", "G", "B", "A", "Hex", "Mask"] {
         let rect = h.node(label);
         assert!(narrow.contains_rect(rect), "{label} {rect:?} in {narrow:?}");

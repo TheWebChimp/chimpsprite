@@ -1042,8 +1042,8 @@ fn tools_margin(
 
 /// Los mínimos `m` con los de los paneles pegados al divisor izquierdo de la columna derecha
 /// (`beside`) un divisor (`sep`) más angostos: su margen izquierdo cuenta desde la línea, como en
-/// el panel derecho de antes (ver `Viewer::tab_style_override`), así que la columna mínima mide lo
-/// mismo que el panel mínimo de antes.
+/// el panel derecho de antes (ver `Viewer::tab_style_override`), así que la columna mínima (con el
+/// divisor) mide el mínimo del panel y lo de adentro, lo mismo que en cualquier otro lugar.
 fn beside_minima(mut m: Minima, beside: &[PanelId], sep: f32) -> Minima {
     for id in beside {
         if let Some(min) = m.get_mut(id) {
