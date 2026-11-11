@@ -52,7 +52,7 @@ struct Gap {
 const KNOWN_GAPS: &[Gap] = &[
     // La tabla de capas del timeline va en un scroll a lo ancho (las columnas de la izquierda no
     // se quedan fijas): el botón "Add Layer Mask" de la capa activa, al final de la columna del
-    // nombre (x 104..115), queda fuera hasta que se desplaza, desde su mínimo (76) hasta 114. La
+    // nombre (x 104..115), queda fuera hasta que se desplaza, desde su mínimo (86) hasta 114. La
     // fila de botones de arriba ya no: se parte por botón y su mínimo es el de su parte más ancha
     // (fase E, tarea 6).
     Gap {

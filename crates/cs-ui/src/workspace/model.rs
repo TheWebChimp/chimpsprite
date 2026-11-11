@@ -14,8 +14,10 @@ use crate::panel_registry::PanelId;
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
 pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
 
-/// La ventana del timeline de la demo `timeline-narrow` (ver [`Workspace::demo`]).
-const TIMELINE_NARROW_DEMO: egui::Vec2 = egui::vec2(96.0, 420.0);
+/// La ventana del timeline de la demo `timeline-narrow` (ver [`Workspace::demo`]): angosta, pero
+/// sin que `fit_windows` la tenga que ensanchar (su barra de pestañas y su borde, 7, y el margen
+/// del grupo a cada lado alrededor de `timeline::MIN_WIDTH`).
+pub(super) const TIMELINE_NARROW_DEMO: egui::Vec2 = egui::vec2(106.0, 420.0);
 
 /// Dónde estaba un panel cuando se ocultó (el timeline o el Preview, ver
 /// [`Workspace::sync_panel`]): ahí vuelve.
@@ -1669,6 +1671,10 @@ mod tests {
         assert!(w.floating(PanelId::Lumen));
         let w = Workspace::demo("timeline-narrow").unwrap();
         assert!(w.floating(PanelId::Timeline));
+        // Su ventana, no menos que el mínimo del timeline flotando (con el margen del grupo).
+        let floating_min =
+            crate::timeline::MIN_WIDTH + 2.0 * f32::from(crate::pixel_ui::WORKSPACE_MARGIN);
+        assert!(TIMELINE_NARROW_DEMO.x >= floating_min);
         assert!(Workspace::demo("nope").is_none());
     }
 

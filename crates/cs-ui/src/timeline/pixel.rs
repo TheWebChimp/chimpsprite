@@ -275,10 +275,12 @@ const fn group_width(n: usize) -> f32 {
     BUTTON_PITCH * n as f32 + 1.0
 }
 
-/// La parte más ancha de la barra que no se parte: el stepper de la duración con hasta 3 cifras
-/// (15 + 34 + 15: el campo de "100ms" mide 34) y el combo con "Difference" (los demás modos, 59).
-/// Con 4 o 5 cifras (1000 ms o más) el campo crece 5 o 10.
-const WIDEST_PART: f32 = 64.0;
+/// La parte más ancha de la barra que no se parte: el stepper de la duración con su número más
+/// largo, de 5 cifras (la duración llega a 60000 ms): 15 + 44 + 15. Con hasta 3 cifras mide 64
+/// (el campo de "100ms", 34) y con 4, 69; el combo, 59 (64 con "Difference"). No cubre el combo
+/// con un modo que la app no conoce (`BlendMode::Other(n)`, "Other (n)", de archivos importados),
+/// que puede ser más ancho.
+const WIDEST_PART: f32 = 74.0;
 /// El borde de la caja (`workspace.box`) a cada lado.
 const BOX_BORDER: f32 = 3.0;
 /// Lo más angosto del timeline con Pixel UI, sin su marco (lo que recibe `show`: la caja con la
@@ -337,10 +339,9 @@ impl Widths {
 
     fn of(&self, unit: Unit) -> f32 {
         match unit {
-            Unit::Playback => group_width(5),
-            Unit::Frames => group_width(2),
-            Unit::Layers => group_width(4),
-            Unit::Onion => group_width(1),
+            Unit::Playback | Unit::Frames | Unit::Layers | Unit::Onion => {
+                group_width(button_count(unit))
+            }
             Unit::OnionRange => RANGE_W,
             Unit::Opacity => self.opacity_label + LABEL_GAP + 2.0 * STEP_W + OPACITY_FIELD_W,
             Unit::Blend => self.combo,
@@ -488,7 +489,7 @@ fn unit(
 
 /// Los botones del grupo de `unit`, en orden.
 fn buttons(editor: &Editor, unit: Unit) -> Vec<Btn> {
-    match unit {
+    let buttons = match unit {
         Unit::Playback => {
             let play = if editor.playing { "Pause" } else { "Play" };
             let mut play_button = Btn::new("timeline.icon.play", play, "Play / pause (Enter)");
@@ -542,7 +543,10 @@ fn buttons(editor: &Editor, unit: Unit) -> Vec<Btn> {
             vec![Btn::new("timeline.icon.onion", "Onion skin", "Onion skin (F3)").on(on)]
         }
         _ => Vec::new(),
-    }
+    };
+    // Los anchos de la barra (`Widths`) cuentan con `button_count` botones.
+    debug_assert_eq!(buttons.len(), button_count(unit), "{unit:?}");
+    buttons
 }
 
 /// Lo que hace el botón `i` del grupo de `unit`.

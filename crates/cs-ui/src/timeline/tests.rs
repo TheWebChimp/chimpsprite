@@ -1512,23 +1512,39 @@ fn out_of_the_box(h: &Harness) -> Vec<String> {
         .collect()
 }
 
+/// Con `w` a la vista y el frame de `ms` de duración: lo que no cabe en la caja.
+fn out_of_the_box_with(w: f32, ms: u16) -> Vec<String> {
+    let mut h = pixel_seen(w);
+    h.editor().set_duration(ms);
+    h.frame(vec![]);
+    h.frame(vec![]);
+    out_of_the_box(&h)
+}
+
 #[test]
 fn the_minimum_width_fits_the_widest_part_of_the_bar() {
-    // 79: 64 (el stepper de la duración, la parte más ancha que no se parte) con el aire de la
-    // barra y el borde de la caja a cada lado (76) y el aire de la derecha del marco (3).
-    assert_eq!(narrowest(), 79.0);
-    let h = pixel_seen(narrowest());
-    assert_eq!(out_of_the_box(&h), Vec::<String>::new());
-    // Un punto menos ya no: el stepper de la duración pisa el borde de la caja.
-    let h = pixel_seen(narrowest() - 1.0);
-    assert_eq!(out_of_the_box(&h), ["Longer frame"]);
+    // 89: 74 (el stepper de la duración con 5 cifras, la parte más ancha que no se parte) con
+    // el aire de la barra y el borde de la caja a cada lado (86) y el aire de la derecha del
+    // marco (3).
+    assert_eq!(narrowest(), 89.0);
+    let none = Vec::<String>::new();
+    for ms in [100, 1000, 60000] {
+        assert_eq!(out_of_the_box_with(narrowest(), ms), none, "{ms} ms");
+    }
+    // Un punto menos, con 60000 ms ya no: el stepper de la duración pisa el borde de la caja.
+    assert_eq!(
+        out_of_the_box_with(narrowest() - 1.0, 60000),
+        ["Longer frame"]
+    );
+    assert_eq!(out_of_the_box_with(narrowest() - 1.0, 100), none);
 }
 
 #[test]
 fn the_button_row_wraps_down_to_the_minimum() {
     let mut rows = Vec::new();
     let min = narrowest();
-    for w in [min, 80.0, 100.0, 126.0, 127.0, 200.0] {
+    // Los de hasta 114 también: ahí el barrido de anchos calla lo que sale (por la tabla).
+    for w in [min, 90.0, 96.0, 100.0, 110.0, 114.0, 126.0, 127.0, 200.0] {
         let h = pixel_seen(w);
         let bar = bar_nodes(&h);
         for label in BAR_CONTROLS {
@@ -1576,35 +1592,38 @@ fn the_button_row_wraps_down_to_the_minimum() {
     assert!(of(min) > of(127.0), "more rows when narrower: {rows:?}");
 }
 
-/// Con `w` a la vista y 4 frames en el primero: un clic en "Last frame" y uno en "Play". Devuelve
-/// el frame y si se reproduce, y el arnés.
-fn last_then_play(w: f32) -> (usize, bool, Harness) {
+/// Con `w` a la vista y 4 frames en el primero: un clic en "Next frame", uno en "Last frame" y
+/// uno en "Play". Devuelve el frame después de cada uno de los dos primeros, si se reproduce y el
+/// arnés.
+fn next_last_play(w: f32) -> ([usize; 2], bool, Harness) {
     let mut h = pixel_seen(w);
     for _ in 0..3 {
         h.editor().duplicate_frame();
     }
     h.editor().set_frame(0);
     h.frame(vec![]);
+    h.click("Next frame");
+    let next = h.editor().frame;
     h.click("Last frame");
-    let frame = h.editor().frame;
+    let last = h.editor().frame;
     h.click("Play");
     let playing = h.editor().playing;
-    (frame, playing, h)
+    ([next, last], playing, h)
 }
 
 #[test]
 fn a_split_group_keeps_its_buttons_working() {
-    let wide = last_then_play(600.0);
-    assert_eq!((wide.0, wide.1), (3, true));
-    let (frame, playing, h) = last_then_play(narrowest());
-    // En su mínimo, Play y Last frame van en filas de abajo de las del primero del grupo.
+    let wide = next_last_play(600.0);
+    assert_eq!((wide.0, wide.1), ([1, 3], true));
+    let (frames, playing, h) = next_last_play(narrowest());
+    // En su mínimo (la barra mide 74: tres botones), Playback va en dos filas: Play cierra la
+    // primera; Next frame y Last frame, la segunda (otro grupo del kit, de id propio).
     let first = h.rect("First frame").top();
-    assert!(h.rect("Pause").top() > first, "Play went down a row");
-    assert!(
-        h.rect("Last frame").top() > first,
-        "Last frame went down a row"
-    );
-    assert_eq!((frame, playing), (wide.0, wide.1), "the same as at 600");
+    assert_eq!(h.rect("Pause").top(), first, "Play ends the first row");
+    for second in ["Next frame", "Last frame"] {
+        assert!(h.rect(second).top() > first, "{second} went down a row");
+    }
+    assert_eq!((frames, playing), (wide.0, wide.1), "the same as at 600");
 }
 
 #[test]

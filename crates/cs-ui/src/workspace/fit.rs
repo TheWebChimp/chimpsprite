@@ -1767,6 +1767,20 @@ mod tests {
             .root_rect(surface)
             .expect("the timeline's window");
         assert!(inner.width() >= room, "floating: {inner:?} vs {room}");
+        // La demo angosta ya entra: su ventana se queda del ancho que pide.
+        app.workspace = Workspace::demo("timeline-narrow").unwrap();
+        frames(&ctx, &mut app);
+        let (surface, _) = app.workspace.leaf_of(PanelId::Timeline).unwrap();
+        let inner = app.workspace.root_rect(surface).expect("the demo's window");
+        let area = ctx
+            .memory(|m| m.area_rect(skin::window_area_id(surface)))
+            .expect("the demo's window");
+        assert!(inner.width() >= room, "demo: {inner:?} vs {room}");
+        assert_eq!(
+            area.width(),
+            super::super::model::TIMELINE_NARROW_DEMO.x,
+            "demo: not widened ({inner:?})"
+        );
     }
 
     #[test]
