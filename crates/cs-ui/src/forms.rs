@@ -330,10 +330,9 @@ pub(crate) mod testing {
     use eframe::egui::{self, Pos2, RawInput, Rect, Ui, Vec2, accesskit::Role};
 
     pub(crate) struct Probe {
-        /// Los controles con nombre (botones, casillas, campos, selects, etiquetas) y su rect.
-        pub widgets: Vec<(String, Rect)>,
-        /// Qué es cada uno de `widgets` (en el mismo orden).
-        pub roles: Vec<Role>,
+        /// Los controles con nombre (botones, casillas, campos, selects, etiquetas), su rect y qué
+        /// son (en la misma entrada: quien filtre la lista no los desalinea).
+        pub widgets: Vec<(String, Rect, Role)>,
         /// Los textos pintados: lo que se ve (con su "…" si no cupo) y el rect de su galley.
         pub texts: Vec<(String, Rect)>,
         /// Las imágenes pintadas (las piezas del skin también): su textura y lo que se ve de
@@ -406,7 +405,7 @@ pub(crate) mod testing {
             .map(|u| u.nodes)
             .unwrap_or_default();
         let mut disabled = Vec::new();
-        let named: Vec<(String, Rect, Role)> = nodes
+        let widgets: Vec<(String, Rect, Role)> = nodes
             .iter()
             .filter(|(_, n)| LEAVES.contains(&n.role()))
             .filter_map(|(_, n)| {
@@ -426,11 +425,8 @@ pub(crate) mod testing {
                 Some((name, rect, n.role()))
             })
             .collect();
-        let roles = named.iter().map(|(_, _, r)| *r).collect();
-        let widgets = named.into_iter().map(|(n, r, _)| (n, r)).collect();
         Probe {
             widgets,
-            roles,
             texts,
             images,
             disabled,
@@ -469,8 +465,8 @@ pub(crate) mod testing {
         pub(crate) fn rect(&self, name: &str) -> Rect {
             self.widgets
                 .iter()
-                .find(|(n, _)| n == name)
-                .map(|(_, r)| *r)
+                .find(|(n, _, _)| n == name)
+                .map(|(_, r, _)| *r)
                 .unwrap_or_else(|| panic!("no {name:?} in {:?}", self.widgets))
         }
 
@@ -485,7 +481,7 @@ pub(crate) mod testing {
 
         /// Cada control empieza y termina en puntos enteros (nada de medio pixel del skin).
         pub(crate) fn assert_whole_px(&self) {
-            for (name, r) in &self.widgets {
+            for (name, r, _) in &self.widgets {
                 for v in [r.min.x, r.min.y, r.max.x, r.max.y] {
                     assert_eq!(v, v.round(), "{name:?} at {r:?}");
                 }
@@ -494,7 +490,7 @@ pub(crate) mod testing {
 
         /// Nada se sale a la derecha del ancho del panel.
         pub(crate) fn assert_within(&self, width: f32) {
-            for (name, r) in &self.widgets {
+            for (name, r, _) in &self.widgets {
                 assert!(
                     r.min.x >= 0.0 && r.max.x <= width,
                     "{name:?} at {r:?} past {width}"
@@ -504,8 +500,8 @@ pub(crate) mod testing {
 
         /// Ningún control tapa a otro.
         pub(crate) fn assert_no_overlap(&self) {
-            for (i, (a, ra)) in self.widgets.iter().enumerate() {
-                for (b, rb) in &self.widgets[i + 1..] {
+            for (i, (a, ra, _)) in self.widgets.iter().enumerate() {
+                for (b, rb, _) in &self.widgets[i + 1..] {
                     let inter = ra.intersect(*rb);
                     assert!(
                         inter.width() <= 0.0 || inter.height() <= 0.0,

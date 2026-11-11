@@ -383,6 +383,11 @@ pub(super) fn window_area_id(surface: SurfaceIndex) -> Id {
     Id::new(format!("window {surface:?}"))
 }
 
+/// La capa de la ventana flotante `surface` (la de su área).
+pub(super) fn window_layer(surface: SurfaceIndex) -> LayerId {
+    LayerId::new(Order::Middle, window_area_id(surface))
+}
+
 /// Sin el marco de las ventanas del workspace (`menu.side`) en la ventana flotante `surface` (la
 /// del Preview solo, que lleva el de su diálogo): su marcador, ya pintado en la capa de su área,
 /// se borra. Por la capa y no por el rect: mientras se agranda de la agarradera, el área puede ir
@@ -696,12 +701,52 @@ pub(super) fn plan_bar(
     }
 }
 
+/// La rueda de este frame sobre las barras: dónde está el puntero, cuánto corrió (en puntos;
+/// positivo, hacia atrás) y cuánto es un renglón de la rueda (una pestaña).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Wheel {
+    pub at: egui::Pos2,
+    pub delta: f32,
+    pub notch: f32,
+}
+
+/// Dónde se junta lo que corrió la rueda sobre la barra del grupo `path` hasta un renglón.
+fn wheel_sum_id(path: NodePath) -> Id {
+    Id::new(("workspace_tabs_wheel", path.surface, path.node))
+}
+
+/// Lo que corre la barra de `path` la rueda (`wheel`): lo de este frame se suma a lo de antes y
+/// cada renglón junto es una pestaña (−1: hacia atrás, 1: hacia adelante), de a una por frame; lo
+/// que sobra se tira. Cambiar de sentido empieza de cero (un trackpad no corre una pestaña por
+/// cada evento).
+fn wheel_step(ui: &egui::Ui, path: NodePath, wheel: Wheel) -> i32 {
+    let id = wheel_sum_id(path);
+    let before = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    let sum = if before * wheel.delta < 0.0 {
+        wheel.delta
+    } else {
+        before + wheel.delta
+    };
+    let (step, left) = if sum >= wheel.notch {
+        (-1, 0.0)
+    } else if sum <= -wheel.notch {
+        (1, 0.0)
+    } else {
+        (0, sum)
+    };
+    ui.data_mut(|d| d.insert_temp(id, left));
+    step
+}
+
 /// Las barras de los grupos de `state` que llevan barra de pestañas (con su rect del último
-/// frame que se dibujó). `wheel`: la rueda sobre la de alguno (la que tiene flechas) la corre.
+/// frame que se dibujó). `wheel`: la rueda sobre la de alguno (la que tiene flechas) la corre, si
+/// lo de más arriba bajo el puntero es su capa (`on_top`, con la superficie del grupo): no a
+/// través de una ventana, un diálogo o un menú.
 pub(super) fn plan_bars(
     ui: &egui::Ui,
     state: &DockState<PanelId>,
-    wheel: Option<(egui::Pos2, i32)>,
+    wheel: Option<Wheel>,
+    on_top: impl Fn(SurfaceIndex, egui::Pos2) -> bool,
 ) -> Vec<TabBar> {
     state
         .iter_leaves()
@@ -709,11 +754,13 @@ pub(super) fn plan_bars(
         .filter(|(_, leaf)| leaf.rect.is_positive())
         .map(|(path, leaf)| {
             let row = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), TAB_BAR_H));
-            let step = wheel
-                .filter(|(p, _)| row.contains(*p))
-                .map_or(0, |(_, s)| s);
+            let wheel = wheel.filter(|w| row.contains(w.at) && on_top(path.surface, w.at));
             let bar = plan_bar(ui, path, leaf.rect, (&leaf.tabs, leaf.active.0), 0);
-            if step != 0 && bar.arrows.is_some() {
+            let step = match wheel {
+                Some(w) if bar.arrows.is_some() => wheel_step(ui, path, w),
+                _ => 0,
+            };
+            if step != 0 {
                 plan_bar(ui, path, leaf.rect, (&leaf.tabs, leaf.active.0), step)
             } else {
                 bar

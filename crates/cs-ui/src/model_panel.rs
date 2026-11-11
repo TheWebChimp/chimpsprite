@@ -1466,8 +1466,8 @@ mod tests {
         let mut all: Vec<Rect> = probe
             .widgets
             .iter()
-            .filter(|(n, _)| n == name)
-            .map(|(_, r)| *r)
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, r, _)| *r)
             .collect();
         assert!(!all.is_empty(), "no {name:?}");
         all.sort_by(|a, b| {
@@ -1482,8 +1482,8 @@ mod tests {
     /// lado con los suyos (ojo, candado) adentro, y el select de la textura y los presets de la
     /// cámara comparten la columna del borde con el que sigue.
     fn without_glued(mut probe: Probe) -> Probe {
-        probe.widgets.retain(|(n, _)| n != "Cube");
-        for (n, r) in &mut probe.widgets {
+        probe.widgets.retain(|(n, _, _)| n != "Cube");
+        for (n, r, _) in &mut probe.widgets {
             if ["Ship Texture", "Iso", "Top", "Side"].contains(&n.as_str()) {
                 r.max.x -= 1.0;
             }

@@ -377,6 +377,20 @@ impl ChimpApp {
         action
     }
 
+    /// Para los tests: el panel Lospec abierto con `page` ya llegada (como al abrirlo, las más
+    /// nuevas), sin red: lo que se dibuja no depende de cuándo responde Lospec.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn open_lospec_offline(&mut self, page: LospecPage) {
+        let mut window = PresetsWindow {
+            tab: PresetsTab::Lospec,
+            ..Default::default()
+        };
+        window.lospec.sort = LospecSort::Newest;
+        let start = window.lospec.start_search();
+        window.lospec.finish_listing(start.generation, Ok(page));
+        self.lospec_dock = Some(window);
+    }
+
     /// Cerrado el panel Lospec, se sueltan sus imágenes y peticiones.
     pub(crate) fn close_lospec_panel(&mut self) {
         self.lospec_dock = None;
@@ -1408,10 +1422,14 @@ fn lospec_row(
         #[cfg(target_arch = "wasm32")]
         let pager_w = 0.0;
         swatches(ui, &p.palette, ui.available_width() - pager_w);
+        // Solo con paginador: vacío, su `Ui` igual iría después del aire de la fila y, con la
+        // tira justo del ancho, ensancharía la lista ese aire (lo de abajo se saldría).
         #[cfg(not(target_arch = "wasm32"))]
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            lospec_examples::pager(ui, p, examples);
-        });
+        if pager_w > 0.0 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                lospec_examples::pager(ui, p, examples);
+            });
+        }
     });
     #[cfg(not(target_arch = "wasm32"))]
     lospec_examples::image(ui, p, examples, now);

@@ -54,14 +54,18 @@ están deshabilitados, los textos y las imágenes. Cada panel lo corre a varios 
 `MIN_WIDTH`, `REFERENCE_WIDTH` y 600, con `assert_whole_px`, `assert_within(width)` y
 `assert_no_overlap`. `forms::testing::frame_at(ctx, width, |ui| ..)` es un solo frame en un
 contexto que ya existe (con las fuentes y el estilo que tenga, p. ej. los de la app con
-`pixel.update`): así un barrido reusa el contexto de un ancho al siguiente. `Probe::roles` dice qué
-es cada control (botón, campo, etiqueta…).
+`pixel.update`): así un barrido reusa el contexto de un ancho al siguiente. Cada entrada de
+`Probe::widgets` lleva su nombre, su rect y qué es (botón, campo, etiqueta…).
 
 `width_sweep_tests` barre cada panel acoplado (como lo hospeda el workspace, con Pixel UI y la
-escala de la app) de su mínimo a 600 de a un punto (unos 40 s en debug). Lo que va encimado o a
-medio punto a propósito está ahí con su porqué (controles pegados que comparten su borde, filas con
-sus botones adentro, el cuadro del texto de un campo donde caen sus mayúsculas); lo que un panel
-todavía no cumple en un tramo va en su `KNOWN_GAPS` con el panel y el tramo.
+escala de la app) de su mínimo a 600 de a un punto (unos 35–40 s en debug), sin red (las listas de
+Lospec y dafont ya llegadas). Lo que va encimado o a medio punto a propósito está ahí, nombrado y
+con su porqué: los grupos de controles pegados que comparten su borde (`GLUED`, por panel y por
+nombre), uno dentro de otro solo por roles (un botón con los suyos adentro, un campo con el cuadro
+de su texto; nunca el mismo rect), el botón Swap colors de la toolbar y la y del cuadro del texto de
+un campo. Lo que un panel todavía no cumple en un tramo va en su `KNOWN_GAPS` con el panel, el tramo
+y la clase de falla que calla (medio punto, fuera o encimado); si deja de pasar en todo su tramo, el
+test falla para que se borre.
 
 ## Rarezas de taffy 0.9
 

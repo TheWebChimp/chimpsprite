@@ -286,19 +286,29 @@ egui_taffy y solo `workspace` conoce egui_dock.
        franjas de agarre de la superficie principal no reciben clics, arrastres ni clics de
        accesibilidad; las ventanas flotantes (que egui_dock arma con su propia `egui::Window`)
        llevan encima "escudos" en su capa (enteras; con Color o el Preview, que un diálogo no
-       apaga, solo su marco, barras, franjas y divisores); lo que el `DockArea` cambiaría
-       (fracciones, pestaña al frente, foco) se repone y `on_close` no cierra. La tira, More
+       apaga, solo su marco, barras, franjas y divisores, y su fondo no la mueve: el arrastre del
+       área de egui se suelta antes del `DockArea`); lo que el `DockArea` cambiaría (fracciones,
+       pestaña al frente, foco, también sin foco) se repone y `on_close` no cierra. La tira, More
        Panels y el « ya iban apagados. El Preview sigue moviéndose de su título, como su ventana de
        antes.
      - Pestañas que no caben (con Pixel UI): las acomoda `kit::tabs::layout` (se achican parejo y,
        si ni así, las flechas del kit a la izquierda del «, con un punto de aire); egui_dock las
        pone igual (`minimum_width` y `LeafNode::scroll`; la última lleva de más lo que falte para
        poder correrlas, bajo las flechas). Ni la última ni su × quedan bajo el «; la que pasa al
-       frente se trae a la vista; la rueda las recorre de una en una. Sin Pixel UI, lo de egui_dock.
+       frente se trae a la vista; la rueda las recorre de una en una (un renglón de la rueda por
+       pestaña, sumando lo de un trackpad; con Ctrl/Cmd no, es zoom), solo si la barra es lo de
+       más arriba bajo el puntero y sin diálogo modal (lo de encima se corre como siempre). Lo
+       vacío al final de la barra de una ventana sigue moviéndola, y lo que se suelta ahí va al
+       final. Sin Pixel UI, lo de egui_dock.
      - Barrido de anchos (`width_sweep_tests`): cada panel acoplado de su mínimo a 600 de a un punto
        (5249 anchos, ~38 s en debug). Arreglado: la fila Component/Add/Unlink/Build de FontForge
        (los botones caían a medio punto). Tramos conocidos: el timeline de 64 a 126 (su fila de
-       botones no se parte) y Lospec de 568 a 600 (no migrado a `forms`: filas a medio punto).
+       botones no se parte; solo "fuera") y Lospec de 364 a 600 (no migrado a `forms`: las filas
+       de sus resultados a medio punto; solo "medio punto"). Cada tramo dice la falla que calla y
+       el test falla si ya no pasa. Las holguras van nombradas (grupos de controles pegados por
+       panel, uno dentro de otro por roles), sin red (Lospec y dafont con su lista ya llegada).
+       Arreglado al barrer Lospec con resultados: con la tira de colores justo del ancho, el lugar
+       vacío del paginador ensanchaba la lista (Save se salía 1–3 puntos).
      - **Costo de arrastrar un divisor** (`frame_time_while_dragging_a_divider`, a mano): `show`
        por frame, 60 frames moviendo el divisor entre el lienzo y una columna, con Essentials más
        Library (pestaña con Color), Groom (debajo) y Lumen (otra columna). Release, AMD Ryzen 7

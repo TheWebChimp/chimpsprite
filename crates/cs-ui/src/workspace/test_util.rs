@@ -36,6 +36,17 @@ pub(super) fn frame_in(
     events: Vec<egui::Event>,
     size: egui::Vec2,
 ) -> egui::FullOutput {
+    frame_with(ctx, app, events, size, |_| {})
+}
+
+/// Como `frame_in`, y después del workspace `after` (lo que la app dibuja encima: un diálogo).
+pub(super) fn frame_with(
+    ctx: &egui::Context,
+    app: &mut ChimpApp,
+    events: Vec<egui::Event>,
+    size: egui::Vec2,
+    mut after: impl FnMut(&egui::Context),
+) -> egui::FullOutput {
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
         events,
@@ -61,6 +72,7 @@ pub(super) fn frame_in(
                 crate::dock::StripRequest::Float(id, at) => app.workspace.float(id, at),
             }
         }
+        after(ui.ctx());
     });
     output.textures_delta.clear();
     output

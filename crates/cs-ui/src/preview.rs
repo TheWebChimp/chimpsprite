@@ -156,6 +156,13 @@ impl Preview {
         chrome.closed
     }
 
+    /// Sin Pixel UI, solo en su ventana: lo que hay de arriba de la ventana al final de su barra de
+    /// título (su borde y la barra, ver [`Preview::plain_window`]). De ahí se mueve.
+    pub(crate) fn plain_title_bottom(ui: &Ui) -> f32 {
+        let frame = egui::Frame::window(ui.style());
+        frame.stroke.width + frame.inner_margin.sum().y + title_height(ui, TITLE)
+    }
+
     /// Lo que mide su ventana sin Pixel UI (solo en ella): la `egui::Window` de antes, con su
     /// barra de título, "Play" y la vista con su agarradera; de su ancho de fábrica o, con una
     /// vista más ancha, de lo que pide la vista.

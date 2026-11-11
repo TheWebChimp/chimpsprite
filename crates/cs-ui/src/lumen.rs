@@ -1590,8 +1590,8 @@ mod tests {
                 let normal = probe
                     .widgets
                     .iter()
-                    .filter(|(n, _)| n == "Generate")
-                    .map(|(_, r)| *r)
+                    .filter(|(n, _, _)| n == "Generate")
+                    .map(|(_, r, _)| *r)
                     .min_by(|a, b| {
                         (a.top(), a.left())
                             .partial_cmp(&(b.top(), b.left()))
@@ -1642,8 +1642,8 @@ mod tests {
             let mut rects: Vec<(f32, f32)> = probe
                 .widgets
                 .iter()
-                .filter(|(n, _)| n == name)
-                .map(|(_, r)| (r.left(), r.width()))
+                .filter(|(n, _, _)| n == name)
+                .map(|(_, r, _)| (r.left(), r.width()))
                 .collect();
             rects.sort_by(|a, b| a.partial_cmp(b).unwrap());
             rects
