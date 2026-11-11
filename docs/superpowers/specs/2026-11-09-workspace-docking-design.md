@@ -204,6 +204,8 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - [ ] Arrastrar un ícono de la tira hacia otro panel: se acopla como pestaña.
   - [ ] Arrastrarlo al borde de un panel: se divide (arriba/abajo/izquierda/derecha).
   - [ ] Arrastrarlo sobre el lienzo: queda como ventana flotante.
+  - [ ] Arrastrar una pestaña acoplada (o la franja de un grupo solo) al borde de otro grupo, a su
+        centro y al lienzo: lo parte, se junta como pestaña o queda flotando donde se soltó.
   - [ ] Mover y redimensionar la ventana flotante: no se sale de la pantalla y, al soltar su borde,
         vuelve a lo mínimo de lo que lleva si quedó más chica (mientras se arrastra el borde sí
         puede quedar más chica: egui_dock no deja ponerle un mínimo a sus ventanas).

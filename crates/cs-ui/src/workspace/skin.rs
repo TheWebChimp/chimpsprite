@@ -279,11 +279,16 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32) {
     }
 }
 
-/// Multiplica la opacidad de los rects llenos de `shape` (las piezas son rects con textura).
+/// Multiplica la opacidad de los rects llenos y de las mallas de `shape` (las piezas del skin son
+/// mallas con textura: su tinte va en los vértices).
 fn fade(shape: &mut Shape, alpha: f32) {
     match shape {
         Shape::Vec(v) => v.iter_mut().for_each(|s| fade(s, alpha)),
         Shape::Rect(r) => r.fill = r.fill.gamma_multiply(alpha),
+        Shape::Mesh(mesh) => Arc::make_mut(mesh)
+            .vertices
+            .iter_mut()
+            .for_each(|v| v.color = v.color.gamma_multiply(alpha)),
         _ => {}
     }
 }
@@ -645,6 +650,20 @@ mod tests {
         let mut state = split_state();
         snap(&ctx, &mut state);
         assert_eq!(fraction(&state), 0.37, "an ongoing drag is left alone");
+    }
+
+    #[test]
+    fn fading_reaches_the_meshes_of_skin_pieces() {
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(10.0, 10.0));
+        let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let piece = Shape::image(egui::TextureId::default(), rect, uv, Color32::WHITE);
+        let mut shape = Shape::Vec(vec![piece]);
+        fade(&mut shape, 0.5);
+        let Shape::Vec(v) = &shape else { panic!() };
+        let Shape::Mesh(mesh) = &v[0] else {
+            panic!("a piece is a mesh")
+        };
+        assert!(mesh.vertices.iter().all(|v| v.color.a() < 255), "{mesh:?}");
     }
 
     #[test]
