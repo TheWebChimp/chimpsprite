@@ -60,6 +60,8 @@ use cs_io::files;
 mod groom;
 mod guides;
 mod home;
+#[cfg(test)]
+mod hosted_panel;
 mod instance_ops;
 mod keyboard_shortcuts;
 mod keymap;
