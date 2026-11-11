@@ -92,6 +92,9 @@ pub(crate) struct Workspace {
     /// ahí sigue (también al cambiar el tamaño de la app) hasta que se lo mueve. Anclado, no se
     /// guarda: al leer el acomodo vuelve a su esquina.
     preview_anchored: bool,
+    /// Un panel que Window pidió mostrar (el timeline o el Preview apagados): `show` lo enfoca y
+    /// sube su ventana ([`Workspace::bring_forward`]) en cuanto vuelve al árbol, en el mismo frame.
+    pub(crate) pending_focus: Option<PanelId>,
 }
 
 impl Default for Workspace {

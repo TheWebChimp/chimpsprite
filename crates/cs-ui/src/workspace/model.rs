@@ -18,8 +18,13 @@ pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
 /// [`Workspace::sync_panel`]): ahí vuelve.
 #[derive(Clone, Debug)]
 pub(super) enum Spot {
-    /// En el grupo de `with`, como pestaña en el lugar `index` (sin cambiar la activa).
-    Tab { with: PanelId, index: usize },
+    /// En el grupo de `with`, como pestaña en el lugar `index`; al frente si lo estaba (`active`),
+    /// si no sin cambiar la activa.
+    Tab {
+        with: PanelId,
+        index: usize,
+        active: bool,
+    },
     /// Solo en su grupo, junto al nodo que tenía exactamente estos paneles (en la superficie
     /// principal o en una ventana): de ese lado y con la fracción de su split.
     Beside {
@@ -148,6 +153,7 @@ impl Workspace {
             sides: Default::default(),
             spots: Vec::new(),
             preview_anchored: false,
+            pending_focus: None,
         }
     }
 
@@ -491,7 +497,12 @@ impl Workspace {
                 .iter()
                 .position(|&t| t == id)
                 .unwrap_or(leaf.tabs.len());
-            return Some(Spot::Tab { with, index });
+            let active = leaf.active.0 == index;
+            return Some(Spot::Tab {
+                with,
+                index,
+                active,
+            });
         }
         let tree = &self.state[path.surface];
         let Some(parent) = path.node.parent() else {
@@ -536,13 +547,20 @@ impl Workspace {
             .position(|(p, _)| *p == id)
             .map(|i| self.spots.remove(i).1);
         let placed = match spot {
-            // En su lugar entre las pestañas, sin cambiar la que se ve.
-            Some(Spot::Tab { with, index }) => match self.state.find_tab(&with) {
+            // En su lugar entre las pestañas: al frente si lo estaba; si no, sin cambiar la que se
+            // ve.
+            Some(Spot::Tab {
+                with,
+                index,
+                active,
+            }) => match self.state.find_tab(&with) {
                 Some(path) => match self.state.leaf_mut(path.node_path()) {
                     Ok(leaf) => {
                         let index = index.min(leaf.tabs.len());
                         leaf.tabs.insert(index, id);
-                        if leaf.active.0 >= index {
+                        if active {
+                            leaf.active = TabIndex(index);
+                        } else if leaf.active.0 >= index {
                             leaf.active = TabIndex(leaf.active.0 + 1);
                         }
                         true
@@ -597,7 +615,7 @@ impl Workspace {
     }
 
     /// El panel activo del grupo con el foco, si hay uno.
-    fn focused_panel(&self) -> Option<PanelId> {
+    pub(crate) fn focused_panel(&self) -> Option<PanelId> {
         let path = self.state.focused_leaf()?;
         let leaf = self.state.leaf(path).ok()?;
         leaf.tabs.get(leaf.active.0).copied()
@@ -1947,6 +1965,29 @@ mod tests {
         w.sync_panel(PanelId::Preview, true);
         assert!(w.timeline_below());
         assert_eq!(w.leaf_of(PanelId::Preview), w.leaf_of(PanelId::Color));
+    }
+
+    #[test]
+    fn a_hidden_tab_comes_back_in_front_only_if_it_was() {
+        let active = |w: &Workspace| {
+            let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+            w.state_leaf_tabs(s, n).unwrap().1
+        };
+        // El timeline al frente del grupo de Color: vuelve al frente.
+        let mut w = Workspace::essentials();
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Timeline, DockTarget::Leaf(s, n));
+        assert_eq!(active(&w), PanelId::Timeline);
+        w.sync_panel(PanelId::Timeline, false);
+        assert_eq!(active(&w), PanelId::Color);
+        w.sync_panel(PanelId::Timeline, true);
+        assert_eq!(w.leaf_of(PanelId::Timeline), w.leaf_of(PanelId::Color));
+        assert_eq!(active(&w), PanelId::Timeline);
+        // De fondo: vuelve de fondo.
+        w.focus(PanelId::Color);
+        w.sync_panel(PanelId::Timeline, false);
+        w.sync_panel(PanelId::Timeline, true);
+        assert_eq!(active(&w), PanelId::Color);
     }
 
     #[test]

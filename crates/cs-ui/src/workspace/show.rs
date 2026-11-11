@@ -497,6 +497,10 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         PanelId::Preview,
         app.view.preview && PanelId::Preview.available(app),
     );
+    // Lo que Window prendió, ya en su lugar: al frente, con el foco y su ventana encima.
+    if let Some(id) = workspace.pending_focus.take() {
+        workspace.bring_forward(&ctx, id);
+    }
     // Apagado de View → Preview o de su botón de la tira (que solo cambian `view.preview`), no
     // sigue reproduciendo; cerrarlo lo para `PanelAction::ClosePreview`.
     if !app.view.preview {

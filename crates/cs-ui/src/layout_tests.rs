@@ -12177,6 +12177,85 @@ fn a_panel_from_the_window_menu_is_focused_where_it_is_or_shown_in_its_place() {
 }
 
 #[test]
+fn a_hidden_panel_or_a_floating_model_from_the_window_menu_also_comes_forward() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let click = |h: &mut LayoutHarness, id: PanelId| {
+        open_menu(h, "Window");
+        h.click(check(h, id.label()).0.center(), PointerButton::Primary);
+        for _ in 0..3 {
+            h.frame();
+        }
+    };
+    let active = |h: &LayoutHarness, id: PanelId| {
+        let (surface, node) = h.app.workspace.leaf_of(id).unwrap();
+        let leaf = h.app.workspace.state_leaf_tabs(surface, node).unwrap();
+        leaf.1 == id
+    };
+    let top = |h: &LayoutHarness, id: PanelId| {
+        let (surface, _) = h.app.workspace.leaf_of(id).unwrap();
+        let layer = h.app.workspace.window_layer(surface);
+        h.ctx
+            .memory(|m| m.areas().top_layer_id(egui::Order::Middle))
+            .is_some_and(|l| l == layer)
+    };
+    let frames = |h: &mut LayoutHarness| {
+        for _ in 0..3 {
+            h.frame();
+        }
+    };
+    // El timeline, pestaña de fondo en el grupo de Color, apagado: vuelve ahí, al frente y con
+    // el foco.
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Timeline, DockTarget::Leaf(s, n));
+    h.app.workspace.focus(PanelId::Color);
+    frames(&mut h);
+    assert!(!active(&h, PanelId::Timeline));
+    h.app.view.timeline = false;
+    frames(&mut h);
+    assert!(!h.app.workspace.docked(PanelId::Timeline));
+    click(&mut h, PanelId::Timeline);
+    let w = &h.app.workspace;
+    assert!(h.app.view.timeline);
+    assert_eq!(w.leaf_of(PanelId::Timeline), w.leaf_of(PanelId::Color));
+    assert!(active(&h, PanelId::Timeline));
+    assert_eq!(w.focused_panel(), Some(PanelId::Timeline));
+    // El Preview flotando fuera de su esquina, apagado, con otras ventanas encima: vuelve ahí y
+    // encima de ellas.
+    h.app.view.preview = true;
+    frames(&mut h);
+    h.app.workspace.float(PanelId::Preview, pos2(400.0, 200.0));
+    frames(&mut h);
+    h.app.view.preview = false;
+    frames(&mut h);
+    h.app.workspace.float(PanelId::Lumen, pos2(380.0, 180.0));
+    h.app.workspace.float(PanelId::Groom, pos2(420.0, 220.0));
+    frames(&mut h);
+    assert!(top(&h, PanelId::Groom));
+    click(&mut h, PanelId::Preview);
+    assert!(h.app.view.preview && h.app.workspace.floating(PanelId::Preview));
+    assert!(top(&h, PanelId::Preview));
+    assert_eq!(h.app.workspace.focused_panel(), Some(PanelId::Preview));
+    // En la pestaña de un modelo, el 3D flotando (lo muestra el panel fijo): su ventana, encima.
+    let mut h = with_model_tab();
+    h.app.workspace.float(PanelId::Model, pos2(400.0, 200.0));
+    h.app.workspace.float(PanelId::Lumen, pos2(420.0, 220.0));
+    frames(&mut h);
+    assert!(top(&h, PanelId::Lumen));
+    click(&mut h, PanelId::Model);
+    assert!(h.app.workspace.floating(PanelId::Model));
+    assert!(top(&h, PanelId::Model));
+    // Ninguno repetido (el timeline y el Preview, ocultos en la pestaña de un modelo).
+    for &id in PanelId::ALL {
+        assert!(h.app.workspace.places(id) <= 1, "{id:?}");
+    }
+    assert_eq!(h.app.workspace.places(PanelId::Model), 1);
+}
+
+#[test]
 fn the_workspace_submenu_switches_to_a_preset_and_back() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);

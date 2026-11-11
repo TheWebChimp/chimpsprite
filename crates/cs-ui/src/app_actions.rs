@@ -439,14 +439,23 @@ impl ChimpApp {
 
     /// Un panel de Window: abierto, se enfoca donde está (su pestaña al frente y, si flota, su
     /// ventana encima de las demás); el timeline o el Preview apagados se prenden (vuelven a su
-    /// lugar); uno de una tira se acopla como con "Dock" del menú de su ícono (ver
-    /// `Workspace::dock_from_strip`: con el foco, la toolbar a un lado del lienzo).
+    /// lugar y ahí se enfocan igual); uno de una tira se acopla como con "Dock" del menú de su
+    /// ícono (ver `Workspace::dock_from_strip`: con el foco, la toolbar a un lado del lienzo).
     pub(crate) fn window_panel(&mut self, ctx: &egui::Context, id: PanelId) {
+        let w = &self.workspace;
+        let placed = w.docked(id) || w.floating(id);
         match id {
-            PanelId::Timeline if !self.view.timeline => self.view.timeline = true,
-            PanelId::Preview if !self.view.preview => self.view.preview = true,
-            // Ya lo muestra el panel fijo de la pestaña del modelo.
-            PanelId::Model if self.panel_open(id) && !self.workspace.docked(id) => {}
+            // Vuelven a su lugar en `workspace::show` (al sincronizarse), que ahí los enfoca.
+            PanelId::Timeline if !self.view.timeline => {
+                self.view.timeline = true;
+                self.workspace.pending_focus = Some(id);
+            }
+            PanelId::Preview if !self.view.preview => {
+                self.view.preview = true;
+                self.workspace.pending_focus = Some(id);
+            }
+            // Ya lo muestra el panel fijo de la pestaña del modelo (y no está en el árbol).
+            PanelId::Model if self.panel_open(id) && !placed => {}
             _ => {
                 if self.workspace.strip_of(id).is_some() {
                     self.workspace.dock_from_strip(id);
