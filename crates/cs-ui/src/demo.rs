@@ -384,6 +384,84 @@ fn animate_house(e: &mut Editor, time: u32) {
     e.set_anim_time(time);
 }
 
+/// Un arrastre con el botón principal metido en la entrada de egui (`CHIMPSPRITE_DEMO_DRAG`):
+/// unos frames de espera, mover a `from`, apretar, ir a `to` en varias movidas y, si `drop`,
+/// soltar. Después ya no toca nada.
+struct DemoDrag {
+    from: eframe::egui::Pos2,
+    to: eframe::egui::Pos2,
+    drop: bool,
+    /// Solo el puntero encima de `from`, sin apretar (`,hover`).
+    hover: bool,
+    /// Un clic derecho en `from`, para abrir su menú (`,menu`).
+    menu: bool,
+    frame: u32,
+}
+
+impl DemoDrag {
+    /// Los frames de espera (la escala de Pixel UI y el acomodo se asientan) y las movidas.
+    const WAIT: u32 = 20;
+    const STEPS: u32 = 8;
+
+    fn parse(text: &str) -> Option<DemoDrag> {
+        let mut parts = text.split(',');
+        let mut num = || parts.next()?.trim().parse::<f32>().ok();
+        let (x0, y0, x1, y1) = (num()?, num()?, num()?, num()?);
+        Some(DemoDrag {
+            from: eframe::egui::pos2(x0, y0),
+            to: eframe::egui::pos2(x1, y1),
+            drop: text.ends_with(",drop"),
+            hover: text.ends_with(",hover"),
+            menu: text.ends_with(",menu"),
+            frame: 0,
+        })
+    }
+}
+
+impl eframe::egui::Plugin for DemoDrag {
+    fn debug_name(&self) -> &'static str {
+        "demo_drag"
+    }
+
+    fn input_hook(&mut self, ctx: &eframe::egui::Context, input: &mut eframe::egui::RawInput) {
+        use eframe::egui::{Event, PointerButton};
+        let press = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let k = self.frame.saturating_sub(Self::WAIT);
+        let end = Self::STEPS + 3;
+        if self.frame >= Self::WAIT && k <= end {
+            let event = match k {
+                _ if self.hover => Event::PointerMoved(self.from),
+                // Un clic derecho en `from` (su menú contextual).
+                1 | 2 if self.menu => Event::PointerButton {
+                    pos: self.from,
+                    button: PointerButton::Secondary,
+                    pressed: k == 1,
+                    modifiers: Default::default(),
+                },
+                _ if self.menu => Event::PointerMoved(self.from),
+                0 => Event::PointerMoved(self.from),
+                1 => press(self.from, true),
+                k if k < end => {
+                    let t = (k - 1) as f32 / Self::STEPS as f32;
+                    Event::PointerMoved(self.from + (self.to - self.from) * t.min(1.0))
+                }
+                _ if self.drop => press(self.to, false),
+                _ => Event::PointerMoved(self.to),
+            };
+            input.events.push(event);
+        }
+        if k <= end {
+            self.frame += 1;
+            ctx.request_repaint();
+        }
+    }
+}
+
 /// Lo que piden las variables de desarrollo (`CHIMPSPRITE_DEMO_*`) al abrir la app: diálogos,
 /// herramientas, rangos y paneles listos para las capturas.
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
@@ -393,6 +471,25 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     if let Some(id) = dev_var("CHIMPSPRITE_DEMO_MASCOT") {
         let now = ctx.input(|i| i.time);
         app.mascot.force(id, now, &app.keymap);
+    }
+    // Desarrollo: un acomodo del workspace para capturas (`library-tab`: Library junto a Color;
+    // `split`: Groom debajo de Color; `float`: Lumen flotando).
+    if let Some(workspace) =
+        dev_var("CHIMPSPRITE_DEMO_WORKSPACE").and_then(workspace::Workspace::demo)
+    {
+        app.workspace = workspace;
+        // El de demostración no pisa el guardado del usuario al cerrar.
+        app.save_workspace = false;
+    }
+    // Desarrollo: un arrastre con el puntero para capturas (`x0,y0,x1,y1` en puntos, y `,drop`
+    // para soltarlo, `,hover` para solo pasar el puntero por `x0,y0` o `,menu` para un clic
+    // derecho ahí): p. ej. un ícono de la tira levantado sobre la columna.
+    if let Some(drag) = dev_var("CHIMPSPRITE_DEMO_DRAG").and_then(DemoDrag::parse) {
+        // Lo que acomoda un arrastre soltado tampoco pisa el guardado del usuario al cerrar.
+        if drag.drop {
+            app.save_workspace = false;
+        }
+        ctx.add_plugin(drag);
     }
     // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_CATALOG").is_some() {

@@ -76,6 +76,17 @@ fn borders(piece: &Piece) -> [f32; 4] {
 /// Formas que dibujan `piece` estirada sobre `rect` (en 9-slice si tiene centro), alineadas a
 /// píxeles de pantalla.
 pub(crate) fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> Vec<Shape> {
+    nine_slice_shapes(piece, rect, pixels_per_point, true)
+}
+
+/// Como [`piece_shapes`], sin el centro del 9-slice (solo el marco: lo de abajo se ve). Una pieza
+/// sin 9-slice va entera.
+pub(crate) fn piece_ring_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> Vec<Shape> {
+    nine_slice_shapes(piece, rect, pixels_per_point, false)
+}
+
+/// Las mallas de `piece` estirada a `rect` (con su 9-slice, con o sin el centro).
+fn nine_slice_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32, center: bool) -> Vec<Shape> {
     let ppp = pixels_per_point;
     let min = (rect.min.to_vec2() * ppp).round();
     let max = (rect.max.to_vec2() * ppp).round();
@@ -87,7 +98,13 @@ pub(crate) fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> 
     );
     let [w, h] = piece.size;
     let parts: Vec<(IRect, IRect)> = match piece.center {
-        Some(center) => nine_slice(dest, piece.size, center, ppp.round().max(1.0) as u32).to_vec(),
+        // El centro es la parte 4 (de izquierda a derecha y de arriba abajo).
+        Some(nine) => nine_slice(dest, piece.size, nine, ppp.round().max(1.0) as u32)
+            .into_iter()
+            .enumerate()
+            .filter(|&(i, _)| center || i != 4)
+            .map(|(_, part)| part)
+            .collect(),
         None => vec![(IRect::new(0, 0, w as i32, h as i32), dest)],
     };
     let (w, h) = (w as f32, h as f32);
@@ -994,6 +1011,12 @@ pub fn scroll<R>(
         });
         let ppp = ui.ctx().pixels_per_point();
         let inner = out.inner_rect;
+        // El rect del área con sus barras (en este `scope` no hay nada más). La de abajo va solo
+        // donde egui le dejó lugar: un `ScrollArea::vertical` con contenido más ancho que el área
+        // no se desplaza a lo ancho y no la lleva. La de la derecha se pinta desde el primer
+        // frame (egui le deja lugar uno después).
+        let outer = ui.min_rect();
+        let bottom_room = outer.height() - inner.height() >= SCROLL_BAR - 0.5;
         let mut shapes = Vec::new();
         for vertical in [true, false] {
             let (content, view) = if vertical {
@@ -1001,7 +1024,7 @@ pub fn scroll<R>(
             } else {
                 (out.content_size.x, inner.width())
             };
-            if content <= view + 0.5 {
+            if content <= view + 0.5 || (!vertical && !bottom_room) {
                 continue;
             }
             let offset = if vertical {

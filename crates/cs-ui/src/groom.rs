@@ -33,7 +33,7 @@ pub const REFERENCE_WIDTH: f32 = 434.0;
 /// Lo más angosto en que se ve bien (medido): los tres botones del pie en una fila (New Sprite,
 /// Add as Layer y Add as Artboard miden 216 con su aire). Las columnas, una debajo de otra.
 pub const MIN_WIDTH: f32 = 216.0;
-const MIN_HEIGHT: f32 = 391.0;
+pub(crate) const MIN_HEIGHT: f32 = 391.0;
 /// La ilustración del panel sin imagen (los changos), del usuario, a 1x.
 const EMPTY_ART: &[u8] = include_bytes!("../../../assets/ui/groom_empty.aseprite");
 /// De la ilustración del panel sin imagen a la frase de abajo.

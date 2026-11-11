@@ -27,6 +27,10 @@ fontdue = "0.9"
 # Formas responsivas (flexbox / grid de taffy) para los paneles: solo las usa `forms`. Versión
 # fija: es la que pide egui 0.36.
 egui_taffy = "=0.14.0"
+# El acomodo de los paneles (acoplar, pestañas, flotantes): solo lo usa `workspace`. Versión fija:
+# la piel depende de detalles internos suyos (tres ids, cómo pinta y más: ver la lista de
+# `workspace/skin.rs`).
+egui_dock = { version = "=0.21.1", features = ["serde"] }
 
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -60,3 +64,5 @@ web-sys = { version = "0.3", features = [
 [dev-dependencies]
 # Para decodificar los GIF de GIF settings en los tests (la misma versión que usa cs-io).
 gif = "0.14"
+# Para leer y escribir el acomodo guardado en los tests como lo guarda eframe (la misma versión).
+ron = "0.12"

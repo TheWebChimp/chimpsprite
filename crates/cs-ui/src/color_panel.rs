@@ -958,6 +958,20 @@ pub fn panel_min_size(ui: &Ui, skin: &Skin) -> f32 {
     min_width(ui, skin) + frame + line
 }
 
+/// El alto mínimo del panel de color con Pixel UI (en un grupo partido del workspace): el aire
+/// de arriba y la fila de botones de `panels::palette`, la caja de la paleta en su mínimo (2
+/// filas), la división y el editor entero, con los márgenes del panel.
+pub fn panel_min_height(ui: &Ui, skin: &Skin) -> f32 {
+    let margin = egui::Frame::side_top_panel(ui.style()).inner_margin;
+    let header = 6.0 + crate::kit::button::HEIGHT + BUTTONS_GAP;
+    f32::from(margin.top)
+        + header
+        + palette_min_height()
+        + SPLITTER_HEIGHT
+        + editor_height(ui, skin)
+        + f32::from(margin.bottom)
+}
+
 /// Dónde va cada parte del encabezado del editor.
 #[derive(Clone, Copy, Debug)]
 struct Header {

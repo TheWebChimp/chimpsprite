@@ -510,40 +510,54 @@ pub fn arrows_shapes(
     prev: (bool, bool),
     next: (bool, bool),
 ) -> Vec<Shape> {
-    let ppp = ui.ctx().pixels_per_point();
-    let colors = *skin.colors();
     let mut shapes = Vec::new();
-    for (name, at, (hovered, enabled), back) in [
-        (ARROW_PREV, rect.left(), prev, true),
-        (ARROW_NEXT, rect.left() + ARROW_SIZE - 1.0, next, false),
+    for (at, (hovered, enabled), back) in [
+        (rect.left(), prev, true),
+        (rect.left() + ARROW_SIZE - 1.0, next, false),
     ] {
-        let state = if !enabled {
-            WidgetState::Disabled
-        } else if hovered {
-            WidgetState::Hover
-        } else {
-            WidgetState::Normal
-        };
         let r = Rect::from_min_size(pos2(at, rect.top()), Vec2::splat(ARROW_SIZE));
-        match skin.piece(name, state) {
-            Some(piece) => shapes.extend(pixel_ui::piece_shapes(piece, r, ppp)),
-            None => {
-                shapes.push(Shape::rect_stroke(
-                    r.round_to_pixels(ppp),
-                    0.0,
-                    Stroke::new(1.0, colors.outline),
-                    StrokeKind::Inside,
-                ));
-                let ink = if enabled {
-                    colors.text
-                } else {
-                    colors.tab_text_dim
-                };
-                shapes.extend(arrow_glyph(r, back, ink, ppp));
-            }
-        }
+        shapes.extend(arrow_shapes(ui, skin, r, back, (hovered, enabled)));
     }
     shapes
+}
+
+/// Una flecha sola en `rect` (de [`ARROW_SIZE`]): la de atrás (`back`) o la de adelante, con su
+/// estado (`hovered`, `enabled`).
+pub fn arrow_shapes(
+    ui: &Ui,
+    skin: &Skin,
+    rect: Rect,
+    back: bool,
+    (hovered, enabled): (bool, bool),
+) -> Vec<Shape> {
+    let ppp = ui.ctx().pixels_per_point();
+    let colors = *skin.colors();
+    let state = if !enabled {
+        WidgetState::Disabled
+    } else if hovered {
+        WidgetState::Hover
+    } else {
+        WidgetState::Normal
+    };
+    let name = if back { ARROW_PREV } else { ARROW_NEXT };
+    match skin.piece(name, state) {
+        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
+        None => {
+            let mut shapes = vec![Shape::rect_stroke(
+                rect.round_to_pixels(ppp),
+                0.0,
+                Stroke::new(1.0, colors.outline),
+                StrokeKind::Inside,
+            )];
+            let ink = if enabled {
+                colors.text
+            } else {
+                colors.tab_text_dim
+            };
+            shapes.extend(arrow_glyph(rect, back, ink, ppp));
+            shapes
+        }
+    }
 }
 
 /// Respaldo de la flecha (sin las piezas): un triángulo de 3×5 al centro.

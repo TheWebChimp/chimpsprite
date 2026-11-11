@@ -134,9 +134,10 @@ egui_taffy y solo `workspace` conoce egui_dock.
   (Generate 50, Modify 45 y Export 41 en la columna de 140, como el mockup); con Modify abierto,
   su raya naranja baja medio punto (a escala 2, 1 pixel de pantalla) para quedar en pixel entero.
 
-  **Pendiente para antes de la fase C:** un test de barrido de anchos de `MIN_WIDTH` a 600 por
-  panel; una variante de `run_at` a escala 2; reservar el ancho de la barra de scroll en los
-  paneles acoplados; medir el costo de recalcular taffy al arrastrar los splits.
+  **Pendiente para la fase D:** un test de barrido de anchos de `MIN_WIDTH` a 600 por panel (ahora
+  que se dibujan a cualquier ancho, acoplados o flotando); una variante de `run_at` a escala 2;
+  medir el costo de recalcular taffy al arrastrar los splits. (El ancho de la barra de scroll de
+  los paneles acoplados ya se reserva en la fase C: va en su mínimo.)
 - **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia. **HECHA**:
   `crates/cs-ui/src/panel_registry.rs` tiene `PanelId` (13 paneles; 12 en web, sin Dafont),
   `PanelSpec { title, icon, plain, reference_width, min_width, closable, host }`, `Host::{Left,
@@ -180,7 +181,77 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - Ediciones de Artboards/Slices ahora se aplican después de dibujar timeline/color/preview (un
     frame de latencia, igual que Library/Font): aceptado.
 - **C. Docking del lado derecho:** la tira de íconos y sus flyouts + el panel de color pasan a
-  egui_dock (colapsado a íconos, flotantes, arrastrar).
+  egui_dock (colapsado a íconos, flotantes, arrastrar). **HECHA**: `PanelCtx { modal, bottom }` es
+  la entrada única de `draw_panel` (el `PanelSpec` ya trae `key`, `body`, `min_height` y
+  `available`; Lospec vive por "dibujado este frame"). `crates/cs-ui/src/workspace.rs` +
+  `workspace/skin.rs` son los únicos que tocan `egui_dock` (=0.21.1, vestido con el skin: un grupo
+  de un solo panel va sin barra de pestañas y con franja de agarre al pasar el mouse; pestañas del
+  kit; separadores, zonas de soltado y marcos de ventana del skin; todo ajustado a puntos
+  enteros). El panel derecho `"palette"` aloja el workspace y la tira de íconos es el grupo
+  colapsado: se arrastra un ícono para acoplarlo (pestaña o división) o flotarlo; clic derecho
+  Dock/Float; « Collapse to Icons (Color nunca va a la tira); `BrowseLospec` enfoca un Lospec
+  acoplado. El acomodo se guarda al cerrar (`chimpsprite.workspace`, con claves estables y carga
+  robusta, incluidos NaN/inf) y View → Reset Workspace lo regresa al de fábrica (aún no hay menú
+  Window). El ancho de la columna es una preferencia del usuario que solo cambia al arrastrar su
+  divisor; el ancho mostrado es `max(preferencia, mínimo de la columna)`, y el mínimo sale de los
+  paneles acoplados (el de Color solo si está acoplado). Una pestaña soltada fuera de la columna
+  y de las ventanas (en el lienzo) se pone a flotar ahí; las ventanas flotantes no quedan más
+  chicas que lo mínimo de lo que llevan; en la pestaña de un modelo, el panel 3D lo hospeda su
+  panel fijo y su pestaña del workspace solo dice "Shown in the 3D panel". Lo guardado lleva
+  `version` (1; sin el campo, 0) para que la fase D pueda migrar.
+
+  **Probar a mano** (los agentes solo inyectan eventos; esto necesita el mouse real):
+  - [ ] Arrastrar un ícono de la tira hacia otro panel: se acopla como pestaña.
+  - [ ] Arrastrarlo al borde de un panel: se divide (arriba/abajo/izquierda/derecha).
+  - [ ] Arrastrarlo sobre el lienzo: queda como ventana flotante.
+  - [ ] Arrastrar una pestaña acoplada (o la franja de un grupo solo) al borde de otro grupo, a su
+        centro y al lienzo: lo parte, se junta como pestaña o queda flotando donde se soltó.
+  - [ ] Mover y redimensionar la ventana flotante: no se sale de la pantalla y, al soltar su borde,
+        vuelve a lo mínimo de lo que lleva si quedó más chica (mientras se arrastra el borde sí
+        puede quedar más chica: egui_dock no deja ponerle un mínimo a sus ventanas).
+  - [ ] Cerrar una pestaña con su × (también la de una ventana flotante, que no tiene otro botón
+        para cerrarse): el panel vuelve a la tira.
+  - [ ] « Collapse to Icons en un grupo (y que Color no ofrezca colapsar).
+  - [ ] Franja de agarre de un grupo de un solo panel: aparece al pasar el mouse y arrastra el grupo.
+  - [ ] Clic derecho en un ícono: Dock y Float.
+  - [ ] View → Reset Workspace regresa al acomodo de fábrica.
+  - [ ] Cerrar y abrir la app: el acomodo se restaura (acoplados, flotantes y divisiones).
+  - [ ] Ancho de la columna: arrastrar su divisor lo cambia y se conserva; al desacoplar un panel
+        ancho regresa al ancho elegido.
+  - [ ] Buscar en Lospec con Lospec acoplado: la pestaña se enfoca.
+
+  **Para la fase D** (pendientes diferidos de las revisiones de la fase C):
+  - Toolbar, timeline y preview al árbol; el lienzo como nodo central.
+  - Presets con nombre (de fábrica y del usuario) y menú Window con la lista de paneles.
+  - Preview acoplado: sus controles (play/pausa, centrar) dentro del contenido.
+  - El modal no bloquea separadores, clics en pestañas ni la tira.
+  - El botón « no se alcanza con el teclado (y, sin barra de pestañas, tapa un poco del panel
+    mientras se muestra). Las barras de las ventanas flotantes también le dejan su lugar aunque
+    ahí no hay «.
+  - Las ventanas flotantes siempre muestran barra de pestañas (aun con un solo panel).
+  - `egui_dock` no tiene tamaños mínimos por panel: hoy se emulan con el mínimo de la columna, el
+    ajuste de divisiones y el de las ventanas (que solo rige al soltar su borde).
+  - El tamaño de las ventanas flotantes que el usuario arrastra no se ajusta a puntos enteros.
+  - **Una instancia por `PanelId` por frame.** En la fase C se resolvió solo para 3D: en la
+    pestaña de un modelo lo hospeda su panel fijo (`"model_panel"`) y su pestaña acoplada o
+    flotante dibuja una frase deshabilitada ("Shown in the 3D panel"). La fase D lo generaliza
+    (que el registro sepa qué anfitrión manda en cada frame y los demás muestren dónde está).
+  - `default_size: Vec2` en la ficha (Timeline usa el "ancho" como alto).
+  - Mover la sincronía de `palette_locked` a `draw_color` (hoy la hace `editor_panels` antes y
+    después del workspace).
+  - `ClosePreview` debe parar la reproducción (hoy solo limpia `view.preview`).
+  - La suposición "superficie principal = columna derecha" está regada en `docked`,
+    `refresh_tab_bars`, el botón «, `column_min_width`, `drop_target`, `from_saved` y
+    `host_width`: decidir con un spike entre un `DockState` para toda la ventana (con el lienzo
+    como hoja) y uno por orilla.
+  - Migrar lo guardado con `SavedWorkspace::version` (ya existe: sin el campo es 0, lo de antes
+    de este arreglo; la fase C escribe 1).
+  - Una tira de íconos por orilla.
+  - Partir `workspace.rs` (el modelo, el soltado, los ajustes de tamaño y `show`).
+  - Pestañas con desbordamiento: flechas del kit en vez del scroll de egui_dock.
+  - Menores: Esc no cancela un arrastre; `BrowseLospec` no sube una ventana flotante al frente;
+    el soltado sobre una ventana toma la primera, no la de arriba; la ventana flotante puede
+    tapar la barra de estado; reordenar/restaurar paneles faltantes en "tidy".
 - **D. El resto al árbol:** toolbar, timeline y preview; workspaces de fábrica y del usuario; menú
   Window. Al final, Essentials se ve igual que hoy.
 - **E. Tests de layout reescritos:** medir dentro de cada panel y en el preset Essentials, no en

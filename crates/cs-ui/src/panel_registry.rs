@@ -26,8 +26,8 @@ pub(crate) enum Host {
     Bottom,
     /// Una ventanita flotante (el preview).
     Window,
-    /// Flotando junto a su botón del dock, con este cuerpo.
-    Flyout(Body),
+    /// Flotando junto a su botón del dock (su cuerpo lo dice `PanelSpec::body`).
+    Flyout,
 }
 
 /// Los paneles de la app.
@@ -62,11 +62,9 @@ pub enum PanelId {
 
 /// La ficha de un panel.
 #[derive(Clone, Copy, Debug)]
-#[expect(
-    dead_code,
-    reason = "hasta la fase C (cuando el docking lea `min_width` y `closable`)"
-)]
 pub(crate) struct PanelSpec {
+    /// Su llave estable: es lo que se guarda en el acomodo (no cambia aunque cambie el título).
+    pub key: &'static str,
     /// El título: el rótulo de su botón y su identidad en la memoria de egui.
     pub title: &'static str,
     /// Su ícono: una pieza del skin. `icon.tools` e `icon.color` todavía no existen en el skin
@@ -81,15 +79,15 @@ pub(crate) struct PanelSpec {
     /// Si el usuario puede cerrarlo.
     pub closable: bool,
     pub host: Host,
+    /// Cómo va su contenido (vale para cualquier anfitrión, no solo el flotante).
+    pub body: Body,
+    /// Lo más bajo en que se ve bien (0.0: sin mínimo propio).
+    pub min_height: f32,
 }
 
 impl PanelId {
     /// Todos los paneles.
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "la ventana de paneles lo recorrerá")
-    )]
     pub(crate) const ALL: &[PanelId] = &[
         PanelId::Tools,
         PanelId::Color,
@@ -107,10 +105,6 @@ impl PanelId {
     ];
     /// Todos los paneles (en la web no hay dafont).
     #[cfg(target_arch = "wasm32")]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "la ventana de paneles lo recorrerá")
-    )]
     pub(crate) const ALL: &[PanelId] = &[
         PanelId::Tools,
         PanelId::Color,
@@ -154,17 +148,21 @@ impl PanelId {
 
     /// Su ficha.
     pub(crate) fn spec(self) -> PanelSpec {
-        let flyout = |title, icon, plain, reference_width, min_width, body| PanelSpec {
+        let flyout = |key, title, icon, plain, reference_width, min_width, body| PanelSpec {
+            key,
             title,
             icon,
             plain,
             reference_width,
             min_width,
             closable: true,
-            host: Host::Flyout(body),
+            host: Host::Flyout,
+            body,
+            min_height: 0.0,
         };
         match self {
             PanelId::Tools => PanelSpec {
+                key: "tools",
                 title: "Tools",
                 icon: "icon.tools",
                 plain: "✎",
@@ -172,8 +170,11 @@ impl PanelId {
                 min_width: crate::pixel_ui::TOOLBAR_WIDTH_PLAIN,
                 closable: false,
                 host: Host::Left,
+                body: Body::Fixed,
+                min_height: 0.0,
             },
             PanelId::Color => PanelSpec {
+                key: "color",
                 title: "Color",
                 icon: "icon.color",
                 plain: "🎨",
@@ -182,8 +183,11 @@ impl PanelId {
                 min_width: crate::color_panel::DEFAULT_WIDTH,
                 closable: false,
                 host: Host::Right,
+                body: Body::Fixed,
+                min_height: 0.0,
             },
             PanelId::Timeline => PanelSpec {
+                key: "timeline",
                 title: dock::TIMELINE,
                 icon: dock::TIMELINE_ICON,
                 plain: "🎞",
@@ -192,8 +196,11 @@ impl PanelId {
                 min_width: dock::TIMELINE_DEFAULT_HEIGHT,
                 closable: true,
                 host: Host::Bottom,
+                body: Body::Fixed,
+                min_height: 0.0,
             },
             PanelId::Preview => PanelSpec {
+                key: "preview",
                 title: dock::PREVIEW,
                 icon: dock::PREVIEW_ICON,
                 plain: "▣",
@@ -201,8 +208,11 @@ impl PanelId {
                 min_width: crate::preview::MIN_VIEW.x,
                 closable: true,
                 host: Host::Window,
+                body: Body::Fixed,
+                min_height: 0.0,
             },
             PanelId::Artboards => flyout(
+                "artboards",
                 "Artboards",
                 "icon.dock.artboards",
                 "🗋",
@@ -211,6 +221,7 @@ impl PanelId {
                 Body::Fit,
             ),
             PanelId::Slices => flyout(
+                "slices",
                 "Slices",
                 "icon.dock.slices",
                 "#",
@@ -219,6 +230,7 @@ impl PanelId {
                 Body::Fit,
             ),
             PanelId::Lospec => flyout(
+                "lospec",
                 "Lospec",
                 "icon.dock.lospec",
                 "L",
@@ -228,6 +240,7 @@ impl PanelId {
             ),
             #[cfg(not(target_arch = "wasm32"))]
             PanelId::Dafont => flyout(
+                "dafont",
                 "Dafont",
                 "icon.dock.dafont",
                 "Aa",
@@ -235,23 +248,32 @@ impl PanelId {
                 crate::dafont::MIN_WIDTH,
                 Body::Tall,
             ),
-            PanelId::Groom => flyout(
-                "Groom",
-                "icon.dock.groom",
-                "▦",
-                crate::groom::REFERENCE_WIDTH,
-                crate::groom::MIN_WIDTH,
-                Body::Tall,
-            ),
-            PanelId::Lumen => flyout(
-                "Lumen",
-                "icon.dock.lumen",
-                "☀",
-                crate::lumen::REFERENCE_WIDTH,
-                crate::lumen::MIN_WIDTH,
-                Body::Tall,
-            ),
+            PanelId::Groom => PanelSpec {
+                min_height: crate::groom::MIN_HEIGHT,
+                ..flyout(
+                    "groom",
+                    "Groom",
+                    "icon.dock.groom",
+                    "▦",
+                    crate::groom::REFERENCE_WIDTH,
+                    crate::groom::MIN_WIDTH,
+                    Body::Tall,
+                )
+            },
+            PanelId::Lumen => PanelSpec {
+                min_height: crate::lumen::MIN_HEIGHT,
+                ..flyout(
+                    "lumen",
+                    "Lumen",
+                    "icon.dock.lumen",
+                    "☀",
+                    crate::lumen::REFERENCE_WIDTH,
+                    crate::lumen::MIN_WIDTH,
+                    Body::Tall,
+                )
+            },
             PanelId::Library => flyout(
+                "library",
                 "Library",
                 "icon.dock.library",
                 "▣",
@@ -260,6 +282,7 @@ impl PanelId {
                 Body::Tall,
             ),
             PanelId::Font => flyout(
+                "font",
                 "FontForge",
                 "icon.dock.font",
                 "FF",
@@ -268,6 +291,7 @@ impl PanelId {
                 Body::Fixed,
             ),
             PanelId::Model => flyout(
+                "model",
                 "3D",
                 "icon.dock.model",
                 "3D",
@@ -281,6 +305,32 @@ impl PanelId {
     /// Su título (el rótulo de su botón).
     pub fn label(self) -> &'static str {
         self.spec().title
+    }
+
+    /// Su llave estable (la de su ficha): lo que se guarda en el acomodo.
+    pub(crate) fn key(self) -> &'static str {
+        self.spec().key
+    }
+
+    /// El panel con esa llave; `None` si no existe (o no está en esta plataforma: en la web no
+    /// hay dafont).
+    pub(crate) fn from_key(key: &str) -> Option<PanelId> {
+        Self::ALL.iter().copied().find(|p| p.key() == key)
+    }
+}
+
+/// Se guarda por su llave, no por el nombre de la variante: renombrar una no rompe lo guardado.
+impl serde::Serialize for PanelId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.key())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PanelId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let key = <std::borrow::Cow<str>>::deserialize(deserializer)?;
+        PanelId::from_key(&key)
+            .ok_or_else(|| serde::de::Error::custom(format!("panel desconocido: {key:?}")))
     }
 }
 
@@ -323,7 +373,7 @@ mod tests {
             ]
         );
         for p in PanelId::DOCK {
-            assert!(matches!(p.spec().host, Host::Flyout(_)), "{p:?}");
+            assert!(matches!(p.spec().host, Host::Flyout), "{p:?}");
             assert_eq!(p.label(), p.spec().title);
         }
     }
@@ -357,23 +407,52 @@ mod tests {
     }
 
     #[test]
+    fn keys_are_stable_unique_and_round_trip() {
+        let mut seen = std::collections::HashSet::new();
+        for &p in PanelId::ALL {
+            assert!(seen.insert(p.key()), "{p:?}");
+            assert_eq!(PanelId::from_key(p.key()), Some(p));
+            let json = serde_json::to_string(&p).unwrap();
+            assert_eq!(json, format!("\"{}\"", p.key()));
+            assert_eq!(serde_json::from_str::<PanelId>(&json).unwrap(), p);
+        }
+        assert_eq!(PanelId::Font.key(), "font");
+        assert_eq!(PanelId::from_key("nope"), None);
+        assert!(serde_json::from_str::<PanelId>("\"nope\"").is_err());
+        // En la web no hay dafont: su llave no se reconoce.
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(PanelId::from_key("dafont"), None);
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(PanelId::from_key("dafont"), Some(PanelId::Dafont));
+    }
+
+    #[test]
+    fn the_body_and_min_height_are_in_the_spec() {
+        assert_eq!(PanelId::Groom.spec().min_height, crate::groom::MIN_HEIGHT);
+        assert_eq!(PanelId::Lumen.spec().min_height, crate::lumen::MIN_HEIGHT);
+        assert_eq!(PanelId::Font.spec().min_height, 0.0);
+        assert!(matches!(PanelId::Font.spec().body, Body::Fixed));
+        assert!(matches!(PanelId::Tools.spec().body, Body::Fixed));
+        assert!(matches!(PanelId::Artboards.spec().body, Body::Fit));
+        assert!(matches!(PanelId::Library.spec().body, Body::Tall));
+    }
+
+    #[test]
     fn every_panel_has_one_host_and_the_fixed_ones_are_where_they_are_today() {
         assert!(matches!(PanelId::Tools.spec().host, Host::Left));
         assert!(matches!(PanelId::Color.spec().host, Host::Right));
         assert!(matches!(PanelId::Timeline.spec().host, Host::Bottom));
         assert!(matches!(PanelId::Preview.spec().host, Host::Window));
-        assert!(matches!(
-            PanelId::Font.spec().host,
-            Host::Flyout(Body::Fixed)
-        ));
-        assert!(matches!(
-            PanelId::Artboards.spec().host,
-            Host::Flyout(Body::Fit)
-        ));
-        assert!(matches!(
-            PanelId::Groom.spec().host,
-            Host::Flyout(Body::Tall)
-        ));
+        // `Host::Flyout` ya no lleva el cuerpo: está en `spec.body`.
+        for (id, body) in [
+            (PanelId::Font, Body::Fixed),
+            (PanelId::Artboards, Body::Fit),
+            (PanelId::Groom, Body::Tall),
+        ] {
+            let spec = id.spec();
+            assert!(matches!(spec.host, Host::Flyout), "{id:?}");
+            assert_eq!(spec.body, body, "{id:?}");
+        }
         let mut seen = std::collections::HashSet::new();
         for p in PanelId::ALL {
             assert!(seen.insert(p.spec().title), "title repeated: {p:?}");

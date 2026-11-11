@@ -392,4 +392,11 @@ impl ChimpApp {
             self.doc.editor.paste_in_new_artboard(&clip);
         }
     }
+
+    /// View → Reset Workspace: el acomodo de fábrica (Essentials). El ancho elegido de la columna
+    /// derecha se queda (es del usuario, como lo demás de la vista): sin los paneles acoplados que
+    /// la ensanchaban, vuelve a él. Es de la app, no del documento: sin deshacer.
+    pub(crate) fn reset_workspace(&mut self) {
+        self.workspace = workspace::Workspace::essentials();
+    }
 }

@@ -36,39 +36,108 @@ pub(crate) enum PanelAction {
     ClosePreview,
 }
 
+/// Lo que el anfitrión de un panel sabe y el panel no: así cualquier anfitrión (un flotante del
+/// dock, una región fija) lo hospeda con la misma llamada, [`ChimpApp::draw_panel`].
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PanelCtx {
+    /// Hay un diálogo modal abierto: el panel queda apagado (Color, solo sus menús y la
+    /// instancia: la paleta sigue viva).
+    pub modal: bool,
+    /// El fondo disponible del panel: hasta ahí llega la lista de Lospec. Sin él, el de abajo
+    /// de `ui.max_rect()`.
+    pub bottom: Option<f32>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Cada panel que dibujó [`ChimpApp::draw_panel`], con repetidos (para los tests: una
+    /// instancia por `PanelId` por frame).
+    static DRAWS: std::cell::RefCell<Vec<PanelId>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Los paneles dibujados desde la última llamada (con repetidos), y empieza de cero.
+#[cfg(test)]
+pub(crate) fn take_draws() -> Vec<PanelId> {
+    DRAWS.with(|d| std::mem::take(&mut *d.borrow_mut()))
+}
+
+impl PanelId {
+    /// Si ahora tiene sentido mostrar el panel: la línea de tiempo no va en un artboard de fuente
+    /// o de modelo (sus frames son los glifos) ni en la pestaña de un modelo, y el preview se
+    /// esconde en la pestaña de un modelo. No cuenta si el usuario lo apagó (`view.timeline`).
+    pub(crate) fn available(self, app: &ChimpApp) -> bool {
+        let editor = &app.doc.editor;
+        match self {
+            PanelId::Timeline => !editor.is_structure_locked() && !editor.model_edit_on(),
+            PanelId::Preview => !editor.model_edit_on(),
+            _ => true,
+        }
+    }
+}
+
 impl ChimpApp {
-    /// El contenido del panel `id` en `ui` y lo que pidió. Lo que lo rodea (el marco, el
-    /// tamaño, el scroll de la toolbar, lo que apaga un diálogo modal) es de su anfitrión,
-    /// salvo en Color, que maneja el modal adentro: aquí va sin modal; donde puede haber un
-    /// diálogo modal abierto, usa [`Self::draw_panel_modal`].
-    pub(crate) fn draw_panel(&mut self, ui: &mut egui::Ui, id: PanelId) -> Option<PanelAction> {
-        self.draw_panel_in(ui, id, None, false)
+    /// Abre el frame de los paneles: se empieza de cero (en los tests, lo dibujado en el anterior
+    /// pasa a `was_drawn`).
+    pub(crate) fn begin_panel_frame(&mut self) {
+        #[cfg(test)]
+        {
+            self.panels_drawn_prev = self.panels_drawn.clone();
+        }
+        self.panels_drawn.clear();
     }
 
-    /// Como [`Self::draw_panel`], con un diálogo modal abierto (`modal`): Color no lo apaga
-    /// entero (la paleta sigue viva), solo los menús de la paleta y la instancia.
-    pub(crate) fn draw_panel_modal(
+    /// El panel `id` se dibujó en este frame (hasta ahora).
+    pub(crate) fn drawn_this_frame(&self, id: PanelId) -> bool {
+        self.panels_drawn.contains(&id)
+    }
+
+    /// El panel `id` se dibujó en el frame anterior (solo lo leen los tests).
+    #[cfg(test)]
+    pub(crate) fn was_drawn(&self, id: PanelId) -> bool {
+        self.panels_drawn_prev.contains(&id)
+    }
+
+    /// Cierra el frame de los paneles: lo que ya no se dibuja suelta su estado. Lospec vive
+    /// mientras se dibuja (en un flyout o acoplado) y se cierra el frame en que no. En la pestaña
+    /// de un modelo no hay dock: se queda abierto para cuando se vuelva al lienzo.
+    pub(crate) fn end_panel_frame(&mut self, model_tab: bool) {
+        if !model_tab && !self.drawn_this_frame(PanelId::Lospec) {
+            self.close_lospec_panel();
+        }
+    }
+
+    /// El panel `id` en `ui`, hospedado según `panel`, y lo que pidió. Lo apaga entero con un
+    /// diálogo modal (salvo Color, que lo maneja adentro) y pone la franja del logo de Lospec
+    /// fuera de eso; lo demás que lo rodea (el marco, el tamaño, el scroll de la toolbar) es de
+    /// su anfitrión.
+    pub(crate) fn draw_panel(
         &mut self,
         ui: &mut egui::Ui,
         id: PanelId,
-        modal: bool,
+        panel: &PanelCtx,
     ) -> Option<PanelAction> {
-        self.draw_panel_in(ui, id, None, modal)
+        #[cfg(test)]
+        DRAWS.with(|d| d.borrow_mut().push(id));
+        if !self.panels_drawn.contains(&id) {
+            self.panels_drawn.push(id);
+        }
+        // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la instancia.
+        if id == PanelId::Color {
+            return self.draw_color(ui, panel.modal);
+        }
+        // La franja del logo de Lospec queda fuera de lo que apaga el modal, como siempre.
+        if id == PanelId::Lospec {
+            palette_ui::lospec_band(ui, self.pixel.skin());
+        }
+        let bottom = panel.bottom.unwrap_or_else(|| ui.max_rect().bottom());
+        ui.add_enabled_ui(!panel.modal, |ui| self.panel_body(ui, id, bottom))
+            .inner
     }
 
-    /// Como [`Self::draw_panel_modal`]; `lospec_bottom` es hasta dónde llega la lista de Lospec
-    /// (abajo de la columna del dock). Va como parámetro privado y no en un campo de la app:
-    /// solo Lospec lo usa y solo `panel_flyout` lo sabe; sin él, la lista se mide como en
-    /// Palette Presets.
-    fn draw_panel_in(
-        &mut self,
-        ui: &mut egui::Ui,
-        id: PanelId,
-        lospec_bottom: Option<f32>,
-        modal: bool,
-    ) -> Option<PanelAction> {
+    /// El contenido del panel `id` (sin lo que pone [`Self::draw_panel`] alrededor);
+    /// `bottom` es hasta dónde llega la lista de Lospec.
+    fn panel_body(&mut self, ui: &mut egui::Ui, id: PanelId, bottom: f32) -> Option<PanelAction> {
         // Solo préstamos de campos sueltos: el skin junto al editor y al estado de cada panel.
-        // `modal` solo lo usa Color: a los demás los apaga su anfitrión (`add_enabled_ui`).
         let skin = self.pixel.skin();
         match id {
             PanelId::Groom => {
@@ -102,7 +171,7 @@ impl ChimpApp {
             }
             #[cfg(not(target_arch = "wasm32"))]
             PanelId::Dafont => self.dafont.ui(ui).map(PanelAction::Dafont),
-            PanelId::Lospec => self.draw_lospec(ui, lospec_bottom).map(PanelAction::Lospec),
+            PanelId::Lospec => self.draw_lospec(ui, Some(bottom)).map(PanelAction::Lospec),
             PanelId::Artboards => {
                 let (editor, name) = (&mut self.doc.editor, &mut self.doc.artboard_name);
                 let canvas_size = match skin {
@@ -122,7 +191,8 @@ impl ChimpApp {
                 panels::toolbar(ui, &mut self.doc.editor, skin);
                 None
             }
-            PanelId::Color => self.draw_color(ui, modal),
+            // Color maneja el modal adentro: lo dibuja `draw_panel`, sin pasar por aquí.
+            PanelId::Color => unreachable!("Color se dibuja con draw_color"),
             PanelId::Timeline => {
                 timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin);
                 std::mem::take(&mut self.doc.timeline.new_tilemap)
@@ -197,7 +267,11 @@ impl ChimpApp {
                         .open_file(groom::FILTER, platform::OpenPurpose::GroomImage, ctx);
                 }
                 groom::GroomAction::BrowseLospec => {
-                    dock::set_open(ctx, Some(dock::DockPanel::Lospec));
+                    // Acoplado o flotando, su pestaña al frente y con el foco; en la tira, su
+                    // flyout.
+                    if !self.workspace.focus(dock::DockPanel::Lospec) {
+                        dock::set_open(ctx, Some(dock::DockPanel::Lospec));
+                    }
                 }
                 groom::GroomAction::UseLayer => {
                     let (name, image) = self.current_layer_image();
@@ -339,28 +413,24 @@ impl ChimpApp {
         modal: bool,
     ) {
         let spec = id.spec();
-        let Host::Flyout(body) = spec.host else {
+        if !matches!(spec.host, Host::Flyout) {
             debug_assert!(
                 false,
                 "{id:?} no es un panel flotante (su host no es Flyout)"
             );
             return;
-        };
+        }
+        let body = spec.body;
         // El skin compartido: el contenido toma prestada la app entera mientras se dibuja.
         let skin = self.pixel.shared_skin();
         let skin = skin.as_deref();
-        // La lista de Lospec, hasta abajo de la columna del dock.
-        let lospec_bottom = anchor.column.bottom() - dock::FLYOUT_MARGIN as f32;
-        let mut action = None;
-        let contents = |ui: &mut egui::Ui| {
-            // La franja del logo de Lospec queda fuera de lo que apaga el modal, como siempre.
-            if id == PanelId::Lospec {
-                palette_ui::lospec_band(ui, skin);
-            }
-            ui.add_enabled_ui(!modal, |ui| {
-                action = self.draw_panel_in(ui, id, Some(lospec_bottom), modal);
-            });
+        // El fondo del panel (la lista de Lospec llega ahí): abajo de la columna del dock.
+        let panel = PanelCtx {
+            modal,
+            bottom: Some(anchor.column.bottom() - dock::FLYOUT_MARGIN as f32),
         };
+        let mut action = None;
+        let contents = |ui: &mut egui::Ui| action = self.draw_panel(ui, id, &panel);
         let width = spec.reference_width;
         match body {
             Body::Fixed => dock::flyout_fixed(ctx, id, anchor, skin, width, contents),
@@ -454,6 +524,177 @@ mod tests {
         })
     }
 
+    /// Las etiquetas de los botones de `output`: los que se pueden usar (`disabled: false`) o los
+    /// apagados (`disabled: true`).
+    fn button_labels(output: &egui::FullOutput, disabled: bool) -> Vec<String> {
+        let Some(update) = output.platform_output.accesskit_update.as_ref() else {
+            return Vec::new();
+        };
+        update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+            .filter(|(_, n)| n.is_disabled() == disabled)
+            .filter_map(|(_, n)| Some(n.label()?.to_string()))
+            .collect()
+    }
+
+    /// Los botones de `output` que se pueden usar.
+    fn buttons(output: &egui::FullOutput) -> Vec<String> {
+        button_labels(output, false)
+    }
+
+    /// Los botones de `output` apagados.
+    fn disabled_buttons(output: &egui::FullOutput) -> Vec<String> {
+        button_labels(output, true)
+    }
+
+    /// Un frame con el panel `id` del ancho de su ficha, hospedado con `panel`.
+    fn draw_with(
+        ctx: &egui::Context,
+        app: &mut ChimpApp,
+        id: crate::panel_registry::PanelId,
+        panel: &super::PanelCtx,
+    ) -> egui::FullOutput {
+        frame_with(ctx, app, Vec::new(), |app, ui| {
+            ui.set_width(id.spec().reference_width);
+            app.draw_panel(ui, id, panel);
+        })
+    }
+
+    /// Un frame de la app con el panel Lospec dibujado (o no) fuera de un flyout, como lo hará el
+    /// docking: abre el frame de paneles, dibuja y cierra con la regla del fin de frame.
+    fn lospec_frame(ctx: &egui::Context, app: &mut ChimpApp, draw: bool, model_tab: bool) {
+        use crate::panel_registry::PanelId;
+        app.begin_panel_frame();
+        frame(ctx, app, |app, ui| {
+            if draw {
+                ui.set_width(PanelId::Lospec.spec().reference_width);
+                app.draw_panel(ui, PanelId::Lospec, &Default::default());
+            }
+        });
+        app.end_panel_frame(model_tab);
+    }
+
+    #[test]
+    fn a_lospec_drawn_outside_a_flyout_keeps_its_state_and_searches_once() {
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        let before = crate::palette_ui::lospec_searches_started();
+        for n in 0..3 {
+            lospec_frame(&ctx, &mut app, true, false);
+            assert!(app.lospec_open(), "sigue abierto mientras se dibuja");
+            assert!(app.drawn_this_frame(PanelId::Lospec));
+            // El frame siguiente lo ve como "dibujado el frame anterior".
+            if n > 0 {
+                assert!(app.was_drawn(PanelId::Lospec));
+            }
+        }
+        assert_eq!(
+            crate::palette_ui::lospec_searches_started() - before,
+            1,
+            "la búsqueda se lanzó una sola vez"
+        );
+    }
+
+    #[test]
+    fn lospec_closes_at_the_end_of_the_frame_it_was_not_drawn() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        lospec_frame(&ctx, &mut app, true, false);
+        assert!(app.lospec_open());
+        lospec_frame(&ctx, &mut app, false, false);
+        assert!(!app.lospec_open(), "un frame sin dibujarlo lo cierra");
+        // Dibujado otra vez, empieza de nuevo (con su búsqueda).
+        let before = crate::palette_ui::lospec_searches_started();
+        lospec_frame(&ctx, &mut app, true, false);
+        assert!(app.lospec_open());
+        assert_eq!(crate::palette_ui::lospec_searches_started() - before, 1);
+    }
+
+    #[test]
+    fn on_a_model_tab_lospec_stays_open_though_it_is_not_drawn() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        lospec_frame(&ctx, &mut app, true, false);
+        lospec_frame(&ctx, &mut app, false, true);
+        assert!(app.lospec_open(), "en la pestaña del modelo no se cierra");
+    }
+
+    #[test]
+    fn a_modal_disables_every_panel_but_color_keeps_its_palette() {
+        use super::PanelCtx;
+        use crate::panel_registry::PanelId;
+        let modal = PanelCtx {
+            modal: true,
+            bottom: None,
+        };
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        // Library sin modal: Import… se puede usar; con modal, sale apagado.
+        let out = draw_with(&ctx, &mut app, PanelId::Library, &PanelCtx::default());
+        assert!(buttons(&out).iter().any(|l| l == "Import…"));
+        let out = draw_with(&ctx, &mut app, PanelId::Library, &modal);
+        assert!(disabled_buttons(&out).iter().any(|l| l == "Import…"));
+        assert!(!buttons(&out).iter().any(|l| l == "Import…"));
+        // Color (Pixel UI) con modal: el menú de la paleta se apaga, pero la paleta sigue viva
+        // (el candado se puede usar).
+        let out = draw_with(&ctx, &mut app, PanelId::Color, &modal);
+        assert!(disabled_buttons(&out).iter().any(|l| l == "Palette menu"));
+        assert!(buttons(&out).iter().any(|l| l == "Lock palette"));
+        // Sin Pixel UI, el menú Presets ⏷ es el que se apaga.
+        let mut app = test_app_with(false);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        let out = draw_with(&ctx, &mut app, PanelId::Color, &PanelCtx::default());
+        assert!(buttons(&out).iter().any(|l| l == "Presets ⏷"));
+        let out = draw_with(&ctx, &mut app, PanelId::Color, &modal);
+        assert!(!buttons(&out).iter().any(|l| l == "Presets ⏷"));
+        assert!(disabled_buttons(&out).iter().any(|l| l == "Presets ⏷"));
+    }
+
+    #[test]
+    fn the_lospec_band_stays_lit_under_a_modal() {
+        use super::PanelCtx;
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        // La franja la pone `draw_panel` fuera de lo que apaga el modal: sus colores no se
+        // desvanecen.
+        let modal = PanelCtx {
+            modal: true,
+            bottom: None,
+        };
+        let out = draw_with(&ctx, &mut app, PanelId::Lospec, &modal);
+        let stripe = crate::palette_ui::BAND_COLORS[0];
+        assert!(
+            out.shapes
+                .iter()
+                .any(|c| matches!(&c.shape, egui::Shape::Rect(r) if r.fill == stripe)),
+            "the band's first stripe"
+        );
+    }
+
     #[test]
     fn every_dock_panel_draws_through_the_registry() {
         let mut app = test_app();
@@ -467,7 +708,10 @@ mod tests {
             frame(&ctx, &mut app, |app, ui| {
                 // Del ancho de su ficha, como en el flotante.
                 ui.set_width(id.spec().reference_width);
-                assert!(app.draw_panel(ui, id).is_none(), "{id:?}");
+                assert!(
+                    app.draw_panel(ui, id, &Default::default()).is_none(),
+                    "{id:?}"
+                );
             });
         }
     }
@@ -486,7 +730,7 @@ mod tests {
                     ui.set_width(id.spec().reference_width);
                     // Dibujarlos solos no pide nada: Canvas Size es un botón.
                     assert!(
-                        app.draw_panel(ui, id).is_none(),
+                        app.draw_panel(ui, id, &Default::default()).is_none(),
                         "{id:?} pixel_ui={pixel_ui}"
                     );
                 });
@@ -511,7 +755,8 @@ mod tests {
             ] {
                 frame(&ctx, &mut app, |app, ui| {
                     // Dibujarlos solos no pide nada, pero ponen su contenido.
-                    let drawn = ui.scope(|ui| assert!(app.draw_panel(ui, id).is_none()));
+                    let drawn = ui
+                        .scope(|ui| assert!(app.draw_panel(ui, id, &Default::default()).is_none()));
                     let rect = drawn.response.rect;
                     assert!(
                         rect.width() > 0.0 && rect.height() > 0.0,
@@ -520,6 +765,36 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn availability_follows_the_structure_lock_and_the_model_tab() {
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        for &id in PanelId::ALL {
+            assert!(id.available(&app), "{id:?} in a sprite");
+        }
+        // Un artboard de fuente: sin timeline (sus frames son los glifos); el preview sigue.
+        let mode = cs_core::FontMode::OneBit;
+        assert!(app.doc.editor.new_font("Pix", (8, 8), mode));
+        let id = app.doc.editor.workspace().expect("the workspace");
+        app.tabs.open_view(&mut app.doc, id);
+        assert!(app.doc.editor.is_structure_locked());
+        assert!(!PanelId::Timeline.available(&app));
+        assert_eq!(
+            PanelId::Timeline.available(&app),
+            !app.doc.editor.is_structure_locked() && !app.doc.editor.model_edit_on()
+        );
+        assert!(PanelId::Preview.available(&app));
+        // La pestaña de un modelo: ni timeline ni preview.
+        let mut app = test_app();
+        assert!(app.doc.editor.new_model("Ship", (32, 32)));
+        let id = app.doc.editor.workspace().expect("the workspace");
+        app.tabs.open_view(&mut app.doc, id);
+        assert!(app.doc.editor.model_edit_on());
+        assert!(!PanelId::Timeline.available(&app));
+        assert!(!PanelId::Preview.available(&app));
+        assert!(PanelId::Color.available(&app));
     }
 
     #[test]
@@ -536,7 +811,12 @@ mod tests {
         }
         frame(&ctx, &mut app, |app, ui| {
             ui.set_width(PanelId::Model.spec().reference_width);
-            let drawn = ui.scope(|ui| assert!(app.draw_panel(ui, PanelId::Model).is_none()));
+            let drawn = ui.scope(|ui| {
+                assert!(
+                    app.draw_panel(ui, PanelId::Model, &Default::default())
+                        .is_none()
+                )
+            });
             assert!(drawn.response.rect.height() > 0.0);
         });
     }
@@ -559,7 +839,9 @@ mod tests {
         assert!(e.on_object_layer() && e.instance_key().is_some());
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
-        let color = |app: &mut ChimpApp, ui: &mut egui::Ui| app.draw_panel(ui, PanelId::Color);
+        let color = |app: &mut ChimpApp, ui: &mut egui::Ui| {
+            app.draw_panel(ui, PanelId::Color, &Default::default())
+        };
         let output = frame_with(&ctx, &mut app, Vec::new(), |app, ui| {
             color(app, ui);
         });
