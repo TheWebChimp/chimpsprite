@@ -315,41 +315,74 @@ impl LayoutHarness {
             .unwrap_or_else(|| panic!("no button {label:?} in {:?}", self.buttons))
     }
 
-    /// Rect exterior del panel `id` (con su margen y la línea que lo separa del resto).
-    ///
-    /// Fase D: la columna derecha (`"palette"`) ya no es un `egui::Panel` sino el lado derecho del
-    /// lienzo en el árbol del workspace; su rect equivalente (con la línea que la separa del
-    /// lienzo, que es su divisor) es `Workspace::column_rect`, el mismo que tenía el panel.
-    /// Tarea 3: la toolbar (`"tools"`) es una hoja más; su rect equivalente (con el divisor que
-    /// la separa del lienzo, donde el panel tenía su borde) es `Workspace::tools_rect`.
-    /// Tarea 4: el timeline (`"timeline"`) también; su rect equivalente (su hoja sin la punta que
-    /// tapa la tira y, sin Pixel UI, con el divisor, que es la línea y el margen de arriba del
-    /// panel de antes) es `Workspace::timeline_rect`.
+    /// Rect exterior del panel de egui `id` (con su margen y la línea que lo separa del resto): las
+    /// barras de arriba y la de estado (`"menu"`, `"tabs"`, `"tool_options"`, `"status"`) y las
+    /// tiras de íconos (`"dock"`, `"dock_left"`…). Lo del workspace (la toolbar, el timeline, Color
+    /// y los demás paneles del árbol) se mide con [`Self::leaf`] (o, en Essentials, con
+    /// [`Self::column`], [`Self::tools_box`] y [`Self::timeline_box`]).
     fn panel(&self, id: &str) -> Rect {
-        if id == "palette" {
-            return self
-                .app
-                .workspace
-                .column_rect()
-                .unwrap_or_else(|| panic!("no right column"));
-        }
-        if id == "tools" {
-            return self
-                .app
-                .workspace
-                .tools_rect()
-                .unwrap_or_else(|| panic!("no toolbar in the workspace"));
-        }
-        if id == "timeline" {
-            return self
-                .app
-                .workspace
-                .timeline_rect()
-                .unwrap_or_else(|| panic!("no timeline in the workspace"));
-        }
         PanelState::load(&self.ctx, egui::Id::new(id))
             .unwrap_or_else(|| panic!("no panel {id:?}"))
             .outer_rect
+    }
+
+    /// El rect de la hoja de `id` en el último frame: el de su grupo, acoplado
+    /// (`Workspace::leaf_rect`, sin los divisores); flotando, el de su ventana con su marco
+    /// (`Workspace::window_rect`).
+    fn leaf(&self, id: crate::panel_registry::PanelId) -> Rect {
+        let w = &self.app.workspace;
+        let rect = if w.docked(id) {
+            w.leaf_rect(id)
+        } else {
+            w.window_rect(&self.ctx, id)
+        };
+        rect.unwrap_or_else(|| panic!("{id:?} is not in the workspace"))
+    }
+
+    /// `r` relativo a la hoja de `id` (su esquina de arriba a la izquierda es (0, 0)).
+    fn at(&self, id: crate::panel_registry::PanelId, r: Rect) -> Rect {
+        r.translate(-self.leaf(id).min.to_vec2())
+    }
+
+    /// Como `start_in`, con el acomodo `w` (en vez de Essentials) desde el primer frame. El
+    /// timeline se ve si está en `w` (si no, `show` lo pondría debajo del lienzo: `view.timeline`
+    /// manda).
+    fn with_workspace(mut app: ChimpApp, w: crate::workspace::Workspace, size: Vec2) -> Self {
+        use crate::panel_registry::PanelId;
+        app.view.timeline = w.state_tabs().contains(&PanelId::Timeline);
+        app.workspace = w;
+        Self::start_in(app, size)
+    }
+
+    /// La columna derecha con su divisor (`Workspace::column_rect`): el rect del panel derecho de
+    /// antes de la fase D (`"palette"`). Solo tiene sentido en Essentials (o algo parecido, con una
+    /// columna a la derecha del lienzo): los tests que lo usan lo dicen.
+    fn column(&self) -> Rect {
+        self.app
+            .workspace
+            .column_rect()
+            .unwrap_or_else(|| panic!("no right column"))
+    }
+
+    /// El rect del panel izquierdo de antes (`"tools"`, `Workspace::tools_rect`): la hoja de la
+    /// toolbar y, si es un lado del lienzo, su divisor (donde el panel tenía su borde). No es
+    /// [`Self::leaf`]: con Pixel UI, en Essentials, `0..37` contra `0..35`.
+    fn tools_box(&self) -> Rect {
+        self.app
+            .workspace
+            .tools_rect()
+            .unwrap_or_else(|| panic!("no toolbar in the workspace"))
+    }
+
+    /// El rect del panel de abajo de antes (`"timeline"`, `Workspace::timeline_rect`): justo
+    /// debajo del lienzo, su hoja sin la punta que tapa la tira y, sin Pixel UI, con el divisor
+    /// (la línea y el margen de arriba del panel). No es [`Self::leaf`]: con Pixel UI, en
+    /// Essentials, termina en la tira (911) y la hoja, en la columna (937).
+    fn timeline_box(&self) -> Rect {
+        self.app
+            .workspace
+            .timeline_rect()
+            .unwrap_or_else(|| panic!("no timeline in the workspace"))
     }
 
     fn screen(&self) -> Rect {
@@ -492,6 +525,136 @@ fn pixel_ui() -> ViewSettings {
     }
 }
 
+// --- Fase E: Essentials fijado una vez; lo demás se mide dentro de cada hoja ---
+
+/// Lo que fija `essentials_at_1200_by_800`: las barras de arriba y la de estado, las hojas de
+/// Essentials, la columna derecha (con su divisor) y la tira de la derecha.
+fn essentials_rects(h: &LayoutHarness) -> Vec<(&'static str, Rect)> {
+    use crate::panel_registry::PanelId;
+    vec![
+        ("menu", h.panel("menu")),
+        ("tabs", h.panel("tabs")),
+        ("tool_options", h.panel("tool_options")),
+        ("tools", h.leaf(PanelId::Tools)),
+        ("canvas", h.leaf(PanelId::Canvas)),
+        ("timeline", h.leaf(PanelId::Timeline)),
+        ("color", h.leaf(PanelId::Color)),
+        ("column", h.column()),
+        ("dock", h.panel("dock")),
+        ("status", h.panel("status")),
+    ]
+}
+
+/// Un rect como `(x0, y0, x1, y1)`.
+type Corners = (f32, f32, f32, f32);
+
+/// `essentials_rects(h)` es `want`.
+fn assert_essentials(h: &LayoutHarness, want: &[(&str, Corners)]) {
+    let got = essentials_rects(h);
+    assert_eq!(got.len(), want.len());
+    for ((name, rect), &(want_name, (x0, y0, x1, y1))) in got.into_iter().zip(want) {
+        assert_eq!(name, want_name);
+        assert_eq!(
+            rect,
+            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn essentials_at_1200_by_800() {
+    // El único test con números absolutos de la ventana (Pixel UI, una pestaña): de aquí sale el
+    // origen de cada hoja (su esquina de arriba a la izquierda) contra el que miden los demás
+    // (`LayoutHarness::at`).
+    // Los mismos que fijaban los tests de antes de la fase E: la toolbar 0..35 con su divisor
+    // hasta 37, el lienzo y el timeline desde 37 (con el divisor de en medio, 588..590), la tira
+    // 911..937 y la columna 937..1200 (Color desde 939, después del divisor).
+    let h = LayoutHarness::with_tabs(&[("a", false)], Some(0));
+    assert_essentials(
+        &h,
+        &[
+            ("menu", (0.0, 0.0, 1200.0, 17.0)),
+            ("tabs", (0.0, 17.0, 1200.0, 40.0)),
+            ("tool_options", (0.0, 40.0, 1200.0, 63.0)),
+            ("tools", (0.0, 63.0, 35.0, 780.0)),
+            ("canvas", (37.0, 63.0, 937.0, 588.0)),
+            ("timeline", (37.0, 590.0, 937.0, 780.0)),
+            ("color", (939.0, 63.0, 1200.0, 780.0)),
+            ("column", (937.0, 63.0, 1200.0, 780.0)),
+            ("dock", (911.0, 63.0, 937.0, 780.0)),
+            ("status", (0.0, 780.0, 1200.0, 800.0)),
+        ],
+    );
+}
+
+#[test]
+fn essentials_at_1200_by_800_plain() {
+    // Lo mismo sin Pixel UI: la toolbar 0..182 con su divisor hasta 184, el divisor del timeline
+    // 587..589 y la tira 912..938, encima del divisor de la columna.
+    let h = LayoutHarness::editor();
+    assert_essentials(
+        &h,
+        &[
+            ("menu", (0.0, 0.0, 1200.0, 23.0)),
+            ("tabs", (0.0, 23.0, 1200.0, 46.0)),
+            ("tool_options", (0.0, 46.0, 1200.0, 78.0)),
+            ("tools", (0.0, 78.0, 182.0, 777.0)),
+            ("canvas", (184.0, 78.0, 937.0, 587.0)),
+            ("timeline", (184.0, 589.0, 937.0, 777.0)),
+            ("color", (939.0, 78.0, 1200.0, 777.0)),
+            ("column", (937.0, 78.0, 1200.0, 777.0)),
+            ("dock", (912.0, 78.0, 938.0, 777.0)),
+            ("status", (0.0, 777.0, 1200.0, 800.0)),
+        ],
+    );
+}
+
+#[test]
+fn the_inside_of_a_panel_does_not_depend_on_where_it_is() {
+    use crate::dock::Edge;
+    use crate::panel_registry::PanelId;
+    use crate::workspace::Workspace;
+    // Color en la columna derecha de Essentials y solo a la izquierda del lienzo. Una diferencia a
+    // propósito (la de la fase C): en la columna, el margen izquierdo de lo que va pegado a su
+    // divisor cuenta desde la línea (como en el panel derecho de antes; ver `beside_column`), así
+    // que ahí lo de adentro empieza un divisor antes en su hoja. Con la columna de
+    // `palette_width` = el ancho de fábrica de Color (con su divisor) y Color a la izquierda de su
+    // ancho de fábrica, lo de adentro tiene el mismo ancho en los dos y va un divisor más a la
+    // derecha en su hoja de la izquierda.
+    let view = ViewSettings {
+        palette_width: Some(crate::color_panel::DEFAULT_WIDTH),
+        ..pixel_ui()
+    };
+    let app = || {
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
+        app.new_document();
+        app
+    };
+    let essentials = LayoutHarness::start(app());
+    let solo = LayoutHarness::with_workspace(
+        app(),
+        Workspace::solo(PanelId::Color, Edge::Left),
+        vec2(1200.0, 800.0),
+    );
+    let (left, column) = (solo.leaf(PanelId::Color), essentials.leaf(PanelId::Color));
+    assert!(essentials.column().left() > left.right());
+    let sep = column.left() - essentials.column().left();
+    assert_eq!(sep, 2.0, "the divider");
+    assert_eq!(left.width(), crate::color_panel::DEFAULT_WIDTH);
+    assert_eq!(left.size(), column.size() + vec2(sep, 0.0));
+    for label in ["Lock palette", "Palette menu", "Mask", "R", "Alpha"] {
+        assert_eq!(
+            solo.at(PanelId::Color, solo.node(label)),
+            essentials
+                .at(PanelId::Color, essentials.node(label))
+                .translate(vec2(sep, 0.0)),
+            "{label}"
+        );
+    }
+}
+
 #[test]
 fn the_app_opens_with_pixel_ui_on_home_and_in_the_editor() {
     // Lo de fábrica: Pixel UI. En los tres primeros frames ya rige (skin, menú de 17, Home con
@@ -509,7 +672,7 @@ fn the_app_opens_with_pixel_ui_on_home_and_in_the_editor() {
 #[test]
 fn the_toolbar_goes_down_beside_the_timeline() {
     let h = LayoutHarness::editor();
-    let (tools, timeline) = (h.panel("tools"), h.panel("timeline"));
+    let (tools, timeline) = (h.tools_box(), h.timeline_box());
     assert!(
         tools.bottom() > timeline.top(),
         "full height: {tools:?} vs {timeline:?}"
@@ -536,7 +699,7 @@ fn the_options_bar_is_between_the_tabs_and_the_canvas() {
         "{options:?} vs {canvas:?}"
     );
     assert!(
-        options.bottom() <= h.panel("tools").top(),
+        options.bottom() <= h.tools_box().top(),
         "the toolbar starts under it"
     );
     assert_eq!(options.width(), h.screen().width(), "full width");
@@ -548,15 +711,19 @@ fn the_status_bar_spans_the_window_under_everything() {
     let status = h.panel("status");
     assert_eq!(status.x_range(), h.screen().x_range());
     assert_eq!(status.bottom(), h.screen().bottom());
-    for id in ["tools", "timeline", "palette"] {
-        assert!(h.panel(id).bottom() <= status.top(), "{id}");
+    for (id, rect) in [
+        ("tools", h.tools_box()),
+        ("timeline", h.timeline_box()),
+        ("palette", h.column()),
+    ] {
+        assert!(rect.bottom() <= status.top(), "{id}");
     }
 }
 
 #[test]
 fn the_right_panel_goes_down_beside_the_timeline() {
     let h = LayoutHarness::editor();
-    let (palette, timeline) = (h.panel("palette"), h.panel("timeline"));
+    let (palette, timeline) = (h.column(), h.timeline_box());
     assert!(
         palette.bottom() > timeline.top(),
         "full height: {palette:?} vs {timeline:?}"
@@ -666,7 +833,7 @@ fn with_pixel_ui_the_toolbar_is_5_points_the_box_and_5_points_below_the_options_
     let h = LayoutHarness::new(view, true);
     let skin = h.app.pixel.skin().expect("the integer scale is in effect");
     let frame = skin.piece("toolbar.box", WidgetState::Normal).unwrap().size[0] as f32;
-    let tools = h.panel("tools");
+    let tools = h.tools_box();
     // El mockup: 5 px de fondo, la caja de 27 y 5 px, sin línea contra el lienzo.
     assert_eq!(tools.width(), 5.0 + frame + 5.0, "{tools:?}");
     assert_eq!(tools.width(), 37.0, "{tools:?}");
@@ -685,7 +852,7 @@ fn with_pixel_ui_the_toolbar_is_5_points_the_box_and_5_points_below_the_options_
     // Los botones siguen pegados.
     assert_eq!(h.button("Hand").top(), marquee.bottom());
     // Y sigue a todo el alto, al lado de la línea de tiempo.
-    assert!(tools.bottom() > h.panel("timeline").top());
+    assert!(tools.bottom() > h.timeline_box().top());
 }
 
 #[test]
@@ -717,7 +884,7 @@ fn with_pixel_ui_the_options_bar_is_23_high() {
 #[test]
 fn without_pixel_ui_the_named_toolbar_keeps_its_width() {
     let h = LayoutHarness::editor();
-    assert_eq!(h.panel("tools").width(), 184.0);
+    assert_eq!(h.tools_box().width(), 184.0);
 }
 
 #[test]
@@ -756,7 +923,7 @@ fn with_pixel_ui_the_tabs_and_the_options_bar_end_in_etched_lines() {
     // (La del panel derecho empieza justo debajo de la barra: queda fuera.)
     let top = Rect::from_x_y_ranges(width, h.screen().top()..=options.bottom() - 1.0);
     assert_eq!(h.separator_lines_in(top), vec![], "menu, tabs and bar");
-    let tools = h.panel("tools");
+    let tools = h.tools_box();
     let edge = Rect::from_x_y_ranges(
         tools.right()..=tools.right(),
         tools.top() + 1.0..=tools.bottom() - 1.0,
@@ -776,7 +943,7 @@ fn without_pixel_ui_the_panels_keep_the_egui_lines() {
     let options = h.panel("tool_options");
     let top = Rect::from_x_y_ranges(h.screen().x_range(), h.screen().top()..=options.bottom());
     assert!(h.separator_lines_in(top).len() >= 3, "menu, tabs and bar");
-    let tools = h.panel("tools");
+    let tools = h.tools_box();
     let edge = Rect::from_x_y_ranges(
         tools.right()..=tools.right(),
         tools.top() + 1.0..=tools.bottom() - 1.0,
@@ -1389,7 +1556,7 @@ fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
 fn with_pixel_ui_the_workspace_box_is_5_px_from_its_neighbours() {
     let h = LayoutHarness::new(pixel_ui(), true);
     // La del área de trabajo; la línea de tiempo, debajo, tiene la suya.
-    let timeline = h.panel("timeline").top();
+    let timeline = h.timeline_box().top();
     let boxes: Vec<Rect> = h
         .drawn("workspace.box")
         .into_iter()
@@ -1410,7 +1577,7 @@ fn with_pixel_ui_the_workspace_box_is_5_px_from_its_neighbours() {
     // A la derecha, 3 px hasta los botones del dock (754 → 758 en el mockup); abajo, 5 hasta la
     // línea de tiempo (el mockup no la tiene: el mismo aire).
     assert_eq!(h.panel("dock").left() - workspace.right(), 3.0);
-    assert_eq!(h.panel("timeline").top() - workspace.bottom(), 5.0);
+    assert_eq!(h.timeline_box().top() - workspace.bottom(), 5.0);
     // Las reglas y el lienzo, dentro de la línea clara, el aire y la línea oscura.
     let canvas = h.canvas.expect("a document is open");
     assert_eq!(canvas, workspace.shrink(3.0));
@@ -1463,7 +1630,7 @@ fn with_pixel_ui_the_rulers_are_12_thick_with_the_smiley_and_the_digit_pieces() 
 fn without_pixel_ui_the_canvas_has_no_box_and_the_egui_rulers() {
     let h = LayoutHarness::editor();
     let canvas = h.canvas.expect("a document is open");
-    assert_eq!(canvas.left(), h.panel("tools").right(), "no air");
+    assert_eq!(canvas.left(), h.tools_box().right(), "no air");
     assert_eq!(canvas.top(), h.panel("tool_options").bottom());
     assert_eq!(canvas.right(), h.panel("dock").left());
     // Los números de las reglas son textos de egui.
@@ -2035,7 +2202,7 @@ fn hex_shown(h: &LayoutHarness, color: Rgba) -> bool {
 #[test]
 fn with_pixel_ui_the_colors_box_goes_under_the_toolbar_box() {
     let h = LayoutHarness::new(pixel_ui(), true);
-    let tools = h.panel("tools");
+    let tools = h.tools_box();
     assert_eq!(tools.width(), 37.0, "the toolbar keeps its width");
     let toolbar = h.drawn("toolbar.box");
     let toolbar = toolbar
@@ -2180,7 +2347,7 @@ fn with_pixel_ui_clicking_a_half_picks_the_color_the_editor_edits() {
 #[test]
 fn with_pixel_ui_the_right_panel_has_no_primary_and_secondary_swatches() {
     let h = LayoutHarness::new(pixel_ui(), true);
-    let palette = h.panel("palette");
+    let palette = h.column();
     let texts: Vec<&str> = h
         .text_rects
         .iter()
@@ -2190,17 +2357,17 @@ fn with_pixel_ui_the_right_panel_has_no_primary_and_secondary_swatches() {
     assert!(!texts.contains(&"Color"), "{texts:?}");
     assert!(!texts.contains(&"🔄"), "{texts:?}");
     // Los dos colores y el intercambio están en la caja de la izquierda (y la X sigue).
-    assert!(h.panel("tools").contains_rect(h.button("Swap colors")));
+    assert!(h.tools_box().contains_rect(h.button("Swap colors")));
 }
 
 #[test]
 fn without_pixel_ui_the_colors_stay_in_the_right_panel() {
     let h = LayoutHarness::editor();
-    assert_eq!(h.panel("tools").width(), 184.0);
+    assert_eq!(h.tools_box().width(), 184.0);
     for label in ["Primary color", "Secondary color", "Swap colors"] {
         assert!(!h.buttons.iter().any(|(l, _)| l == label), "{label}");
     }
-    let palette = h.panel("palette");
+    let palette = h.column();
     let texts: Vec<&str> = h
         .text_rects
         .iter()
@@ -2358,7 +2525,7 @@ impl LayoutHarness {
 /// Con Pixel UI, el editor de color entero dentro del panel derecho, hasta el borde de abajo de
 /// la barra del alfa.
 fn assert_color_editor_whole(h: &LayoutHarness) {
-    let panel = h.panel("palette");
+    let panel = h.column();
     let bars = h.drawn_boxes("picker.bars");
     assert_eq!(bars.len(), 1, "{bars:?}");
     let bars = bars[0];
@@ -2434,10 +2601,10 @@ fn with_pixel_ui_dragging_the_palette_splitter_changes_its_height_and_is_saved()
 #[test]
 fn with_pixel_ui_the_right_panel_can_not_be_narrower_than_its_minimum() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let panel = h.panel("palette");
+    let panel = h.column();
     let edge = Pos2::new(panel.left(), panel.center().y);
     drag(&mut h, edge, edge + Vec2::new(500.0, 0.0));
-    let narrow = h.panel("palette");
+    let narrow = h.column();
     assert!(narrow.width() < panel.width(), "{panel:?} -> {narrow:?}");
     // 120 de la fila de RGBA, 16 de márgenes y la línea contra el lienzo.
     assert_eq!(narrow.width(), 137.0, "{narrow:?}");
@@ -2456,7 +2623,7 @@ fn the_saved_palette_width_is_the_right_panels_width_from_the_first_frame() {
             ..base
         };
         let h = LayoutHarness::new(view, true);
-        assert_eq!(h.panel("palette").width(), 180.0);
+        assert_eq!(h.column().width(), 180.0);
         assert_eq!(h.app.view.palette_width, Some(180.0));
     }
 }
@@ -2464,10 +2631,10 @@ fn the_saved_palette_width_is_the_right_panels_width_from_the_first_frame() {
 #[test]
 fn dragging_the_right_panel_edge_saves_its_width() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let panel = h.panel("palette");
+    let panel = h.column();
     let edge = Pos2::new(panel.left(), panel.center().y);
     drag(&mut h, edge, edge + Vec2::new(-30.0, 0.0));
-    let wide = h.panel("palette").width();
+    let wide = h.column().width();
     assert_eq!(wide, panel.width() + 30.0);
     assert_eq!(h.app.view.palette_width, Some(wide));
     let mut storage = MemoryStorage::default();
@@ -8828,7 +8995,7 @@ fn the_3d_panel_of_the_model_tab_sits_between_the_workspace_and_the_colors() {
     let h = with_model_tab();
     assert_eq!(dock_buttons(&h), Vec::<String>::new());
     let side = h.panel("model_panel");
-    let colors = h.panel("palette");
+    let colors = h.column();
     assert_eq!(side.right(), colors.left(), "{side:?} {colors:?}");
     let canvas = h.canvas.expect("the workspace area");
     // La caja del panel: 3 px de aire hasta el lienzo y hasta la columna de colores.
@@ -11398,9 +11565,8 @@ fn the_font_settings_show_the_family_and_new_variant_creates_the_bold() {
 
 // --- El workspace en la columna derecha (fase C) ---
 
-/// Cuántos botones `label` hay en el panel `panel` (por el centro de su rect).
-fn buttons_in(h: &LayoutHarness, label: &str, panel: &str) -> usize {
-    let rect = h.panel(panel);
+/// Cuántos botones `label` hay en `rect` (por el centro de su rect).
+fn buttons_in(h: &LayoutHarness, label: &str, rect: Rect) -> usize {
     h.buttons
         .iter()
         .filter(|(l, r)| l == label && rect.contains(r.center()))
@@ -11415,7 +11581,7 @@ fn with_essentials_the_right_panel_and_the_color_controls_stay_where_they_were()
     assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
     // Las medidas de antes de la fase C (1200×800, Pixel UI).
     assert_eq!(
-        h.panel("palette"),
+        h.column(),
         Rect::from_min_max(pos2(937.0, 63.0), pos2(1200.0, 780.0))
     );
     assert_eq!(
@@ -11439,10 +11605,10 @@ fn with_essentials_the_right_panel_and_the_color_controls_stay_where_they_were()
     }
     assert_color_editor_whole(&h);
     // Color va solo: sin barra de pestañas (ni su pestaña).
-    assert_eq!(buttons_in(&h, "Color", "palette"), 0);
+    assert_eq!(buttons_in(&h, "Color", h.column()), 0);
     // La tira: un botón por panel de DOCK.
     for &p in PanelId::DOCK {
-        assert_eq!(buttons_in(&h, p.label(), "dock"), 1, "{p:?}");
+        assert_eq!(buttons_in(&h, p.label(), h.panel("dock")), 1, "{p:?}");
     }
 }
 
@@ -11461,11 +11627,11 @@ fn with_essentials_the_canvas_and_the_color_panel_are_where_they_were() {
         Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
     );
     assert_eq!(
-        h.panel("timeline"),
+        h.timeline_box(),
         Rect::from_min_max(pos2(37.0, 590.0), pos2(911.0, 780.0))
     );
     assert_eq!(
-        h.panel("palette"),
+        h.column(),
         Rect::from_min_max(pos2(937.0, 63.0), pos2(1200.0, 780.0))
     );
 }
@@ -11485,7 +11651,7 @@ fn library_beside_color() -> LayoutHarness {
 #[test]
 fn a_panel_docked_beside_color_gets_kit_tabs_and_leaves_the_strip() {
     let h = library_beside_color();
-    let palette = h.panel("palette");
+    let palette = h.column();
     // La columna derecha no se movió.
     assert_eq!(
         palette,
@@ -11502,8 +11668,8 @@ fn a_panel_docked_beside_color_gets_kit_tabs_and_leaves_the_strip() {
     assert!(library.contains_rect(h.button("Close Library")));
     assert!(!h.buttons.iter().any(|(l, _)| l == "Close Color"));
     // El botón de Library ya no está en la tira; los demás sí.
-    assert_eq!(buttons_in(&h, "Library", "dock"), 0);
-    assert_eq!(buttons_in(&h, "Artboards", "dock"), 1);
+    assert_eq!(buttons_in(&h, "Library", h.panel("dock")), 0);
+    assert_eq!(buttons_in(&h, "Artboards", h.panel("dock")), 1);
 }
 
 #[test]
@@ -11515,9 +11681,9 @@ fn closing_a_docked_tab_sends_it_back_to_the_strip() {
     assert!(!h.app.workspace.docked(PanelId::Library));
     assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
     // Color vuelve a ir solo (sin pestañas) y Library, a su botón de la tira.
-    assert_eq!(buttons_in(&h, "Color", "palette"), 0);
-    assert_eq!(buttons_in(&h, "Library", "palette"), 0);
-    assert_eq!(buttons_in(&h, "Library", "dock"), 1);
+    assert_eq!(buttons_in(&h, "Color", h.column()), 0);
+    assert_eq!(buttons_in(&h, "Library", h.column()), 0);
+    assert_eq!(buttons_in(&h, "Library", h.panel("dock")), 1);
 }
 
 #[test]
@@ -11532,7 +11698,7 @@ fn docking_a_panel_whose_flyout_is_open_closes_the_flyout() {
     assert_eq!(crate::dock::open_panel(&h.ctx), None);
     // Library, una sola vez: su pestaña en la columna derecha.
     assert_eq!(h.buttons.iter().filter(|(l, _)| l == "Library").count(), 1);
-    assert_eq!(buttons_in(&h, "Library", "palette"), 1);
+    assert_eq!(buttons_in(&h, "Library", h.column()), 1);
 }
 
 /// Groom acoplado debajo de Color (como `CHIMPSPRITE_DEMO_WORKSPACE=split`) con la columna
@@ -11559,7 +11725,7 @@ fn groom_below_color(palette_width: f32) -> LayoutHarness {
 fn a_docked_panel_never_gets_narrower_than_its_minimum() {
     use crate::panel_registry::PanelId;
     let h = groom_below_color(137.0);
-    let column = h.panel("palette");
+    let column = h.column();
     // El mínimo de Groom, con el margen de los paneles del dock y su barra de scroll.
     let min = crate::groom::MIN_WIDTH
         + 2.0 * crate::dock::FLYOUT_MARGIN as f32
@@ -11590,26 +11756,18 @@ fn with_a_panel_docked_a_click_does_not_change_the_columns_width() {
     use crate::panel_registry::PanelId;
     for saved in [137.0, 300.0] {
         let mut h = groom_below_color(saved);
-        let before = h.panel("palette").width();
+        let before = h.column().width();
         // La columna llega justo al borde de la ventana (no se estira fuera de ella).
-        assert_eq!(
-            h.panel("palette").right(),
-            h.screen().right(),
-            "saved {saved}"
-        );
+        assert_eq!(h.column().right(), h.screen().right(), "saved {saved}");
         // Un clic en el aire del grupo de Groom (en su margen): el apretón de manos termina.
         let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
         h.click(
             leaf.left_bottom() + Vec2::new(3.0, -3.0),
             PointerButton::Primary,
         );
-        let after = h.panel("palette").width();
+        let after = h.column().width();
         assert_eq!(after, before, "saved {saved}: no jump");
-        assert_eq!(
-            h.panel("palette").right(),
-            h.screen().right(),
-            "saved {saved}"
-        );
+        assert_eq!(h.column().right(), h.screen().right(), "saved {saved}");
         // La preferencia no cambia con el clic (tarea 7: solo arrastrando el borde).
         assert_eq!(h.app.view.palette_width, Some(saved), "saved {saved}");
     }
@@ -11648,7 +11806,7 @@ fn dragging_a_strip_icon_to_the_middle_of_the_column_docks_it_beside_color() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let from = h.button("Groom").center();
-    let to = h.panel("palette").center();
+    let to = h.column().center();
     let midway = drag_in_steps(&mut h, from, to);
     // A medio camino, el fantasma con su título (ningún botón de la tira lo escribe).
     assert!(midway.iter().any(|t| t == "Groom"), "the ghost: {midway:?}");
@@ -11657,9 +11815,9 @@ fn dragging_a_strip_icon_to_the_middle_of_the_column_docks_it_beside_color() {
     assert!(w.docked(PanelId::Groom));
     assert_eq!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
     assert!(!w.strip().contains(&PanelId::Groom));
-    assert_eq!(buttons_in(&h, "Groom", "dock"), 0);
-    assert_eq!(buttons_in(&h, "Groom", "palette"), 1);
-    assert_eq!(buttons_in(&h, "Color", "palette"), 1);
+    assert_eq!(buttons_in(&h, "Groom", h.panel("dock")), 0);
+    assert_eq!(buttons_in(&h, "Groom", h.column()), 1);
+    assert_eq!(buttons_in(&h, "Color", h.column()), 1);
     // Y el flyout no se abrió.
     assert_eq!(crate::dock::open_panel(&h.ctx), None);
 }
@@ -11669,7 +11827,7 @@ fn dragging_a_strip_icon_to_the_bottom_edge_of_the_column_splits_it() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let from = h.button("Groom").center();
-    let column = h.panel("palette");
+    let column = h.column();
     let to = pos2(column.center().x, column.bottom() - 20.0);
     drag_in_steps(&mut h, from, to);
     let w = &h.app.workspace;
@@ -11696,7 +11854,7 @@ fn dragging_a_strip_icon_onto_the_canvas_floats_it_there() {
         (leaf.left() - to.x).abs() <= 8.0,
         "{leaf:?} at the pointer {to:?}"
     );
-    assert_eq!(buttons_in(&h, "Groom", "dock"), 0);
+    assert_eq!(buttons_in(&h, "Groom", h.panel("dock")), 0);
 }
 
 #[test]
@@ -11755,7 +11913,7 @@ fn collapse_to_icons_sends_a_group_to_the_strip_but_color_stays() {
     // Library junto a Color: el « al final de la barra de pestañas.
     let mut h = library_beside_color();
     let collapse = h.button("Collapse to Icons");
-    let palette = h.panel("palette");
+    let palette = h.column();
     assert!(
         palette.contains_rect(collapse),
         "{collapse:?} in {palette:?}"
@@ -11764,7 +11922,7 @@ fn collapse_to_icons_sends_a_group_to_the_strip_but_color_stays() {
     assert!(h.app.workspace.docked(PanelId::Color));
     assert!(!h.app.workspace.docked(PanelId::Library));
     assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
-    assert_eq!(buttons_in(&h, "Library", "dock"), 1);
+    assert_eq!(buttons_in(&h, "Library", h.panel("dock")), 1);
     assert!(!h.buttons.iter().any(|(l, _)| l == "Collapse to Icons"));
 }
 
@@ -11822,7 +11980,7 @@ fn the_columns_width_preference_changes_only_when_its_edge_is_dragged() {
     use crate::panel_registry::PanelId;
     // Con 137 (la del usuario), Groom acoplado la ensancha a su mínimo.
     let mut h = groom_below_color(137.0);
-    let grown = h.panel("palette").width();
+    let grown = h.column().width();
     assert!(grown > 137.0, "{grown}");
     // Un clic en otro lado (el aire del grupo de Groom): la preferencia no cambia.
     let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
@@ -11830,19 +11988,19 @@ fn the_columns_width_preference_changes_only_when_its_edge_is_dragged() {
         leaf.left_bottom() + Vec2::new(3.0, -3.0),
         PointerButton::Primary,
     );
-    assert_eq!(h.panel("palette").width(), grown);
+    assert_eq!(h.column().width(), grown);
     assert_eq!(h.app.view.palette_width, Some(137.0));
     // Groom de vuelta a la tira: la columna vuelve a la preferencia.
     h.app.workspace.to_strip(PanelId::Groom);
     h.frame();
     h.frame();
-    assert_eq!(h.panel("palette").width(), 137.0);
+    assert_eq!(h.column().width(), 137.0);
     assert_eq!(h.app.view.palette_width, Some(137.0));
     // Arrastrar el borde sí la cambia.
-    let panel = h.panel("palette");
+    let panel = h.column();
     let edge = pos2(panel.left(), panel.center().y);
     drag(&mut h, edge, edge + vec2(-40.0, 0.0));
-    assert_eq!(h.panel("palette").width(), 177.0);
+    assert_eq!(h.column().width(), 177.0);
     assert_eq!(h.app.view.palette_width, Some(177.0));
 }
 
@@ -11851,7 +12009,7 @@ fn without_a_preference_the_column_also_returns_to_its_own_width() {
     use crate::panel_registry::PanelId;
     use crate::workspace::{DockTarget, Split};
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let factory = h.panel("palette");
+    let factory = h.column();
     // Groom a la derecha de Color: los dos mínimos lado a lado no caben en el ancho de fábrica.
     let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
     h.app
@@ -11860,7 +12018,7 @@ fn without_a_preference_the_column_also_returns_to_its_own_width() {
     for _ in 0..4 {
         h.frame();
     }
-    assert!(h.panel("palette").width() > factory.width());
+    assert!(h.column().width() > factory.width());
     let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
     h.click(
         leaf.left_bottom() + Vec2::new(3.0, -3.0),
@@ -11870,7 +12028,7 @@ fn without_a_preference_the_column_also_returns_to_its_own_width() {
     h.app.workspace.to_strip(PanelId::Groom);
     h.frame();
     h.frame();
-    assert_eq!(h.panel("palette"), factory);
+    assert_eq!(h.column(), factory);
     assert_eq!(h.app.view.palette_width, None);
 }
 
@@ -11901,7 +12059,7 @@ fn the_workspace_is_saved_and_a_new_app_restores_it() {
     assert_eq!(w.strip(), h.app.workspace.strip());
     // Lumen, donde estaba y del mismo tamaño; la columna, igual.
     assert_eq!(w.leaf_rect(PanelId::Lumen).unwrap(), lumen);
-    assert_eq!(back.panel("palette"), h.panel("palette"));
+    assert_eq!(back.column(), h.column());
     // Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`) no se guarda.
     h.app.save_workspace = false;
     let mut demo = MemoryStorage::default();
@@ -12347,7 +12505,7 @@ fn reset_essentials_goes_back_to_the_factory_layout_in_one_step() {
     for _ in 0..2 {
         h.frame();
     }
-    assert!(h.panel("palette").width() > 137.0, "Groom widens it");
+    assert!(h.column().width() > 137.0, "Groom widens it");
     let undo = h.app.doc.editor.history.done_count();
     // Tarea 7: Reset se mudó de View a Window → Workspace (con el nombre del de ahora).
     open_menu(&mut h, "View");
@@ -12375,7 +12533,7 @@ fn reset_essentials_goes_back_to_the_factory_layout_in_one_step() {
     assert_eq!(w.strip(), PanelId::DOCK);
     // La columna vuelve al ancho elegido (sin Groom, que la ensanchaba).
     assert_eq!(h.app.view.palette_width, Some(137.0));
-    assert_eq!(h.panel("palette").width(), 137.0);
+    assert_eq!(h.column().width(), 137.0);
     // No es del documento: nada que deshacer.
     assert_eq!(h.app.doc.editor.history.done_count(), undo);
 }
@@ -12387,7 +12545,7 @@ fn the_right_columns_resize_handle_is_the_divider_on_its_edge() {
     // preferencia de ancho sale de lo que egui_dock le cambia a su fracción (sin ids internos).
     // Lo equivalente: en la línea del borde, el cursor de redimensionar a lo ancho.
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let column = h.panel("palette");
+    let column = h.column();
     h.frame_with(vec![Event::PointerMoved(pos2(
         column.left() + 1.0,
         column.center().y,
@@ -12618,7 +12776,7 @@ fn with_color_floating_the_column_does_not_keep_colors_minimum() {
     h.app.workspace.dock(PanelId::Library, DockTarget::Focused);
     h.frame();
     h.frame();
-    let panel = h.panel("palette");
+    let panel = h.column();
     let edge = pos2(panel.left(), panel.center().y);
     drag(&mut h, edge, edge + vec2(300.0, 0.0));
     // Library en su mínimo (con su margen y la barra de scroll); su margen izquierdo cuenta desde
@@ -12626,8 +12784,8 @@ fn with_color_floating_the_column_does_not_keep_colors_minimum() {
     let library = crate::library_panel::MIN_WIDTH
         + 2.0 * f32::from(crate::dock::FLYOUT_MARGIN)
         + crate::pixel_ui::SCROLL_BAR;
-    assert_eq!(h.panel("palette").width(), library);
-    assert!(h.panel("palette").width() < panel.width());
+    assert_eq!(h.column().width(), library);
+    assert!(h.column().width() < panel.width());
 }
 
 // --- Fase D, tarea 2: el lienzo como hoja protegida ---
@@ -12686,7 +12844,7 @@ fn a_tab_dropped_in_the_middle_of_the_canvas_is_split_beside_it_on_that_side() {
     // De su ancho de fábrica (en puntos), no de la mitad del lienzo.
     assert!(library.width() < canvas.width(), "{library:?} {canvas:?}");
     // Color sigue en la columna, del mismo ancho.
-    assert_eq!(h.panel("palette").width(), 263.0);
+    assert_eq!(h.column().width(), 263.0);
 }
 
 #[test]
@@ -12694,7 +12852,7 @@ fn the_canvas_can_not_be_dragged_from_its_grab_strip() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
-    let column = h.panel("palette");
+    let column = h.column();
     // En su franja de arriba no hay mano (no se agarra) ni se resalta.
     let strip = pos2(canvas.center().x, canvas.top() + 1.0);
     h.frame_with(vec![Event::PointerMoved(strip)]);
@@ -12706,7 +12864,7 @@ fn the_canvas_can_not_be_dragged_from_its_grab_strip() {
     assert_eq!(w.places(PanelId::Canvas), 1);
     assert!(w.docked(PanelId::Canvas) && !w.floating(PanelId::Canvas));
     assert_eq!(w.leaf_rect(PanelId::Canvas), Some(canvas));
-    assert_eq!(h.panel("palette"), column);
+    assert_eq!(h.column(), column);
 }
 
 #[test]
@@ -12725,7 +12883,7 @@ fn a_strip_icon_dropped_on_the_canvas_edge_docks_beside_it_at_its_reference_widt
     assert!(groom.right() <= after.left(), "{groom:?} {after:?}");
     assert_eq!(groom.left(), canvas.left());
     // La columna derecha no se movió: el lienzo absorbió a Groom.
-    assert_eq!(h.panel("palette").width(), 263.0);
+    assert_eq!(h.column().width(), 263.0);
     assert_eq!(after.right(), canvas.right());
 }
 
@@ -12742,7 +12900,7 @@ fn shrinking_the_window_and_growing_it_back_keeps_the_sides_points() {
         h.frame();
     }
     let groom = h.app.workspace.leaf_rect(PanelId::Groom).unwrap().width();
-    let column = h.panel("palette").width();
+    let column = h.column().width();
     // Más angosta de lo que caben los dos lados con el lienzo: algo cede; al volver, nada perdido.
     for size in [vec2(700.0, 800.0), vec2(1200.0, 800.0)] {
         h.size = size;
@@ -12754,7 +12912,7 @@ fn shrinking_the_window_and_growing_it_back_keeps_the_sides_points() {
         h.app.workspace.leaf_rect(PanelId::Groom).unwrap().width(),
         groom
     );
-    assert_eq!(h.panel("palette").width(), column);
+    assert_eq!(h.column().width(), column);
 }
 
 // --- Fase D, tarea 2 (revisión): el lienzo nunca se queda sin su mínimo ---
@@ -12958,7 +13116,7 @@ fn with_essentials_the_toolbar_is_a_leaf_where_its_panel_was() {
     let w = &h.app.workspace;
     assert!(w.docked(PanelId::Tools) && !w.strip().contains(&PanelId::Tools));
     assert_eq!(
-        h.panel("tools"),
+        h.tools_box(),
         Rect::from_min_max(pos2(0.0, 63.0), pos2(37.0, 780.0))
     );
     assert_eq!(
@@ -12988,7 +13146,7 @@ fn with_essentials_the_toolbar_is_a_leaf_where_its_panel_was() {
     // Sin Pixel UI: la barra con nombres, de 184 con su línea, y sus botones donde estaban.
     let h = LayoutHarness::editor();
     assert_eq!(
-        h.panel("tools"),
+        h.tools_box(),
         Rect::from_min_max(pos2(0.0, 78.0), pos2(184.0, h.panel("status").top()))
     );
     assert_eq!(h.canvas.unwrap().left(), 184.0);
@@ -13010,7 +13168,7 @@ fn the_toolbars_divider_is_not_dragged_and_has_no_resize_cursor() {
     use crate::panel_registry::PanelId;
     for view in [pixel_ui(), plain()] {
         let mut h = LayoutHarness::new(view, true);
-        let tools = h.panel("tools");
+        let tools = h.tools_box();
         let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
         // El centro del divisor: un punto antes del borde del panel de antes.
         let at = pos2(tools.right() - 1.0, 400.0);
@@ -13019,7 +13177,7 @@ fn the_toolbars_divider_is_not_dragged_and_has_no_resize_cursor() {
         assert_ne!(h.cursor, egui::CursorIcon::ResizeHorizontal);
         h.drag(at, at + vec2(80.0, 0.0));
         h.frame();
-        assert_eq!(h.panel("tools"), tools);
+        assert_eq!(h.tools_box(), tools);
         assert_eq!(h.app.workspace.leaf_rect(PanelId::Canvas), Some(canvas));
     }
 }
@@ -13029,7 +13187,7 @@ fn the_toolbar_moved_right_of_the_canvas_stays_there_and_the_canvas_reaches_the_
     use crate::panel_registry::PanelId;
     use crate::workspace::{DockTarget, Split};
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let column = h.panel("palette");
+    let column = h.column();
     let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
     h.app
         .workspace
@@ -13039,7 +13197,7 @@ fn the_toolbar_moved_right_of_the_canvas_stays_there_and_the_canvas_reaches_the_
     }
     let w = &h.app.workspace;
     assert!(w.docked(PanelId::Tools));
-    let tools = h.panel("tools");
+    let tools = h.tools_box();
     let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
     // El lienzo se ensancha hacia la izquierda, hasta la orilla.
     assert_eq!(canvas.left(), 0.0, "{canvas:?}");
@@ -13047,11 +13205,11 @@ fn the_toolbar_moved_right_of_the_canvas_stays_there_and_the_canvas_reaches_the_
     assert_eq!(tools.left(), canvas.right(), "{tools:?} {canvas:?}");
     assert_eq!(tools.width(), 37.0, "{tools:?}");
     assert_eq!(tools.right(), column.left());
-    assert_eq!(h.panel("palette"), column);
+    assert_eq!(h.column(), column);
     assert!(tools.contains_rect(h.button("Rectangular Marquee")));
     // Sigue ahí frame tras frame.
     h.frame();
-    assert_eq!(h.panel("tools"), tools);
+    assert_eq!(h.tools_box(), tools);
 }
 
 #[test]
@@ -13082,7 +13240,7 @@ fn closing_the_toolbar_sends_it_to_the_strip_and_its_button_opens_it() {
     let strip = h.panel("dock_left");
     assert_eq!(strip.left(), 0.0);
     assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), strip.right());
-    assert_eq!(buttons_in(&h, "Tools", "dock_left"), 1);
+    assert_eq!(buttons_in(&h, "Tools", h.panel("dock_left")), 1);
     assert!(!h.buttons.iter().any(|(l, _)| l == "Rectangular Marquee"));
     // Su botón abre la toolbar flotando junto a él.
     h.click(h.button("Tools").center(), PointerButton::Primary);
@@ -13265,7 +13423,7 @@ fn with_essentials_the_timeline_is_a_leaf_below_the_canvas_where_its_panel_was()
         Some(Rect::from_min_max(pos2(37.0, 63.0), pos2(937.0, 588.0)))
     );
     assert_eq!(
-        h.panel("timeline"),
+        h.timeline_box(),
         Rect::from_min_max(pos2(37.0, 590.0), pos2(911.0, 780.0))
     );
     assert_eq!(
@@ -13309,7 +13467,7 @@ fn with_essentials_the_timeline_is_a_leaf_below_the_canvas_where_its_panel_was()
         Some(Rect::from_min_max(pos2(184.0, 589.0), pos2(937.0, 777.0)))
     );
     assert_eq!(
-        h.panel("timeline"),
+        h.timeline_box(),
         Rect::from_min_max(pos2(184.0, 587.0), pos2(912.0, 777.0))
     );
     assert_eq!(
@@ -13342,7 +13500,7 @@ fn the_view_timeline_toggle_hides_its_leaf_and_brings_it_back_in_its_place() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let (leaf, panel, canvas) = (
         h.app.workspace.leaf_rect(PanelId::Timeline),
-        h.panel("timeline"),
+        h.timeline_box(),
         h.canvas,
     );
     // El botón de la tira lo apaga: sin su hoja, el lienzo llega hasta abajo; la tira, igual.
@@ -13362,7 +13520,7 @@ fn the_view_timeline_toggle_hides_its_leaf_and_brings_it_back_in_its_place() {
     assert!(h.app.view.timeline);
     assert!(h.app.drawn_this_frame(PanelId::Timeline));
     assert_eq!(h.app.workspace.leaf_rect(PanelId::Timeline), leaf);
-    assert_eq!(h.panel("timeline"), panel);
+    assert_eq!(h.timeline_box(), panel);
     assert_eq!(h.canvas, canvas);
     // View → Timeline (la misma preferencia) con el timeline a la derecha del lienzo: vuelve ahí.
     let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
@@ -13416,7 +13574,7 @@ fn the_timeline_moved_right_of_the_canvas_docks_there() {
     use crate::panel_registry::PanelId;
     use crate::workspace::{DockTarget, Split};
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let column = h.panel("palette");
+    let column = h.column();
     let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
     h.app
         .workspace
@@ -13435,7 +13593,7 @@ fn the_timeline_moved_right_of_the_canvas_docks_there() {
     assert_eq!(canvas.bottom(), 780.0);
     assert_eq!(h.panel("dock").right(), canvas.right());
     assert_eq!(h.panel("dock").y_range(), canvas.y_range());
-    assert_eq!(h.panel("palette"), column);
+    assert_eq!(h.column(), column);
     assert!(timeline.right() <= column.left());
     assert!(h.app.drawn_this_frame(PanelId::Timeline));
     assert!(
@@ -13462,7 +13620,7 @@ fn dragging_the_timeline_divider_keeps_its_height_as_a_preference() {
     h.frame();
     assert_eq!(h.app.view.timeline_height, Some(240.0));
     assert_eq!(
-        h.panel("timeline"),
+        h.timeline_box(),
         Rect::from_min_max(pos2(37.0, 540.0), pos2(911.0, 780.0))
     );
     // Oculto y de vuelta, del mismo alto; en una ventana más baja, también.
@@ -13472,12 +13630,12 @@ fn dragging_the_timeline_divider_keeps_its_height_as_a_preference() {
     for _ in 0..3 {
         h.frame();
     }
-    assert_eq!(h.panel("timeline").height(), 240.0);
+    assert_eq!(h.timeline_box().height(), 240.0);
     h.size = vec2(1200.0, 700.0);
     for _ in 0..3 {
         h.frame();
     }
-    let timeline = h.panel("timeline");
+    let timeline = h.timeline_box();
     assert_eq!(timeline.height(), 240.0);
     assert_eq!(timeline.bottom(), h.panel("status").top());
     assert!(h.app.workspace.leaf_rect(PanelId::Canvas).unwrap().bottom() < timeline.top());
@@ -14027,9 +14185,9 @@ fn a_group_against_the_left_edge_collapses_to_a_left_strip_with_its_icons_and_fl
     assert_eq!(strip.left(), 0.0);
     assert_eq!(strip.width(), crate::dock::WIDTH);
     assert_eq!(strip.y_range(), h.panel("dock").y_range());
-    assert_eq!(buttons_in(&h, "Groom", "dock_left"), 1);
-    assert_eq!(buttons_in(&h, "Groom", "dock"), 0);
-    assert_eq!(h.panel("tools").left(), strip.right());
+    assert_eq!(buttons_in(&h, "Groom", h.panel("dock_left")), 1);
+    assert_eq!(buttons_in(&h, "Groom", h.panel("dock")), 0);
+    assert_eq!(h.tools_box().left(), strip.right());
     // Su botón abre su flyout, a su derecha (hacia adentro).
     let button = h.button("Groom");
     h.click(button.center(), PointerButton::Primary);
@@ -14063,7 +14221,7 @@ fn with_essentials_no_other_strip_shows_and_an_emptied_one_takes_no_room() {
     let canvas = Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0));
     let tools = Rect::from_min_max(pos2(0.0, 63.0), pos2(37.0, 780.0));
     assert_eq!(h.canvas, Some(canvas));
-    assert_eq!(h.panel("tools"), tools);
+    assert_eq!(h.tools_box(), tools);
     // La toolbar a la tira de la izquierda y de vuelta (con "Dock"): la tira vacía no ocupa nada.
     h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
     for _ in 0..3 {
@@ -14076,7 +14234,7 @@ fn with_essentials_no_other_strip_shows_and_an_emptied_one_takes_no_room() {
     }
     assert!(h.app.workspace.strip_at(Edge::Left).is_empty());
     assert_eq!(h.canvas, Some(canvas));
-    assert_eq!(h.panel("tools"), tools);
+    assert_eq!(h.tools_box(), tools);
 }
 
 #[test]
@@ -14186,7 +14344,7 @@ fn the_strip_menu_docks_the_toolbar_at_its_edge_and_floats_it_beside_the_strip()
     use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let tools = h.panel("tools");
+    let tools = h.tools_box();
     let menu = |h: &mut LayoutHarness, item: &str| {
         h.click(h.button("Tools").center(), PointerButton::Secondary);
         h.click(h.button(item).center(), PointerButton::Primary);
@@ -14201,7 +14359,7 @@ fn the_strip_menu_docks_the_toolbar_at_its_edge_and_floats_it_beside_the_strip()
     }
     menu(&mut h, "Dock");
     assert_eq!(h.app.workspace.tools_side(), Some(true));
-    assert_eq!(h.panel("tools"), tools);
+    assert_eq!(h.tools_box(), tools);
     assert_ne!(
         h.app.workspace.leaf_of(PanelId::Tools),
         h.app.workspace.leaf_of(PanelId::Color)
@@ -14213,7 +14371,7 @@ fn the_strip_menu_docks_the_toolbar_at_its_edge_and_floats_it_beside_the_strip()
     }
     menu(&mut h, "Dock");
     assert_eq!(h.app.workspace.tools_side(), Some(false));
-    assert_eq!(h.panel("tools").width(), tools.width());
+    assert_eq!(h.tools_box().width(), tools.width());
     // "Float": su ventana, junto a la tira (donde va su flyout), no a 200 puntos de ella.
     h.app.workspace.to_strip_at(PanelId::Tools, Edge::Right);
     for _ in 0..3 {
@@ -14301,7 +14459,7 @@ fn the_floating_toolbar_is_a_window_as_narrow_as_its_box() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     // El panel de antes: su hoja y el divisor (donde tenía su aire de la derecha).
-    let docked = h.panel("tools");
+    let docked = h.tools_box();
     h.app.workspace.float(PanelId::Tools, pos2(320.0, 120.0));
     for _ in 0..4 {
         h.frame();
@@ -14370,7 +14528,7 @@ fn closing_a_tab_sends_it_to_the_strip_of_the_nearest_edge() {
     let top = h.panel("dock_top");
     assert_eq!(top.height(), crate::dock::WIDTH);
     assert_eq!(top.top(), 63.0);
-    assert_eq!(buttons_in(&h, "Lumen", "dock_top"), 1);
+    assert_eq!(buttons_in(&h, "Lumen", h.panel("dock_top")), 1);
     // Su flyout, debajo de su botón.
     let button = h.button("Lumen");
     h.click(button.center(), PointerButton::Primary);
