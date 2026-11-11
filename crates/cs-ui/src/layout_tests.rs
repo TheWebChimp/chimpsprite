@@ -11915,6 +11915,66 @@ fn the_workspace_is_saved_and_a_new_app_restores_it() {
     assert_eq!(app.workspace.strip(), PanelId::DOCK);
 }
 
+/// Guarda la configuración de `h` y abre con ella una app nueva, con un contexto de egui nuevo
+/// (como al volver a abrir la app).
+fn reopened(h: &mut LayoutHarness) -> LayoutHarness {
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut storage);
+    let view: ViewSettings = eframe::get_value(&storage, crate::VIEW_KEY).expect("saved");
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
+    app.restore_workspace(&storage);
+    app.new_document();
+    let mut back = LayoutHarness::start(app);
+    back.frame();
+    back
+}
+
+#[test]
+fn with_the_timeline_off_a_restored_floating_window_keeps_its_place() {
+    use crate::panel_registry::PanelId;
+    // El timeline apagado se oculta en el primer frame de la app nueva: eso no le quita a Lumen
+    // (flotando) su lugar guardado.
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.view.timeline = false;
+    h.app.workspace.float(PanelId::Lumen, pos2(320.0, 120.0));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let lumen = h.app.workspace.leaf_rect(PanelId::Lumen).unwrap();
+    let back = reopened(&mut h);
+    let w = &back.app.workspace;
+    assert!(!back.app.view.timeline);
+    assert!(!w.docked(PanelId::Timeline) && !w.floating(PanelId::Timeline));
+    assert!(w.floating(PanelId::Lumen));
+    assert_eq!(w.leaf_rect(PanelId::Lumen).unwrap(), lumen);
+}
+
+#[test]
+fn a_hidden_floating_timeline_comes_back_floating_after_a_restart() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.float(PanelId::Timeline, pos2(300.0, 150.0));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let timeline = h.app.workspace.leaf_rect(PanelId::Timeline).unwrap();
+    h.app.view.timeline = false;
+    for _ in 0..2 {
+        h.frame();
+    }
+    assert!(!h.app.workspace.floating(PanelId::Timeline));
+    let mut back = reopened(&mut h);
+    assert!(!back.app.workspace.floating(PanelId::Timeline));
+    back.app.view.timeline = true;
+    for _ in 0..4 {
+        back.frame();
+    }
+    let w = &back.app.workspace;
+    assert!(w.floating(PanelId::Timeline), "floating again");
+    assert_eq!(w.leaf_rect(PanelId::Timeline).unwrap(), timeline);
+}
+
 #[test]
 fn reset_workspace_goes_back_to_essentials_in_one_step() {
     use crate::panel_registry::PanelId;

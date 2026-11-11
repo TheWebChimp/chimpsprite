@@ -15,8 +15,8 @@ pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
 /// Dónde estaba el timeline cuando se ocultó (ver [`Workspace::sync_timeline`]): ahí vuelve.
 #[derive(Clone, Debug)]
 pub(super) enum Spot {
-    /// En el grupo de este panel, como una pestaña más.
-    Tab(PanelId),
+    /// En el grupo de `with`, como pestaña en el lugar `index` (sin cambiar la activa).
+    Tab { with: PanelId, index: usize },
     /// Solo en su grupo, junto al nodo que tenía exactamente estos paneles (en la superficie
     /// principal o en una ventana): de ese lado y con la fracción de su split.
     Beside {
@@ -312,7 +312,22 @@ impl Workspace {
         };
         let spot = self.timeline_spot_of(path.node_path());
         let focus = self.focused_panel();
-        self.placements.clear();
+        // Si era lo único de su ventana, la ventana se va: lo que se iba a acomodar de ella también
+        // (lo de las demás ventanas de un acomodo leído sigue; los índices de las superficies no
+        // se mueven al quitar una).
+        let alone = !path.surface.is_main()
+            && self.state[path.surface]
+                .iter()
+                .filter(|n| n.is_leaf())
+                .count()
+                == 1
+            && self
+                .state
+                .leaf(path.node_path())
+                .is_ok_and(|leaf| leaf.tabs.len() == 1);
+        if alone {
+            self.placements.retain(|(s, _)| *s != path.surface);
+        }
         self.placing.retain(|(p, _, _)| *p != PanelId::Timeline);
         self.state.remove_tab(path);
         self.timeline_spot = spot;
@@ -323,7 +338,12 @@ impl Workspace {
     fn timeline_spot_of(&self, path: NodePath) -> Option<Spot> {
         let leaf = self.state.leaf(path).ok()?;
         if let Some(&with) = leaf.tabs.iter().find(|&&t| t != PanelId::Timeline) {
-            return Some(Spot::Tab(with));
+            let index = leaf
+                .tabs
+                .iter()
+                .position(|&t| t == PanelId::Timeline)
+                .unwrap_or(leaf.tabs.len());
+            return Some(Spot::Tab { with, index });
         }
         let tree = &self.state[path.surface];
         let Some(parent) = path.node.parent() else {
@@ -368,12 +388,16 @@ impl Workspace {
             return;
         }
         let focus = self.focused_panel();
-        self.placements.clear();
         let placed = match self.timeline_spot.take() {
-            Some(Spot::Tab(with)) => match self.state.find_tab(&with) {
+            // En su lugar entre las pestañas, sin cambiar la que se ve.
+            Some(Spot::Tab { with, index }) => match self.state.find_tab(&with) {
                 Some(path) => match self.state.leaf_mut(path.node_path()) {
                     Ok(leaf) => {
-                        leaf.append_tab(PanelId::Timeline);
+                        let index = index.min(leaf.tabs.len());
+                        leaf.tabs.insert(index, PanelId::Timeline);
+                        if leaf.active.0 >= index {
+                            leaf.active = TabIndex(leaf.active.0 + 1);
+                        }
                         true
                     }
                     Err(_) => false,
@@ -394,7 +418,12 @@ impl Workspace {
                     window.set_position(rect.min.round());
                     window.set_size(rect.size().round());
                 }
+                // El rect de lo de adentro, ya en su grupo: así lo lleva lo que se guarda (un
+                // acomodo leído reabre ahí sus ventanas) y, si se vuelve a ocultar antes de
+                // dibujarse, recuerda el mismo lugar.
+                self.state[surface][NodeIndex::root()].set_rect(rect);
                 // Lo de adentro donde estaba (con el marco medido, como un acomodo leído).
+                self.placements.retain(|(s, _)| *s != surface);
                 self.placements.push((surface, rect));
                 true
             }
@@ -1025,6 +1054,46 @@ mod tests {
         for &id in PanelId::ALL.iter().filter(|&&p| p != PanelId::Preview) {
             assert_eq!(w.places(id), 1, "{id:?}");
         }
+    }
+
+    #[test]
+    fn a_hidden_timeline_tab_comes_back_at_its_index_without_changing_the_active_tab() {
+        // En el grupo de Color: `[Color, Timeline, Library]`, con Library a la vista.
+        let mut w = Workspace::essentials();
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Timeline, DockTarget::Leaf(s, n));
+        w.dock(PanelId::Library, DockTarget::Leaf(s, n));
+        let group = |w: &Workspace| {
+            let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+            let leaf = w
+                .state
+                .leaf(NodePath {
+                    surface: s,
+                    node: n,
+                })
+                .unwrap();
+            (leaf.tabs.clone(), leaf.tabs[leaf.active.0])
+        };
+        assert_eq!(
+            group(&w),
+            (
+                vec![PanelId::Color, PanelId::Timeline, PanelId::Library],
+                PanelId::Library
+            )
+        );
+        w.sync_timeline(false);
+        assert_eq!(
+            group(&w),
+            (vec![PanelId::Color, PanelId::Library], PanelId::Library)
+        );
+        w.sync_timeline(true);
+        assert_eq!(
+            group(&w),
+            (
+                vec![PanelId::Color, PanelId::Timeline, PanelId::Library],
+                PanelId::Library
+            )
+        );
     }
 
     #[test]

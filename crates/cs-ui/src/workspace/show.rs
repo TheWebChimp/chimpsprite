@@ -627,6 +627,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             // vuelve a su lugar al prenderlo.
             app.view.timeline = false;
             workspace.sync_timeline(false);
+            ctx.request_repaint();
         } else {
             workspace.to_strip(id);
         }
