@@ -501,7 +501,7 @@ pub trait Fetcher {
     fn thumb(&self, ctx: &egui::Context, url: &str) -> Pending<egui::ColorImage>;
 }
 
-/// La red de verdad, con `ehttp` (los tests de la app usan [`Offline`]).
+/// La red de verdad, con `ehttp` (los tests de la app usan `Offline`).
 #[cfg_attr(test, allow(dead_code))]
 pub struct Online;
 
@@ -535,7 +535,7 @@ impl Fetcher for Offline {
     }
 }
 
-/// El de la app: la red (en los tests, [`Offline`]).
+/// El de la app: la red (en los tests, `Offline`).
 pub fn default_fetcher() -> Box<dyn Fetcher> {
     #[cfg(test)]
     return Box::new(Offline);

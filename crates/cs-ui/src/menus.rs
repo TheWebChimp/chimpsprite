@@ -956,9 +956,33 @@ pub(crate) fn context_menu(
     let Some(skin) = pixel_ui::frame_skin(&response.ctx) else {
         return response.context_menu(content);
     };
-    let look = MenuLook::new(&skin, 0.0);
+    pixel_popup(Popup::context_menu(response), &skin, content)
+}
+
+/// El menú que abre (y cierra) un clic en `response`, del lado `align` de él: con Pixel UI, el
+/// panel de los menús de la barra con sus filas; si no, el de egui. Elegir una fila lo cierra.
+pub(crate) fn click_menu(
+    response: &Response,
+    align: RectAlign,
+    content: impl FnOnce(&mut Ui),
+) -> Option<InnerResponse<()>> {
+    let popup = Popup::menu(response).align(align).align_alternatives(&[]);
+    let Some(skin) = pixel_ui::frame_skin(&response.ctx) else {
+        return popup.show(content);
+    };
+    pixel_popup(popup, &skin, content)
+}
+
+/// `popup` con el panel de los menús de la barra (Pixel UI, `skin`): su marco, su estilo y sus
+/// filas, como menú (lo de [`context_menu`] y [`click_menu`]).
+fn pixel_popup(
+    popup: Popup<'_>,
+    skin: &Skin,
+    content: impl FnOnce(&mut Ui),
+) -> Option<InnerResponse<()>> {
+    let look = MenuLook::new(skin, 0.0);
     let config = menu::MenuConfig::new().style(pixel_menu_style);
-    Popup::context_menu(response)
+    popup
         .frame(Frame::NONE.inner_margin(PANEL_MARGIN))
         .style(pixel_menu_style)
         .info(

@@ -473,6 +473,20 @@ impl DafontPanel {
         self.detail = Some(detail);
     }
 
+    /// Para los tests: la lista de dos fuentes de `tests::LISTING` ya llegada y sus vistas previas
+    /// sin pedir (sin red: lo que se dibuja no depende de cuándo responde dafont).
+    #[cfg(test)]
+    pub(crate) fn offline() -> Self {
+        let mut panel = DafontPanel {
+            fonts: parse_listing(tests::LISTING),
+            ..Default::default()
+        };
+        for font in &panel.fonts {
+            panel.previews.insert(font.slug.clone(), Preview::Failed);
+        }
+        panel
+    }
+
     fn downloading(&self, slug: &str) -> bool {
         self.download
             .as_ref()
@@ -1320,7 +1334,7 @@ mod tests {
     use eframe::egui::Rect;
 
     /// Dos fuentes como las de la página de la categoría Bitmap (2026-10).
-    const LISTING: &str = r#"<a name="36172"></a><div class="lv1left dfbg"><a href="minecraft.font"><strong>Minecraft</strong></a>&nbsp;<span title="Euro" class="contain">&euro;</span>  by <a href="craftron-gaming.d6128">Craftron Gaming</a></div><div class="lv1right dfbg">&nbsp;<span style="cursor:help" title="Use at 16 px (or multiple of 16), anti-alias off"> (16 px)</span></div><div class="lv2right">&nbsp;<span class="light">5,204,307 downloads (5,642 yesterday)</span> &nbsp; <a class="tdn help black" style="cursor:help" target="_blank" href="./faq.php#copyright">100% Free</a></div><div class="dlbox" style="height:88px" ><a class="dl" title="5 K" href="//dl.dafont.com/dl/?f=minecraft"  rel="nofollow">&nbsp;Download&nbsp;</a></div><div style="background-image:url(/img/preview/m/i/minecraft0.png)" class="preview"><a href="minecraft.font"></a></div><div class="dfxsmall">&nbsp;</div><a name="46880"></a><div class="lv1left dfbg"><a href="kiwisoda.font"><strong>Kiwi Soda</strong></a>&nbsp;<span title="Accents" class="contain">&agrave;</span>  by <a href="jeti.d1589">jeti</a></div><div class="lv2right">&nbsp;<a class="tdn help black" href="./faq.php#copyright">Public domain / GPL / OFL</a></div><div style="background-image:url(/img/preview/k/i/kiwisoda0.png)" class="preview"></div>"#;
+    pub(super) const LISTING: &str = r#"<a name="36172"></a><div class="lv1left dfbg"><a href="minecraft.font"><strong>Minecraft</strong></a>&nbsp;<span title="Euro" class="contain">&euro;</span>  by <a href="craftron-gaming.d6128">Craftron Gaming</a></div><div class="lv1right dfbg">&nbsp;<span style="cursor:help" title="Use at 16 px (or multiple of 16), anti-alias off"> (16 px)</span></div><div class="lv2right">&nbsp;<span class="light">5,204,307 downloads (5,642 yesterday)</span> &nbsp; <a class="tdn help black" style="cursor:help" target="_blank" href="./faq.php#copyright">100% Free</a></div><div class="dlbox" style="height:88px" ><a class="dl" title="5 K" href="//dl.dafont.com/dl/?f=minecraft"  rel="nofollow">&nbsp;Download&nbsp;</a></div><div style="background-image:url(/img/preview/m/i/minecraft0.png)" class="preview"><a href="minecraft.font"></a></div><div class="dfxsmall">&nbsp;</div><a name="46880"></a><div class="lv1left dfbg"><a href="kiwisoda.font"><strong>Kiwi Soda</strong></a>&nbsp;<span title="Accents" class="contain">&agrave;</span>  by <a href="jeti.d1589">jeti</a></div><div class="lv2right">&nbsp;<a class="tdn help black" href="./faq.php#copyright">Public domain / GPL / OFL</a></div><div style="background-image:url(/img/preview/k/i/kiwisoda0.png)" class="preview"></div>"#;
 
     #[test]
     fn the_listing_gives_name_author_size_license_and_preview() {
@@ -1582,8 +1596,8 @@ mod tests {
             let buttons: Vec<Rect> = probe
                 .widgets
                 .iter()
-                .filter(|(n, _)| n == "View more")
-                .map(|(_, r)| *r)
+                .filter(|(n, _, _)| n == "View more")
+                .map(|(_, r, _)| *r)
                 .collect();
             assert_eq!(buttons.len(), 2, "at {width}");
             for view in &buttons {
@@ -1593,8 +1607,8 @@ mod tests {
             let use_font = probe
                 .widgets
                 .iter()
-                .filter(|(n, _)| n == "Use font")
-                .map(|(_, r)| *r)
+                .filter(|(n, _, _)| n == "Use font")
+                .map(|(_, r, _)| *r)
                 .min_by(|a, b| a.top().total_cmp(&b.top()))
                 .expect("Use font");
             assert_eq!(

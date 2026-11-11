@@ -1,4 +1,4 @@
-//! Los menús de la barra de arriba (File, Edit, Sprite, Frame, View y Help).
+//! Los menús de la barra de arriba (File, Edit, Sprite, Layer, Frame, Select, View, Window y Help).
 
 use crate::*;
 
@@ -323,11 +323,67 @@ impl ChimpApp {
         {
             canvas.request_zoom(view::ZoomRequest::Fit);
         }
-        // El acomodo de los paneles (no hay menú Window: va con Timeline y los demás de la vista).
+    }
+
+    /// El menú Window, como el de Photoshop: el submenú Workspace (los de fábrica, los del usuario,
+    /// Reset del de ahora, New Workspace… y Delete Workspace…) y cada panel, con ✓ si está abierto
+    /// (acoplado o flotando; ver `ChimpApp::panel_open`). Un clic en un panel lo enfoca donde está
+    /// o lo muestra en su lugar (ver `ChimpApp::window_panel`).
+    fn window_menu(&mut self, ui: &mut egui::Ui) {
+        menus::submenu(ui, "Workspace", |ui| {
+            let current = self.workspaces.current().to_owned();
+            let user: Vec<String> = self
+                .workspaces
+                .user_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            let mut pick = None;
+            for name in workspace::FACTORY {
+                if ui.add(menus::choice(current == name, name)).clicked() {
+                    pick = Some(name.to_owned());
+                }
+            }
+            if !user.is_empty() {
+                menus::separator(ui);
+                for name in &user {
+                    if ui.add(menus::choice(current == *name, name)).clicked() {
+                        pick = Some(name.clone());
+                    }
+                }
+            }
+            menus::separator(ui);
+            if ui.add(menus::plain(&format!("Reset {current}"))).clicked() {
+                self.reset_workspace();
+                ui.close();
+            }
+            if ui.add(menus::plain("New Workspace…")).clicked() {
+                self.open_workspace_dialog(false);
+                ui.close();
+            }
+            let deletable = !self.workspaces.deletable().is_empty();
+            if ui
+                .add_enabled(deletable, menus::plain("Delete Workspace…"))
+                .clicked()
+            {
+                self.open_workspace_dialog(true);
+                ui.close();
+            }
+            if let Some(name) = pick {
+                self.switch_workspace(&name);
+                ui.close();
+            }
+        });
         menus::separator(ui);
-        if ui.add(menus::plain("Reset Workspace")).clicked() {
-            self.reset_workspace();
-            ui.close();
+        for &id in crate::panel_registry::PanelId::ALL {
+            if id == crate::panel_registry::PanelId::Canvas {
+                continue;
+            }
+            let mut open = self.panel_open(id);
+            if ui.add(menus::check(&mut open, id.label())).clicked() {
+                self.window_panel(ui.ctx(), id);
+                ui.close();
+            }
         }
     }
 
@@ -1036,6 +1092,8 @@ A pixel art editor."
                 });
                 menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
             });
+            // Los paneles y los workspaces son de la app: también sin documento (en Home).
+            menus::bar_menu(ui, look, "Window", |ui| self.window_menu(ui));
             menus::bar_menu(ui, look, "Help", |ui| self.help_menu(ui));
         });
     }

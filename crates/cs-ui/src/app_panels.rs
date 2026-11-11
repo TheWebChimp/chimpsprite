@@ -2,8 +2,8 @@
 //! Library, Dafont, Lospec; y las regiones fijas: Tools, Color, Timeline, el contenido de
 //! Preview): se dibujan con `draw_panel`, que solo toma prestados los campos que cada uno usa, y
 //! lo que piden se aplica después con `apply_panel_action`, con la app entera. `panel_flyout`
-//! hospeda los del dock flotando junto a su botón, con lo que dice su ficha del registro; las
-//! regiones fijas siguen en sus paneles de `editor_panels`.
+//! hospeda los del dock flotando junto a su botón, con lo que dice su ficha del registro; Tools,
+//! Color y Timeline son hojas del workspace (fase D), el contenido de Preview sigue en su ventana.
 
 use eframe::egui;
 
@@ -46,6 +46,32 @@ pub(crate) struct PanelCtx {
     /// El fondo disponible del panel: hasta ahí llega la lista de Lospec. Sin él, el de abajo
     /// de `ui.max_rect()`.
     pub bottom: Option<f32>,
+    /// Solo en su ventana, que lleva la de antes (el Preview, ver [`ChimpApp::draw_preview`]):
+    /// el rect de la ventana, de afuera.
+    pub window: Option<egui::Rect>,
+}
+
+/// Quién hospeda un panel en un frame (ver [`ChimpApp::claim_panel`]): cada panel se dibuja en uno
+/// solo (su estado y los ids de `forms` son globales); los demás dicen dónde está.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PanelHost {
+    /// Su lugar en el workspace: acoplado o flotando.
+    Workspace,
+    /// El flyout de su botón de una tira de íconos.
+    Flyout,
+    /// El panel 3D fijo de la pestaña de un modelo (en lugar de la tira).
+    ModelPanel,
+}
+
+impl PanelHost {
+    /// Lo que muestra otro anfitrión del panel mientras lo tiene este.
+    pub(crate) fn shown_in(self) -> &'static str {
+        match self {
+            PanelHost::Workspace => "Shown in the workspace",
+            PanelHost::Flyout => "Shown in its flyout",
+            PanelHost::ModelPanel => "Shown in the 3D panel",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -84,6 +110,22 @@ impl ChimpApp {
             self.panels_drawn_prev = self.panels_drawn.clone();
         }
         self.panels_drawn.clear();
+        self.panel_hosts.clear();
+    }
+
+    /// Pide hospedar `id` en `host` este frame: el primero que lo pide se queda con él (vuelve a
+    /// pedirlo y le dice que sí); a cualquier otro le devuelve quién lo tiene, para que muestre
+    /// dónde está ([`PanelHost::shown_in`]) en lugar de dibujarlo otra vez. Generaliza lo del
+    /// panel 3D en la pestaña de un modelo (lo pide su panel fijo antes del workspace).
+    pub(crate) fn claim_panel(&mut self, id: PanelId, host: PanelHost) -> Result<(), PanelHost> {
+        match self.panel_hosts.iter().find(|(p, _)| *p == id) {
+            Some(&(_, owner)) if owner != host => Err(owner),
+            Some(_) => Ok(()),
+            None => {
+                self.panel_hosts.push((id, host));
+                Ok(())
+            }
+        }
     }
 
     /// El panel `id` se dibujó en este frame (hasta ahora).
@@ -121,9 +163,14 @@ impl ChimpApp {
         if !self.panels_drawn.contains(&id) {
             self.panels_drawn.push(id);
         }
+        debug_assert!(id != PanelId::Canvas, "el lienzo se dibuja con canvas_area");
         // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la instancia.
         if id == PanelId::Color {
             return self.draw_color(ui, panel.modal);
+        }
+        // El Preview tampoco se apaga (como su ventana de antes).
+        if id == PanelId::Preview {
+            return self.draw_preview(ui, panel.window);
         }
         // La franja del logo de Lospec queda fuera de lo que apaga el modal, como siempre.
         if id == PanelId::Lospec {
@@ -193,15 +240,46 @@ impl ChimpApp {
             }
             // Color maneja el modal adentro: lo dibuja `draw_panel`, sin pasar por aquí.
             PanelId::Color => unreachable!("Color se dibuja con draw_color"),
+            // El lienzo (con lo que todavía va en su hoja) lo dibuja el workspace con
+            // `ChimpApp::canvas_area`: devuelve más que una acción.
+            PanelId::Canvas => unreachable!("el lienzo se dibuja con canvas_area"),
             PanelId::Timeline => {
                 timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin);
                 std::mem::take(&mut self.doc.timeline.new_tilemap)
                     .then_some(PanelAction::NewTilemap)
             }
-            PanelId::Preview => {
-                // La textura del lienzo, si muestra el frame del editor tal cual.
-                let canvas = self.doc.canvas.plain_texture(&self.doc.editor);
-                self.preview.contents(ui, &self.doc.editor, skin, canvas);
+            PanelId::Preview => unreachable!("el Preview se dibuja con draw_preview"),
+        }
+    }
+
+    /// El Preview en `ui`. Solo en su ventana (`window`: su rect), lo de la ventana de antes: con
+    /// Pixel UI, lo de adentro de la del diseño (su marco y su barra los pinta el workspace
+    /// después, ver `Preview::window_chrome`), recortado a la ventana (la agarradera va contra su
+    /// borde); sin él, lo de la `egui::Window` de antes (su barra de título con la ×: cerrarlo es
+    /// [`PanelAction::ClosePreview`]). Si no, como panel: sus controles arriba y la vista. Un
+    /// diálogo no lo apaga, como a su ventana de antes.
+    fn draw_preview(
+        &mut self,
+        ui: &mut egui::Ui,
+        window: Option<egui::Rect>,
+    ) -> Option<PanelAction> {
+        // La textura del lienzo, si muestra el frame del editor tal cual.
+        let canvas = self.doc.canvas.plain_texture(&self.doc.editor);
+        let editor = &self.doc.editor;
+        let skin = self.pixel.skin();
+        match (window, skin) {
+            (Some(rect), Some(skin)) => {
+                ui.set_clip_rect(rect);
+                ui.visuals_mut().override_text_color = Some(skin.colors().text);
+                self.preview.window_contents(ui, editor, skin, canvas);
+                None
+            }
+            (Some(rect), None) => self
+                .preview
+                .plain_window(ui, editor, rect, canvas)
+                .then_some(PanelAction::ClosePreview),
+            (None, skin) => {
+                self.preview.contents(ui, editor, skin, canvas);
                 None
             }
         }
@@ -339,7 +417,11 @@ impl ChimpApp {
             PanelAction::NewTilemap => {
                 self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
             }
-            PanelAction::ClosePreview => self.view.preview = false,
+            // Cerrarlo es apagarlo, y deja de reproducir.
+            PanelAction::ClosePreview => {
+                self.view.preview = false;
+                self.preview.stop();
+            }
         }
     }
 
@@ -404,7 +486,8 @@ impl ChimpApp {
     }
 
     /// El panel `id` flotando junto a su botón del dock (`anchor`), con el ancho y el cuerpo de
-    /// su ficha; con un diálogo modal abierto (`modal`), apagado. Lo que pide se aplica al final.
+    /// su ficha (la toolbar, del ancho de su caja); con un diálogo modal abierto (`modal`),
+    /// apagado. Lo que pide se aplica al final.
     pub(crate) fn panel_flyout(
         &mut self,
         ctx: &egui::Context,
@@ -413,10 +496,10 @@ impl ChimpApp {
         modal: bool,
     ) {
         let spec = id.spec();
-        if !matches!(spec.host, Host::Flyout) {
+        if !matches!(spec.host, Host::Flyout | Host::Tree) {
             debug_assert!(
                 false,
-                "{id:?} no es un panel flotante (su host no es Flyout)"
+                "{id:?} no es un panel flotante (su host no es Flyout ni Tree)"
             );
             return;
         }
@@ -427,11 +510,24 @@ impl ChimpApp {
         // El fondo del panel (la lista de Lospec llega ahí): abajo de la columna del dock.
         let panel = PanelCtx {
             modal,
-            bottom: Some(anchor.column.bottom() - dock::FLYOUT_MARGIN as f32),
+            bottom: Some(anchor.bottom() - dock::FLYOUT_MARGIN as f32),
+            window: None,
         };
+        // Si otro anfitrión ya lo tiene este frame, dice dónde está (no se dibuja dos veces).
+        let elsewhere = self.claim_panel(id, PanelHost::Flyout).err();
         let mut action = None;
-        let contents = |ui: &mut egui::Ui| action = self.draw_panel(ui, id, &panel);
-        let width = spec.reference_width;
+        let contents = |ui: &mut egui::Ui| {
+            if let Some(owner) = elsewhere {
+                ui.add_enabled(false, egui::Label::new(owner.shown_in()));
+            } else if id == PanelId::Tools {
+                // La toolbar, con su scroll (como acoplada): con la UI a 2× o 3× en una ventana
+                // baja no cabe en la columna.
+                panels::tools_scroll_area().show(ui, |ui| action = self.draw_panel(ui, id, &panel));
+            } else {
+                action = self.draw_panel(ui, id, &panel);
+            }
+        };
+        let width = flyout_width(id, skin);
         match body {
             Body::Fixed => dock::flyout_fixed(ctx, id, anchor, skin, width, contents),
             Body::Fit | Body::Tall => {
@@ -441,6 +537,17 @@ impl ChimpApp {
         if let Some(action) = action {
             self.apply_panel_action(ctx, action);
         }
+    }
+}
+
+/// El ancho del contenido del flyout de `id` (el de su ficha; la toolbar, el de su caja, sin su
+/// margen: el flyout pone el suyo). "Float" de su tira la pone a flotar ahí (ver `dock::show`).
+pub(crate) fn flyout_width(id: PanelId, skin: Option<&crate::skin::Skin>) -> f32 {
+    match (id, skin) {
+        (PanelId::Tools, Some(skin)) => {
+            crate::pixel_ui::toolbar_width(skin) - 2.0 * f32::from(crate::pixel_ui::TOOLBAR_MARGIN)
+        }
+        _ => id.spec().reference_width,
     }
 }
 
@@ -638,6 +745,7 @@ mod tests {
         let modal = PanelCtx {
             modal: true,
             bottom: None,
+            window: None,
         };
         let mut app = test_app();
         let ctx = egui::Context::default();
@@ -684,6 +792,7 @@ mod tests {
         let modal = PanelCtx {
             modal: true,
             bottom: None,
+            window: None,
         };
         let out = draw_with(&ctx, &mut app, PanelId::Lospec, &modal);
         let stripe = crate::palette_ui::BAND_COLORS[0];
@@ -874,10 +983,13 @@ mod tests {
         use super::PanelAction;
         let mut app = test_app();
         let ctx = egui::Context::default();
-        // La × del Preview lo apaga.
+        // La × del Preview lo apaga y para su reproducción.
         app.view.preview = true;
+        app.preview.toggle_play(&app.doc.editor);
+        assert!(app.preview.playing());
         app.apply_panel_action(&ctx, PanelAction::ClosePreview);
         assert!(!app.view.preview);
+        assert!(!app.preview.playing(), "closing it stops its play");
         // New Tilemap Layer desde la línea de tiempo abre su diálogo.
         assert!(app.new_tilemap.is_none());
         app.apply_panel_action(&ctx, PanelAction::NewTilemap);
@@ -898,5 +1010,39 @@ mod tests {
         assert!(app.canvas_size.is_none());
         app.apply_panel_action(&ctx, super::PanelAction::OpenCanvasSize);
         assert!(app.canvas_size.is_some());
+    }
+
+    #[test]
+    fn a_panel_has_one_host_per_frame_and_the_others_say_where_it_is() {
+        use super::PanelHost;
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        app.begin_panel_frame();
+        assert_eq!(
+            app.claim_panel(PanelId::Library, PanelHost::Workspace),
+            Ok(())
+        );
+        // El mismo anfitrión otra vez (otra pasada del frame): sigue siendo suyo.
+        assert_eq!(
+            app.claim_panel(PanelId::Library, PanelHost::Workspace),
+            Ok(())
+        );
+        assert_eq!(
+            app.claim_panel(PanelId::Library, PanelHost::Flyout),
+            Err(PanelHost::Workspace)
+        );
+        assert_eq!(PanelHost::Workspace.shown_in(), "Shown in the workspace");
+        // El 3D en la pestaña de un modelo: lo de la fase C, igual.
+        assert_eq!(
+            app.claim_panel(PanelId::Model, PanelHost::ModelPanel),
+            Ok(())
+        );
+        let owner = app
+            .claim_panel(PanelId::Model, PanelHost::Workspace)
+            .unwrap_err();
+        assert_eq!(owner.shown_in(), crate::workspace::MODEL_ELSEWHERE);
+        // Un frame nuevo empieza de cero.
+        app.begin_panel_frame();
+        assert_eq!(app.claim_panel(PanelId::Library, PanelHost::Flyout), Ok(()));
     }
 }

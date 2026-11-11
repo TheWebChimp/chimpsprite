@@ -1,5 +1,6 @@
 //! Los atajos de teclado y las acciones que disparan (las del keymap y las del portapapeles).
 
+use crate::panel_registry::PanelId;
 use crate::*;
 use cs_commands::ops::Reorder;
 
@@ -244,6 +245,8 @@ impl ChimpApp {
             NewFrame => editor.duplicate_frame(),
             OnionSkin => editor.onion_enabled = !editor.onion_enabled,
             Extras => self.view.extras = !self.view.extras,
+            // Su hoja sale del árbol del workspace y vuelve a su lugar
+            // (`Workspace::sync_timeline`).
             Timeline => self.view.timeline = !self.view.timeline,
             FullScreen => {
                 if !cfg!(target_arch = "wasm32") {
@@ -393,10 +396,201 @@ impl ChimpApp {
         }
     }
 
-    /// View → Reset Workspace: el acomodo de fábrica (Essentials). El ancho elegido de la columna
-    /// derecha se queda (es del usuario, como lo demás de la vista): sin los paneles acoplados que
-    /// la ensanchaban, vuelve a él. Es de la app, no del documento: sin deshacer.
+    /// Lo que se ve ahora del timeline y del Preview (va con el acomodo que se deja).
+    fn shown(&self) -> workspace::Shown {
+        workspace::Shown {
+            timeline: self.view.timeline,
+            preview: self.view.preview,
+        }
+    }
+
+    /// Lo que se ve en el acomodo que llega: `workspace::show` lo pone (o lo saca) del árbol.
+    fn show_shown(&mut self, shown: workspace::Shown) {
+        self.view.timeline = shown.timeline;
+        self.view.preview = shown.preview;
+    }
+
+    /// Window → Workspace → Reset "Nombre": el de ahora vuelve a su versión de fábrica (o, uno del
+    /// usuario, a como se creó). El ancho elegido de la columna derecha se queda (es del usuario,
+    /// como lo demás de la vista): sin los paneles acoplados que la ensanchaban, vuelve a él. Es de
+    /// la app, no del documento: sin deshacer.
     pub(crate) fn reset_workspace(&mut self) {
-        self.workspace = workspace::Workspace::essentials();
+        let shown = self.workspaces.reset(&mut self.workspace);
+        self.show_shown(shown);
+    }
+
+    /// Window → Workspace → "Nombre": el acomodo de ahora se queda con el workspace que se deja y
+    /// llega el de `name` como se dejó (o, si nunca se cambió, el de fábrica o como se creó).
+    pub(crate) fn switch_workspace(&mut self, name: &str) {
+        let shown = self.shown();
+        if let Some(shown) = self.workspaces.switch(name, &mut self.workspace, shown) {
+            self.show_shown(shown);
+        }
+    }
+
+    /// Si el panel `id` está abierto (con su ✓ en Window): acoplado o flotando (el timeline y el
+    /// Preview ocultos, no); en la pestaña de un modelo, el 3D, que lo muestra su panel fijo. En
+    /// una tira, no.
+    pub(crate) fn panel_open(&self, id: PanelId) -> bool {
+        let w = &self.workspace;
+        w.docked(id)
+            || w.floating(id)
+            || (id == PanelId::Model && self.has_doc() && self.doc.editor.model_edit_on())
+    }
+
+    /// Un panel de Window: abierto, se enfoca donde está (su pestaña al frente y, si flota, su
+    /// ventana encima de las demás); el timeline o el Preview apagados se prenden (vuelven a su
+    /// lugar y ahí se enfocan igual); uno de una tira se acopla como con "Dock" del menú de su
+    /// ícono (ver `Workspace::dock_from_strip`: con el foco, la toolbar a un lado del lienzo).
+    pub(crate) fn window_panel(&mut self, ctx: &egui::Context, id: PanelId) {
+        let w = &self.workspace;
+        let placed = w.docked(id) || w.floating(id);
+        match id {
+            // Vuelven a su lugar en `workspace::show` (al sincronizarse), que ahí los enfoca.
+            PanelId::Timeline if !self.view.timeline => {
+                self.view.timeline = true;
+                self.workspace.pending_focus = Some(id);
+            }
+            PanelId::Preview if !self.view.preview => {
+                self.view.preview = true;
+                self.workspace.pending_focus = Some(id);
+            }
+            // Ya lo muestra el panel fijo de la pestaña del modelo (y no está en el árbol).
+            PanelId::Model if self.panel_open(id) && !placed => {}
+            _ => {
+                if self.workspace.strip_of(id).is_some() {
+                    self.workspace.dock_from_strip(id);
+                }
+                self.workspace.bring_forward(ctx, id);
+            }
+        }
+        // El árbol cambia en el frame siguiente (el timeline y el Preview, al sincronizarse).
+        ctx.request_repaint();
+    }
+}
+
+/// El diálogo de Window → Workspace → New Workspace… o Delete Workspace… (con los componentes del
+/// kit, como "Save as Preset").
+pub(crate) enum WorkspaceDialog {
+    /// El nombre del nuevo (se crea con el acomodo de ahora). `focused`: el foco se pide hasta que
+    /// el campo lo tiene una vez (después el usuario puede moverlo).
+    New { name: String, focused: bool },
+    /// Cuál de los del usuario borrar.
+    Delete { name: String },
+}
+
+impl ChimpApp {
+    /// Abre New Workspace… (sin nombre) o Delete Workspace… (con el primero que se puede borrar).
+    pub(crate) fn open_workspace_dialog(&mut self, delete: bool) {
+        self.workspace_dialog = Some(if delete {
+            let first = self.workspaces.deletable().first().map(|n| n.to_string());
+            match first {
+                Some(name) => WorkspaceDialog::Delete { name },
+                None => return,
+            }
+        } else {
+            WorkspaceDialog::New {
+                name: String::new(),
+                focused: false,
+            }
+        });
+    }
+
+    /// El diálogo de los workspaces, si está abierto: Save crea uno con el nombre (si no es uno
+    /// que ya existe ni está vacío; si choca, dice por qué) y lo deja como el de ahora; Delete
+    /// borra el elegido. Enter acepta en el campo; Escape o la × cancelan.
+    pub(crate) fn update_workspace_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.workspace_dialog.take() else {
+            return;
+        };
+        let skin = self.pixel.skin();
+        let workspaces = &self.workspaces;
+        let center = (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO);
+        let mut done = None;
+        let closed = match &mut dialog {
+            WorkspaceDialog::New { name, focused } => {
+                let (_, closed) = pixel_ui::app_window(
+                    ctx,
+                    skin,
+                    "new_workspace_window",
+                    "New Workspace",
+                    true,
+                    center,
+                    |ui| {
+                        let response = widgets::text_line_named(ui, name, "Name");
+                        // Hasta que lo tiene (sin Pixel UI, el primer frame de la ventana de egui
+                        // es su pasada de medir y ahí el pedido se pierde).
+                        if !*focused {
+                            response.request_focus();
+                            *focused = response.has_focus();
+                        }
+                        let enter =
+                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let problem = workspaces.name_problem(name);
+                        // Vacío no hace falta decirlo: Save no hace nada.
+                        if let Some(why) = problem.filter(|_| !name.trim().is_empty()) {
+                            ui.label(why);
+                        }
+                        ui.add_space(6.0);
+                        let clicked = pixel_ui::dialog_buttons(ui, skin, &["Save", "Cancel"]);
+                        if clicked == Some(0) || enter {
+                            match problem {
+                                None => done = Some(true),
+                                // No se puede: el campo vuelve a pedir el foco (Save o Enter
+                                // se lo quitaron), para corregir el nombre ahí.
+                                Some(_) => *focused = false,
+                            }
+                        }
+                        if clicked == Some(1) {
+                            done = Some(false);
+                        }
+                    },
+                );
+                closed
+            }
+            WorkspaceDialog::Delete { name } => {
+                let names: Vec<String> = workspaces
+                    .deletable()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                let (_, closed) = pixel_ui::app_window(
+                    ctx,
+                    skin,
+                    "delete_workspace_window",
+                    "Delete Workspace",
+                    true,
+                    center,
+                    |ui| {
+                        ui.label("Workspace to delete:");
+                        for n in &names {
+                            widgets::radio_value(ui, name, n.clone(), n);
+                        }
+                        ui.add_space(6.0);
+                        match pixel_ui::dialog_buttons(ui, skin, &["Delete", "Cancel"]) {
+                            Some(0) => done = Some(true),
+                            Some(_) => done = Some(false),
+                            None => {}
+                        }
+                    },
+                );
+                closed
+            }
+        };
+        if closed || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            done = Some(false);
+        }
+        match (done, dialog) {
+            (None, dialog) => self.workspace_dialog = Some(dialog),
+            (Some(false), _) => {}
+            (Some(true), WorkspaceDialog::New { name, .. }) => {
+                let shown = self.shown();
+                // `name_problem` ya lo revisó.
+                let _ = self.workspaces.create(&name, &self.workspace, shown);
+            }
+            (Some(true), WorkspaceDialog::Delete { name }) => {
+                self.workspaces.delete(&name);
+            }
+        }
     }
 }

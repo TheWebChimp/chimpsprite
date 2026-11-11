@@ -473,11 +473,14 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.mascot.force(id, now, &app.keymap);
     }
     // Desarrollo: un acomodo del workspace para capturas (`library-tab`: Library junto a Color;
-    // `split`: Groom debajo de Color; `float`: Lumen flotando).
-    if let Some(workspace) =
-        dev_var("CHIMPSPRITE_DEMO_WORKSPACE").and_then(workspace::Workspace::demo)
-    {
-        app.workspace = workspace;
+    // `split`: Groom debajo de Color; `float`: Lumen flotando; ver `Workspace::demo`) o uno de
+    // fábrica por su nombre (`Animation`, `Tiles`, `Fonts`: como elegirlo en Window → Workspace).
+    if let Some(name) = dev_var("CHIMPSPRITE_DEMO_WORKSPACE") {
+        if let Some(workspace) = workspace::Workspace::demo(name) {
+            app.workspace = workspace;
+        } else if workspace::FACTORY.contains(&name) {
+            app.switch_workspace(name);
+        }
         // El de demostración no pisa el guardado del usuario al cerrar.
         app.save_workspace = false;
     }

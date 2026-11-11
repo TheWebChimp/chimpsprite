@@ -31,7 +31,9 @@ fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize) -> egui::Res
     let more = group.len() > 1;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let width = ui.available_width() - if more { 22.0 } else { 0.0 };
+        // Nunca negativo: en una ventana más angosta que la barra (la toolbar flotando en el primer
+        // frame, antes de que rija Pixel UI) egui se queja en debug.
+        let width = (ui.available_width() - if more { 22.0 } else { 0.0 }).max(0.0);
         let response = tool_group::group_button(ui, editor, None, index, |ui, shown, state| {
             let label = format!("{} {}", tool_group::emoji(shown), shown.label());
             let button = egui::Button::selectable(state.selected, label)

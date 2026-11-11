@@ -251,7 +251,8 @@ impl Harness {
     }
 }
 
-/// El panel derecho de la app, de `width` de ancho (con sus márgenes) si se pide.
+/// Un panel derecho de pruebas, de `width` de ancho (con sus márgenes) si se pide. Ya no es el de la
+/// app (desde la fase D el workspace aloja el color); es solo el arnés para medir `color_panel`.
 fn right_panel(
     ui: &mut egui::Ui,
     editor: &mut Editor,

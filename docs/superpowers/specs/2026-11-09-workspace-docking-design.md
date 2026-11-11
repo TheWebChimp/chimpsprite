@@ -110,8 +110,9 @@ egui_taffy y solo `workspace` conoce egui_dock.
 - **De fábrica** (en código): **Essentials** (el acomodo de hoy: toolbar izquierda, color derecha,
   timeline abajo, tira de íconos con el resto), **Animation** (timeline alto y preview acoplado),
   **Tiles** (Slices y Artboards abiertos; el panel de tiles se suma si se vuelve panel propio), **Fonts** (FontForge acoplado abierto).
-- **Del usuario:** con nombre, en `app.ron` (clave nueva `chimpsprite.workspaces`), junto con el
-  acomodo actual (que se guarda al cerrar y se restaura al abrir).
+- **Del usuario:** con nombre, en `app.ron`, junto con el acomodo actual (que se guarda al cerrar y
+  se restaura al abrir). (Al implementarlo la clave se quedó en `chimpsprite.workspace`, ahora
+  versión 7, en vez de una `chimpsprite.workspaces` nueva: ver la fase D.)
 - **Menú Window:** paneles con ✓ los abiertos; submenú Workspace con los de fábrica y los del
   usuario; New Workspace…, Delete…, Reset "Nombre" (vuelve el actual a como se guardó).
 - **Errores:** un árbol guardado con paneles desconocidos descarta esas hojas; uno que no se puede
@@ -253,7 +254,177 @@ egui_taffy y solo `workspace` conoce egui_dock.
     el soltado sobre una ventana toma la primera, no la de arriba; la ventana flotante puede
     tapar la barra de estado; reordenar/restaurar paneles faltantes en "tidy".
 - **D. El resto al árbol:** toolbar, timeline y preview; workspaces de fábrica y del usuario; menú
-  Window. Al final, Essentials se ve igual que hoy.
+  Window. Al final, Essentials se ve igual que hoy. **HECHA** (ver "Fase D HECHA" más abajo, después
+  del diseño aprobado).
+
+  **Diseño aprobado (2026-11-11), después del spike** (rama `proto-workspace-d`, ejemplo
+  `crates/cs-ui/examples/proto_workspace_d.rs` y sus notas `PROTO_WORKSPACE_D_NOTES.md`): el usuario
+  eligió **un solo `DockState` para toda la ventana** (variante 1) sobre un árbol por orilla.
+  1. **Un árbol para toda la ventana.** El `DockState` abarca el área entre la barra de opciones y
+     la barra de estado. El **lienzo** es una hoja protegida al centro (`PanelId::Canvas`, no se
+     cierra, no se arrastra, no recibe pestañas, siempre existe una vez): `tidy_canvas` lo arregla
+     el mismo frame si algo cae dentro (lo parte al lado del cuadrante), `stop_dragging` corta su
+     arrastre, `separator.extra = 0`, `pin_sides` deja los lados en puntos (el lienzo absorbe los
+     cambios de tamaño de la ventana) y la zona de destino "lienzo entero" se repinta como la mitad
+     que de verdad queda. Se quita la suposición "superficie principal = columna derecha" de todo
+     `workspace` y el archivo se parte en `model`, `drop`, `fit` y `show`.
+  2. **Toolbar, timeline y preview en el árbol.** Toolbar a la izquierda y timeline abajo (como
+     hoy). Preview flota por defecto (como hoy); acoplado, sus controles (play/pausa, centrar)
+     viven dentro de su contenido y cerrarlo detiene la reproducción. En la pestaña de un modelo,
+     una instancia por `PanelId` por frame (generaliza lo de 3D).
+  3. **Tiras de íconos por orilla.** Cualquier grupo pegado a una orilla de la ventana se colapsa
+     a íconos con «, en la tira de esa orilla.
+  4. **Workspaces con nombre y menú Window.** De fábrica: Essentials (idéntico a hoy, 0 px),
+     Animation (timeline alto y preview acoplado), Tiles (Slices y Artboards abiertos) y Fonts
+     (FontForge acoplado). Del usuario: New Workspace… / Delete…. Menú Window nuevo con la lista
+     de paneles (✓ los abiertos), el submenú Workspace y Reset (se muda de View). Lo guardado pasa
+     a la versión 2 y el acomodo de la fase C (versión 1) se migra solo. (Al final quedó en la
+     **versión 7**: cada tarea que cambió lo guardado subió una; ver "Fase D HECHA".)
+  5. **Pendientes de la fase C:** el modal bloquea divisores y pestañas; flechas del kit para
+     pestañas desbordadas; tests de barrido de anchos en todos los paneles; medir el costo al
+     arrastrar divisores. El resto de la lista "Para la fase D" de arriba, según quepa en el plan.
+     **HECHO (tarea 8):**
+     - Con un diálogo modal (`is_modal`) nada del workspace se agarra: el `Ui` del `DockArea` va
+       apagado (sin atenuarse: se le devuelve su opacidad), así divisores, pestañas, sus × y las
+       franjas de agarre de la superficie principal no reciben clics, arrastres ni clics de
+       accesibilidad; las ventanas flotantes (que egui_dock arma con su propia `egui::Window`)
+       llevan encima "escudos" en su capa (enteras; con Color o el Preview, que un diálogo no
+       apaga, solo su marco, barras, franjas y divisores, y su fondo no la mueve: el arrastre del
+       área de egui se suelta antes del `DockArea`); lo que el `DockArea` cambiaría (fracciones,
+       pestaña al frente, foco, también sin foco) se repone y `on_close` no cierra. La tira, More
+       Panels y el « ya iban apagados. El Preview sigue moviéndose de su título, como su ventana de
+       antes.
+     - Pestañas que no caben (con Pixel UI): las acomoda `kit::tabs::layout` (se achican parejo y,
+       si ni así, las flechas del kit a la izquierda del «, con un punto de aire); egui_dock las
+       pone igual (`minimum_width` y `LeafNode::scroll`; la última lleva de más lo que falte para
+       poder correrlas, bajo las flechas). Ni la última ni su × quedan bajo el «; la que pasa al
+       frente se trae a la vista; la rueda las recorre de una en una (un renglón de la rueda por
+       pestaña, sumando lo de un trackpad; con Ctrl/Cmd no, es zoom), solo si la barra es lo de
+       más arriba bajo el puntero y sin diálogo modal (lo de encima se corre como siempre). Lo
+       vacío al final de la barra de una ventana sigue moviéndola, y lo que se suelta ahí va al
+       final. Sin Pixel UI, lo de egui_dock.
+     - Barrido de anchos (`width_sweep_tests`): cada panel acoplado de su mínimo a 600 de a un punto
+       (5249 anchos, ~38 s en debug). Arreglado: la fila Component/Add/Unlink/Build de FontForge
+       (los botones caían a medio punto). Tramos conocidos: el timeline de 64 a 126 (su fila de
+       botones no se parte; solo "fuera") y Lospec de 364 a 600 (no migrado a `forms`: las filas
+       de sus resultados a medio punto; solo "medio punto"). Cada tramo dice la falla que calla y
+       el test falla si ya no pasa. Las holguras van nombradas (grupos de controles pegados por
+       panel, uno dentro de otro por roles), sin red (Lospec y dafont con su lista ya llegada).
+       Arreglado al barrer Lospec con resultados: con la tira de colores justo del ancho, el lugar
+       vacío del paginador ensanchaba la lista (Save se salía 1–3 puntos).
+     - **Costo de arrastrar un divisor** (`frame_time_while_dragging_a_divider`, a mano): `show`
+       por frame, 60 frames moviendo el divisor entre el lienzo y una columna, con Essentials más
+       Library (pestaña con Color), Groom (debajo) y Lumen (otra columna). Release, AMD Ryzen 7
+       5700G, Windows 11: con Pixel UI media 1.22 ms (mediana 1.22, p95 1.70, máx 2.02); sin él,
+       media 0.99 ms (p95 1.37, máx 1.88). En debug, ~16 ms. Incluye la pasada de más cuando un
+       frame se descarta.
+  **Fase D HECHA** (rama `workspace-docking-d`, 9 tareas, cada una con su revisión, más una ronda
+  final de arreglos de la revisión de toda la rama):
+  1. **`workspace.rs` partido** en `workspace/{mod, model, drop, fit, show, skin}` (más
+     `presets` en la tarea 7 y `test_util` solo de tests), sin cambios de comportamiento. Solo
+     `workspace/` toca `egui_dock`.
+  2. **Un `DockState` para toda la ventana** con el lienzo como hoja protegida (`PanelId::Canvas`):
+     `tidy_canvas`, `stop_dragging`, `pin_sides` (los lados quedan en puntos; el lienzo absorbe los
+     cambios de la ventana y nunca baja de su mínimo, ni al arrastrar un divisor ni al achicar la
+     ventana), el doble clic en un divisor del lienzo no lo mueve (egui_dock lo pondría a la
+     mitad: se deshace; un arrastre que cae justo en la mitad sí cuenta), sin franja de agarre en
+     el lienzo.
+  3. **Toolbar al árbol** (izquierda, con su divisor; flyout con scroll en ventanas bajas).
+  4. **Timeline al árbol** (debajo del lienzo; apagarlo y volverlo a prender lo regresa a su lugar
+     y a su pestaña; una flotante oculta vuelve flotante tras reiniciar).
+  5. **Preview es un panel del árbol** que flota por defecto (esquina anclada como antes). Acoplado,
+     play/pausa y centrar viven en su contenido; cerrarlo lo detiene (`Preview::stop`). Con Pixel
+     UI solo en su ventana va sin barra de pestañas ni marco de ventana (0 px contra lo de antes);
+     sin Pixel UI sigue en la `egui::Window` de antes, hospedada por egui_dock.
+  6. **Una instancia por `PanelId` por frame** y **tiras de íconos por orilla** (izquierda, derecha,
+     arriba, abajo; `Edge`): cada grupo pegado a una orilla se colapsa en la tira de esa orilla;
+     las tiras que no caben se desbordan al menú **More Panels**; Float/Dock desde la tira.
+     `SAVED_VERSION` 6 (una tira por orilla; las versiones ≤ 5 llevaban todo a la derecha).
+  7. **Workspaces con nombre y menú Window** (`workspace/presets.rs`): Essentials, Animation, Tiles
+     y Fonts de fábrica; New Workspace… y Delete… para los del usuario; Reset "Nombre"; menú Window
+     entre View y Help (los paneles con ✓, submenú Workspace); View → Reset Workspace se muda
+     ahí. `SAVED_VERSION` 7 (lleva el actual, los del usuario y los editados).
+  8. **Modal, pestañas y barrido:** con un diálogo modal nada del workspace se agarra (divisores,
+     pestañas, ×, franjas, ventanas flotantes); pestañas desbordadas con las flechas del kit y la
+     rueda; test de barrido de anchos por panel; costo de arrastrar un divisor medido (cifras
+     arriba, en "HECHO (tarea 8)").
+
+  **Decisiones tomadas** (el usuario puede revisarlas):
+  - Soltar en el centro del lienzo: una pestaña de egui_dock se parte **al lado** del lienzo (ya no
+    queda flotando: la hoja del lienzo no llega a la barra de estado); un ícono de la tira sí flota.
+  - Sin Pixel UI, un grupo de un solo panel y el Preview solo en su ventana **no se arrastran para
+    acoplarse** (sin barra de pestañas no hay franja de agarre; el lienzo no se puede tragar clics);
+    se mueven de su barra, desde la tira o con Reset. Con Pixel UI sí (franja de 3 pt).
+  - **Tiles = un grupo de pestañas debajo de Color** (Slices y Artboards abiertos), no un panel
+    propio.
+  - **Delete… excluye el workspace actual** (no se puede borrar el que se está usando); cambiar de
+    workspace pone el timeline y el Preview como los pide ese preset (`Shown`).
+  - La clave guardada sigue siendo **`chimpsprite.workspace`**, versión 7 (en vez de una
+    `chimpsprite.workspaces` nueva): la migración ya existía y un árbol de la fase C (versión 1) se
+    migra solo.
+  - Un grupo **alto** que solo toca la orilla de arriba o la de abajo, sin tocar ningún lado (la
+    toolbar a la derecha del lienzo), se colapsa a la tira del **lado más cercano** (izquierda o
+    derecha; regla de orillas, ledger D6); "Dock" desde esa tira lo regresa junto al lienzo de ese
+    lado. Uno ancho en esa posición sigue yendo a la de arriba o abajo.
+  - El « comparte la pieza de la flecha de atrás del kit (con flechas se ve "‹ › ‹"); soltar sobre
+    una pestaña siempre inserta **antes** de ella (egui_dock); la barra de menú cambia por el título
+    nuevo "Window" (única diferencia contra el Essentials de antes: 0 px en todo lo demás).
+  - La ventana flotante de la toolbar mide ~92 pt (su pestaña de título) y su ancho se fija cada
+    frame; su « queda fuera de la ventana.
+  - Tramos conocidos del barrido de anchos (cada uno nombrado y vigilado por el test): Timeline de
+    64 a 126 (su fila de botones no se parte; solo "fuera") y Lospec de 364 a 600 (no migrado a
+    `forms`: filas de resultados a medio punto).
+  - Sin red: el barrido corre Lospec y dafont con su lista ya llegada.
+
+  **Probar a mano** (los agentes solo inyectan eventos; esto necesita el mouse real; se suma a la
+  lista de la fase C, que sigue valiendo):
+  - [ ] Arrastrar una pestaña o un ícono de tira a los **4 lados del lienzo**: se parte arriba,
+        abajo, izquierda y derecha; al centro del lienzo se parte a su lado (la pestaña) o flota
+        (el ícono).
+  - [ ] Mover la **toolbar**, el **timeline** y el **Preview** (por su franja de 3 pt o su barra):
+        a otro lado del lienzo, a otra orilla, a flotar y de regreso; el lienzo no queda sin aire
+        ni más chico que su mínimo; el Preview acoplado solo se acopla por la franja de arriba.
+  - [ ] **Presets:** Window → Workspace → Essentials / Animation / Tiles / Fonts; Essentials se ve
+        como antes; Animation con el timeline alto y el Preview acoplado; Tiles con Slices y
+        Artboards abiertos; Fonts con FontForge.
+  - [ ] **Menú Window:** ✓ de los paneles abiertos; elegir uno cerrado lo abre, uno abierto lo
+        enfoca (subiéndolo si flota); Preview y Model en la pestaña de un modelo.
+  - [ ] **Una tira por orilla:** colapsar grupos con « en cada lado (la toolbar a la derecha del
+        lienzo va a la tira de la derecha); clic en un ícono abre el flyout hacia el lado
+        correcto; clic derecho Dock/Float; arrastrar un ícono y soltarlo sobre otra tira lo pasa a
+        ella.
+  - [ ] **More Panels:** con la tira corta (ventana baja o Groom debajo del lienzo) el botón »
+        abre el menú y elegir un panel abre su flyout anclado al botón.
+  - [ ] **Pestañas desbordadas:** las flechas del kit y la rueda sobre la barra (de una en una,
+        sin Ctrl; con una ventana flotante encima la rueda corre la ventana, no la barra de abajo).
+  - [ ] **Modal:** con un diálogo abierto no se mueven divisores, pestañas, × ni franjas, ni las
+        ventanas flotantes (el Preview y Color siguen moviéndose de su título).
+  - [ ] **New / Delete / Reset Workspace:** crear con nombre (Enter con nombre repetido o vacío no
+        cierra), borrar uno que no es el actual, Reset "Nombre" regresa al guardado; cerrar y abrir
+        la app restaura el actual y los del usuario.
+  - [ ] **Preview flotando / acoplado:** arrastrar su ventana, redimensionarla desde la agarradera,
+        acoplarla por la franja de arriba, cerrarla (para la reproducción) y reabrirla donde quedó.
+  - [ ] La toolbar flotante y su « (queda fuera de la ventana), Groom debajo del lienzo en una
+        ventana baja (el timeline y la tira siguen), ventana angosta (el lienzo gana).
+
+  **Se quedó para la fase E** (de las revisiones y los reportes de la fase D):
+  - Reescribir los tests de layout por panel y en Essentials (hoy `layout_tests.rs` sigue midiendo
+    posiciones absolutas de la ventana; los arneses de `timeline/tests.rs` y `color_panel/tests.rs`
+    aún arman un `Panel::bottom("timeline")` / `Panel::right("palette")` propio, ya sin relación con
+    la app real: solo miden su panel; llevan un comentario que lo dice).
+  - Timeline: que su fila de botones se parta en anchos de 64 a 126; Lospec: filas de resultados a
+    `forms` (cierra el tramo de 364 a 600).
+  - Minors anotados en la bitácora: `Frozen::restore(None)` deja el foco por árbol; la zona de
+    soltado "lienzo entero" incluye el timeline; mientras se arrastra un ícono sobre otra tira no
+    se resalta nada (al soltarlo sí pasa a ella). (Los demás de esta lista se arreglaron en la
+    ronda final: el 40 % de Animation se usa una vez, Window enfoca también lo oculto y el 3D
+    flotando, el foco de New Workspace, las reglas del barrido, los tests de la rueda, el resto de
+    la rueda, los helpers duplicados y soltar un ícono sobre otra tira.)
+  - **Partir `show.rs`** (~3 000 líneas): el modal (`Frozen`, `hold_windows`, `modal_shields`), las
+    pestañas (rueda, flechas, cierres, `dropped_past_last`) y las cubiertas y los cruces, cada uno
+    en su módulo.
+  - Pendientes de interacción real: flotante de la toolbar más ancha con el mouse; íconos
+    `icon.tools` / `icon.color` sin pieza del skin (la tira usa su texto).
 - **E. Tests de layout reescritos:** medir dentro de cada panel y en el preset Essentials, no en
   posiciones absolutas de la ventana.
 

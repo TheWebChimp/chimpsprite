@@ -330,8 +330,9 @@ pub(crate) mod testing {
     use eframe::egui::{self, Pos2, RawInput, Rect, Ui, Vec2, accesskit::Role};
 
     pub(crate) struct Probe {
-        /// Los controles con nombre (botones, casillas, campos, selects, etiquetas) y su rect.
-        pub widgets: Vec<(String, Rect)>,
+        /// Los controles con nombre (botones, casillas, campos, selects, etiquetas), su rect y qué
+        /// son (en la misma entrada: quien filtre la lista no los desalinea).
+        pub widgets: Vec<(String, Rect, Role)>,
         /// Los textos pintados: lo que se ve (con su "…" si no cupo) y el rect de su galley.
         pub texts: Vec<(String, Rect)>,
         /// Las imágenes pintadas (las piezas del skin también): su textura y lo que se ve de
@@ -361,60 +362,69 @@ pub(crate) mod testing {
         ctx.set_fonts(crate::appearance::font_definitions(true));
         crate::appearance::apply_style(&ctx, Some(skin.colors()));
         crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
-        let mut widgets = Vec::new();
+        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
+        let mut probe = frame_at(&ctx, width, &mut draw);
+        for _ in 0..2 {
+            probe = frame_at(&ctx, width, &mut draw);
+        }
+        probe
+    }
+
+    /// Un frame de `ctx` (que ya tiene sus fuentes y su estilo: los de `run_at` o los de la app)
+    /// con `draw` en un `Ui` de `width`, y lo que quedó. Así un barrido de anchos reusa el mismo
+    /// contexto de un ancho al siguiente (como al arrastrar un divisor; ver `width_sweep_tests`).
+    pub(crate) fn frame_at(
+        ctx: &egui::Context,
+        width: f32,
+        mut draw: impl FnMut(&mut Ui),
+    ) -> Probe {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(2000.0, 2000.0))),
+            // Las texturas grandes que acepta la app (las muestras de una fuente, por ejemplo).
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(width, 1900.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.set_width(width);
+                draw(ui);
+            });
+        });
+        // Nadie sube texturas aquí: egui exige descartar lo pendiente.
+        output.textures_delta.clear();
         let mut texts = Vec::new();
         let mut images = Vec::new();
-        let mut disabled = Vec::new();
-        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
-        for _ in 0..3 {
-            let input = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(2000.0, 2000.0))),
-                // Las texturas grandes que acepta la app (las muestras de una fuente, por ejemplo).
-                max_texture_side: Some(8192),
-                ..Default::default()
-            };
-            let mut output = ctx.run_ui(input, |ui| {
-                let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(width, 1900.0));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                    ui.set_width(width);
-                    draw(ui);
-                });
-            });
-            // Nadie sube texturas aquí: egui exige descartar lo pendiente.
-            output.textures_delta.clear();
-            texts.clear();
-            images.clear();
-            for clipped in &output.shapes {
-                collect_texts(&clipped.shape, &mut texts);
-                collect_images(&clipped.shape, clipped.clip_rect, &mut images);
-            }
-            let nodes = output
-                .platform_output
-                .accesskit_update
-                .map(|u| u.nodes)
-                .unwrap_or_default();
-            disabled.clear();
-            widgets = nodes
-                .iter()
-                .filter(|(_, n)| LEAVES.contains(&n.role()))
-                .filter_map(|(_, n)| {
-                    let b = n.bounds()?;
-                    let rect = Rect::from_min_max(
-                        Pos2::new(b.x0 as f32 - 10.0, b.y0 as f32 - 10.0),
-                        Pos2::new(b.x1 as f32 - 10.0, b.y1 as f32 - 10.0),
-                    );
-                    // Las etiquetas llevan su texto en el valor (así las nombra egui).
-                    let name = match n.label() {
-                        Some(label) => label.to_string(),
-                        None => n.value()?.to_string(),
-                    };
-                    if n.is_disabled() {
-                        disabled.push(name.clone());
-                    }
-                    Some((name, rect))
-                })
-                .collect();
+        for clipped in &output.shapes {
+            collect_texts(&clipped.shape, &mut texts);
+            collect_images(&clipped.shape, clipped.clip_rect, &mut images);
         }
+        let nodes = output
+            .platform_output
+            .accesskit_update
+            .map(|u| u.nodes)
+            .unwrap_or_default();
+        let mut disabled = Vec::new();
+        let widgets: Vec<(String, Rect, Role)> = nodes
+            .iter()
+            .filter(|(_, n)| LEAVES.contains(&n.role()))
+            .filter_map(|(_, n)| {
+                let b = n.bounds()?;
+                let rect = Rect::from_min_max(
+                    Pos2::new(b.x0 as f32 - 10.0, b.y0 as f32 - 10.0),
+                    Pos2::new(b.x1 as f32 - 10.0, b.y1 as f32 - 10.0),
+                );
+                // Las etiquetas llevan su texto en el valor (así las nombra egui).
+                let name = match n.label() {
+                    Some(label) => label.to_string(),
+                    None => n.value()?.to_string(),
+                };
+                if n.is_disabled() {
+                    disabled.push(name.clone());
+                }
+                Some((name, rect, n.role()))
+            })
+            .collect();
         Probe {
             widgets,
             texts,
@@ -455,8 +465,8 @@ pub(crate) mod testing {
         pub(crate) fn rect(&self, name: &str) -> Rect {
             self.widgets
                 .iter()
-                .find(|(n, _)| n == name)
-                .map(|(_, r)| *r)
+                .find(|(n, _, _)| n == name)
+                .map(|(_, r, _)| *r)
                 .unwrap_or_else(|| panic!("no {name:?} in {:?}", self.widgets))
         }
 
@@ -471,7 +481,7 @@ pub(crate) mod testing {
 
         /// Cada control empieza y termina en puntos enteros (nada de medio pixel del skin).
         pub(crate) fn assert_whole_px(&self) {
-            for (name, r) in &self.widgets {
+            for (name, r, _) in &self.widgets {
                 for v in [r.min.x, r.min.y, r.max.x, r.max.y] {
                     assert_eq!(v, v.round(), "{name:?} at {r:?}");
                 }
@@ -480,7 +490,7 @@ pub(crate) mod testing {
 
         /// Nada se sale a la derecha del ancho del panel.
         pub(crate) fn assert_within(&self, width: f32) {
-            for (name, r) in &self.widgets {
+            for (name, r, _) in &self.widgets {
                 assert!(
                     r.min.x >= 0.0 && r.max.x <= width,
                     "{name:?} at {r:?} past {width}"
@@ -490,8 +500,8 @@ pub(crate) mod testing {
 
         /// Ningún control tapa a otro.
         pub(crate) fn assert_no_overlap(&self) {
-            for (i, (a, ra)) in self.widgets.iter().enumerate() {
-                for (b, rb) in &self.widgets[i + 1..] {
+            for (i, (a, ra, _)) in self.widgets.iter().enumerate() {
+                for (b, rb, _) in &self.widgets[i + 1..] {
                     let inter = ra.intersect(*rb);
                     assert!(
                         inter.width() <= 0.0 || inter.height() <= 0.0,

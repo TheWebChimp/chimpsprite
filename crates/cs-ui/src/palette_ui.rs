@@ -377,6 +377,20 @@ impl ChimpApp {
         action
     }
 
+    /// Para los tests: el panel Lospec abierto con `page` ya llegada (como al abrirlo, las más
+    /// nuevas), sin red: lo que se dibuja no depende de cuándo responde Lospec.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn open_lospec_offline(&mut self, page: LospecPage) {
+        let mut window = PresetsWindow {
+            tab: PresetsTab::Lospec,
+            ..Default::default()
+        };
+        window.lospec.sort = LospecSort::Newest;
+        let start = window.lospec.start_search();
+        window.lospec.finish_listing(start.generation, Ok(page));
+        self.lospec_dock = Some(window);
+    }
+
     /// Cerrado el panel Lospec, se sueltan sus imágenes y peticiones.
     pub(crate) fn close_lospec_panel(&mut self) {
         self.lospec_dock = None;
@@ -945,15 +959,11 @@ fn lospec_ui(
         if tab.listing_loading() && tab.shown_of_total().0 == 0 {
             ui.weak("Loading");
         } else if tab.can_load_more() {
-            ui.vertical_centered(|ui| {
-                let (shown, total) = tab.shown_of_total();
-                if tab.listing_loading() {
-                    ui.spinner();
-                } else if crate::pixel_ui::text_button(
-                    ui,
-                    &format!("Load more ({shown} of {total})"),
-                )
-                .clicked()
+            let (shown, total) = tab.shown_of_total();
+            let label = format!("Load more ({shown} of {total})");
+            let loading = tab.listing_loading();
+            let mut load = |ui: &mut egui::Ui| {
+                if crate::pixel_ui::text_button(ui, &label).clicked()
                     && let Some((g, query)) = tab.start_more()
                 {
                     requests.listing = Some(InFlight::new(
@@ -962,7 +972,27 @@ fn lospec_ui(
                         lospec_client::fetch_listing(&ctx, &query),
                     ));
                 }
-            });
+            };
+            match pixel_ui::frame_skin(ui.ctx()) {
+                // Centrado en puntos enteros (`vertical_centered` lo dejaba a medio punto con
+                // un ancho non de más).
+                Some(_) if !loading => {
+                    let free = ui.available_width() - crate::kit::button::width(ui, &label);
+                    ui.horizontal(|ui| {
+                        ui.add_space((free / 2.0).floor().max(0.0));
+                        load(ui);
+                    });
+                }
+                _ => {
+                    ui.vertical_centered(|ui| {
+                        if loading {
+                            ui.spinner();
+                        } else {
+                            load(ui);
+                        }
+                    });
+                }
+            }
         }
     });
     action
@@ -1408,10 +1438,14 @@ fn lospec_row(
         #[cfg(target_arch = "wasm32")]
         let pager_w = 0.0;
         swatches(ui, &p.palette, ui.available_width() - pager_w);
+        // Solo con paginador: vacío, su `Ui` igual iría después del aire de la fila y, con la
+        // tira justo del ancho, ensancharía la lista ese aire (lo de abajo se saldría).
         #[cfg(not(target_arch = "wasm32"))]
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            lospec_examples::pager(ui, p, examples);
-        });
+        if pager_w > 0.0 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                lospec_examples::pager(ui, p, examples);
+            });
+        }
     });
     #[cfg(not(target_arch = "wasm32"))]
     lospec_examples::image(ui, p, examples, now);

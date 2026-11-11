@@ -22,8 +22,8 @@
 //!     px después; el hex, 3 px después. Las mayúsculas y los dígitos en la fila 4, en
 //!     `field_text`.
 //!   - Si no entra todo en una fila, el encabezado se parte entre grupos, nunca adentro de uno
-//!     (`pixel_ui::wrap_rows`): [copiar][RGBA] y [hex] abajo; si tampoco, [copiar], [RGBA] y
-//!     [hex], una fila cada uno, a 3 filas de distancia. El grupo RGBA solo cierra con
+//!     (`pixel_ui::wrap_rows`): \[copiar\]\[RGBA\] y \[hex\] abajo; si tampoco, \[copiar\],
+//!     \[RGBA\] y \[hex\], una fila cada uno, a 3 filas de distancia. El grupo RGBA solo cierra con
 //!     `channel.cap.r` y el hex solo abre con `channel.cap.l` (sacadas de las puntas de la tira).
 //!   - 3 filas más abajo, la caja del cuadro S/V (`picker.sv`, 70 de alto con la línea que lo
 //!     separa de las barras): el cuadro va 3 px adentro y mide 64 de alto (86 en el diseño).
