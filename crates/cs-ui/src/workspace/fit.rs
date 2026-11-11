@@ -207,6 +207,39 @@ impl Workspace {
         });
     }
 
+    /// La ventana del Preview flotando: solo en ella con Pixel UI (`bare`: lo que mide su ventana
+    /// del diseño), de ese tamaño cada frame (como su ventana de antes, no se agranda de los
+    /// bordes: lo hace su agarradera); en su esquina ([`Workspace::preview_anchored`]), con la
+    /// esquina de abajo a la derecha a `preview::OFFSET` de la de la pantalla (lo que hacía el ancla
+    /// de su ventana de antes, con el tamaño de la ventana) hasta que se la arrastra. Acoplado, ya
+    /// no va en su esquina. Devuelve su ventana si va en su esquina.
+    pub(super) fn place_preview(
+        &mut self,
+        ctx: &egui::Context,
+        bare: Option<egui::Vec2>,
+    ) -> Option<SurfaceIndex> {
+        let path = self.state.find_tab(&PanelId::Preview)?;
+        if path.surface.is_main() {
+            self.preview_anchored = false;
+            return None;
+        }
+        let area = skin::window_area_id(path.surface);
+        // Arrastrada (como cualquier ventana, de lo que no es un control): se queda donde la dejen.
+        if ctx.is_being_dragged(area.with("move")) {
+            self.preview_anchored = false;
+        }
+        let size = bare.or_else(|| ctx.memory(|m| m.area_rect(area)).map(|r| r.size()));
+        let anchored = self.preview_anchored;
+        let window = self.state.get_window_state_mut(path.surface)?;
+        if let Some(size) = bare {
+            window.set_size(size);
+        }
+        if anchored && let Some(size) = size {
+            window.set_position(ctx.content_rect().max - size + crate::preview::OFFSET);
+        }
+        anchored.then_some(path.surface)
+    }
+
     /// Las ventanas de un acomodo leído, con lo de adentro donde estaba y de su tamaño. Cada frame
     /// hasta que se aprieta un botón del puntero: los primeros frames la escala y el estilo de
     /// Pixel UI todavía cambian (egui acomoda la ventana en una pantalla que no es la de después).
@@ -493,10 +526,12 @@ pub(super) fn fit_windows(ctx: &egui::Context, w: &mut Workspace, m: &Minima, se
         return;
     }
     let screen = ctx.content_rect().size();
+    // La del Preview solo con Pixel UI va del tamaño de su ventana del diseño (`place_preview`).
+    let bare = w.bare_preview();
     let windows: Vec<SurfaceIndex> = w
         .state
         .iter_surfaces_indexed()
-        .filter(|(s, surface)| !s.is_main() && !surface.is_empty())
+        .filter(|(s, surface)| !s.is_main() && !surface.is_empty() && Some(*s) != bare)
         .map(|(s, _)| s)
         .collect();
     for s in windows {

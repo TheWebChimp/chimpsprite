@@ -10,14 +10,19 @@
 //! rodea va en puntos (`fit::pin_sides`): al cambiar la ventana, el lienzo absorbe la diferencia.
 //! La columna derecha de la fase C es ahora el lado derecho del lienzo ([`Workspace::column`]);
 //! su ancho sigue siendo la preferencia del usuario (`view.palette_width`). La toolbar y el
-//! timeline son hojas del árbol (tareas 3 y 4); el timeline oculto sale del árbol y vuelve a su
-//! lugar ([`Workspace::sync_timeline`]). La tira de íconos todavía va a la derecha del lienzo (y
-//! del timeline, si va justo debajo de él): la dibuja `show` encima (ver `show::show`).
+//! timeline son hojas del árbol (tareas 3 y 4), y el Preview también (tarea 5: de fábrica flota
+//! en la esquina de abajo a la derecha, como su ventana de antes, y con Pixel UI su ventana es la
+//! del diseño). Ocultos (el timeline y el Preview se prenden y se apagan), salen del árbol y
+//! vuelven a su lugar ([`Workspace::sync_panel`]). La tira de íconos todavía va a la derecha del
+//! lienzo (y del timeline, si va justo debajo de él): la dibuja `show` encima (ver `show::show`).
 //!
 //! Decisión del usuario (2026-11-10): un grupo acoplado con **un solo panel no lleva barra de
 //! pestañas** (se ve como hoy); al pasar el puntero por su borde de arriba se resalta una franja
 //! delgada para agarrarlo. Con dos o más, la barra con las pestañas del kit. Las ventanas
-//! flotantes siempre llevan su barra: es su título y de ahí se arrastran.
+//! flotantes siempre llevan su barra: es su título y de ahí se arrastran. Salvo una: con Pixel UI,
+//! el Preview solo en su ventana lleva la de su diseño (la de antes, con su barra de título: de
+//! ahí se mueve, y de su franja de arriba se lleva a acoplar, como un grupo solo; ver
+//! `show::PreviewWindow`).
 //!
 //! Solo este módulo usa egui_dock.
 //!
@@ -68,8 +73,16 @@ pub(crate) struct Workspace {
     placing: Vec<(PanelId, egui::Pos2, u8)>,
     /// Lo que mide en puntos cada lado del lienzo (ver `fit::pin_sides`).
     sides: fit::SidePoints,
-    /// Dónde estaba el timeline oculto (ver [`Workspace::sync_timeline`]).
-    timeline_spot: Option<model::Spot>,
+    /// Dónde estaba cada panel oculto (el timeline, el Preview; ver [`Workspace::sync_panel`]).
+    spots: Vec<(PanelId, model::Spot)>,
+    /// Si el Preview flota en su esquina (la de su ventana de antes: ver
+    /// `Workspace::place_preview`): ahí lo pone [`Workspace::sync_panel`] si no tiene otro lugar, y
+    /// ahí sigue (también al cambiar el tamaño de la app) hasta que se lo mueve. Anclado, no se
+    /// guarda: al leer el acomodo vuelve a su esquina.
+    preview_anchored: bool,
+    /// Con Pixel UI (lo pone `show` cada frame): el Preview solo en su ventana va sin barra de
+    /// pestañas (su ventana es la del diseño, ver [`Workspace::bare_preview`]).
+    skinned: bool,
 }
 
 impl Default for Workspace {

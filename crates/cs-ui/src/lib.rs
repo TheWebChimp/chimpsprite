@@ -232,7 +232,7 @@ pub struct ChimpApp {
     /// Edit → Iso Box… abierto y lo elegido la última vez (en la sesión).
     iso_dialog: Option<Box<iso_dialog::IsoDialog>>,
     iso_settings: iso_dialog::IsoSettings,
-    /// La ventanita de preview (abierta con `view.preview`).
+    /// El Preview (abierto con `view.preview`; lo hospeda el workspace).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
     /// Layer → Convert to Symbol… (F8) abierto.
@@ -1410,8 +1410,6 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
-        use crate::app_panels::PanelAction;
-        use crate::panel_registry::PanelId;
         self.begin_panel_frame();
         // El skin compartido: el contenido de cada región toma prestada la app entera
         // (`draw_panel`) mientras su panel se dibuja con el skin.
@@ -1479,20 +1477,6 @@ impl ChimpApp {
                 dock::StripRequest::Float(id, at) => self.workspace.float(id, at),
             }
             ui.ctx().request_repaint();
-        }
-        let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
-        // En la pestaña de un modelo no está su botón (no hay dock): la ventana se esconde sin
-        // apagarse y vuelve con el lienzo.
-        if self.view.preview
-            && PanelId::Preview.available(self)
-            && self.preview.show(
-                ui.ctx(),
-                &self.doc.editor,
-                self.pixel.skin(),
-                canvas_texture,
-            )
-        {
-            self.apply_panel_action(ui.ctx(), PanelAction::ClosePreview);
         }
         if self.undo_history
             && undo_history::show(ui.ctx(), &mut self.doc.editor, self.pixel.skin())

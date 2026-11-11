@@ -12,7 +12,8 @@ use crate::panel_registry::PanelId;
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
 pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
 
-/// Dónde estaba el timeline cuando se ocultó (ver [`Workspace::sync_timeline`]): ahí vuelve.
+/// Dónde estaba un panel cuando se ocultó (el timeline o el Preview, ver
+/// [`Workspace::sync_panel`]): ahí vuelve.
 #[derive(Clone, Debug)]
 pub(super) enum Spot {
     /// En el grupo de `with`, como pestaña en el lugar `index` (sin cambiar la activa).
@@ -59,15 +60,18 @@ pub(crate) struct SavedWorkspace {
     pub strip: Vec<String>,
 }
 
-/// La versión de lo que se guarda ahora: 4, el árbol de toda la ventana con el lienzo, la toolbar
-/// y el timeline (fase D, tarea 4). En la 3 el timeline no iba en el árbol (era el panel fijo de
-/// abajo): al leer una 3 (o anterior) va debajo del lienzo, como estaba; en una 4 siempre está
+/// La versión de lo que se guarda ahora: 5, el árbol de toda la ventana con el lienzo, la
+/// toolbar, el timeline y el Preview (fase D, tarea 5). En la 4 el Preview no iba en el árbol (era
+/// su propia ventana): al leer una 4 (o anterior) no está y, prendido, el workspace lo pone en su
+/// esquina, como estaba; en una 5 está si no va en su esquina (ver
+/// [`Workspace::preview_anchored`]). En la 3 el timeline no iba en el árbol (era el panel fijo de
+/// abajo): al leer una 3 (o anterior) va debajo del lienzo, como estaba; en una 4 o 5 siempre está
 /// (oculto, se guarda en su lugar) y si falta, también va ahí. En la 2 la toolbar no iba en el
 /// árbol (era el panel fijo de la izquierda): una toolbar que no está en el árbol de una 2 va a su
 /// izquierda; en una 3 o 4, está en la tira. La 1 (y la 0, de antes del campo) es la de la fase C:
 /// la columna derecha sola, sin lienzo; al leerla se le mete el lienzo a la izquierda
 /// ([`Workspace::from_saved`]).
-pub(crate) const SAVED_VERSION: u32 = 4;
+pub(crate) const SAVED_VERSION: u32 = 5;
 
 impl Default for SavedWorkspace {
     fn default() -> Self {
@@ -99,23 +103,33 @@ impl Workspace {
             placements: Vec::new(),
             placing: Vec::new(),
             sides: Default::default(),
-            timeline_spot: None,
+            spots: Vec::new(),
+            preview_anchored: false,
+            skinned: false,
         }
     }
 
     /// Lo que se guarda del acomodo. Las ventanas flotantes llevan en su árbol el rect de lo de
     /// adentro (el de su grupo de arriba): de ahí sale dónde reabrirlas (ver
     /// [`Workspace::place_restored_windows`]).
-    /// El timeline oculto se guarda en su lugar (al leerlo, si sigue apagado, se vuelve a ocultar).
+    /// El timeline oculto se guarda en su lugar, y el Preview oculto, si tenía uno (al leerlos, si
+    /// siguen apagados, se vuelven a ocultar). El Preview en su esquina no se guarda (al leerlo,
+    /// prendido, vuelve a ella: ver [`Workspace::preview_anchored`]).
     pub(crate) fn to_saved(&self) -> SavedWorkspace {
-        let mut whole;
-        let w = if self.state.find_tab(&PanelId::Timeline).is_none() {
-            whole = self.clone();
-            whole.show_timeline();
-            &whole
-        } else {
-            self
-        };
+        let mut w = self.clone();
+        if w.state.find_tab(&PanelId::Timeline).is_none() {
+            w.show_panel(PanelId::Timeline);
+        }
+        if w.state.find_tab(&PanelId::Preview).is_none()
+            && w.spots.iter().any(|(p, _)| *p == PanelId::Preview)
+        {
+            w.show_panel(PanelId::Preview);
+        }
+        if w.preview_anchored
+            && let Some(path) = w.state.find_tab(&PanelId::Preview)
+        {
+            w.state.remove_tab(path);
+        }
         SavedWorkspace {
             version: SAVED_VERSION,
             state: w.state.map_tabs(|p| p.key().to_owned()),
@@ -146,7 +160,8 @@ impl Workspace {
     /// lienzo a la izquierda (su ancho es `view.palette_width`, que no cambia). Lo de antes de la
     /// versión 3 no tiene la toolbar (era un panel fijo): va a la izquierda de todo, como estaba.
     /// Lo de antes de la 4 no tiene el timeline (era el panel fijo de abajo): va debajo del
-    /// lienzo, como estaba (su alto es `view.timeline_height`); en una 4 sin él, también.
+    /// lienzo, como estaba (su alto es `view.timeline_height`); en una 4 sin él, también. Lo de
+    /// antes de la 5 no tiene el Preview (era su propia ventana): prendido, va a su esquina.
     /// Y el lienzo queda una vez, solo y en la superficie principal (ver `fit::tidy_canvas`).
     pub(crate) fn from_saved(saved: SavedWorkspace) -> Workspace {
         let essentials = |why: &str| {
@@ -156,13 +171,14 @@ impl Workspace {
         if !sound(&saved.state) {
             return essentials("its dock tree is malformed");
         }
-        // La toolbar de antes de la versión 3 ni el timeline de antes de la 4 pueden venir en el
-        // árbol (no eran de él).
+        // La toolbar de antes de la versión 3, el timeline de antes de la 4 y el Preview de antes de
+        // la 5 no pueden venir en el árbol (no eran de él).
         let in_tree = |id: PanelId| {
             let ours = (matches!(id, PanelId::Canvas | PanelId::Color)
                 || Workspace::goes_to_strip(id))
                 && (saved.version >= 3 || id != PanelId::Tools);
             ours || (id == PanelId::Timeline && saved.version >= 4)
+                || (id == PanelId::Preview && saved.version >= 5)
         };
         let mut state: DockState<Option<PanelId>> = saved
             .state
@@ -291,26 +307,37 @@ impl Workspace {
         w
     }
 
-    /// El timeline a la vista (`show`) o fuera del árbol. Oculto (`view.timeline` apagado o no
-    /// disponible: un artboard de fuente o de modelo, la pestaña de un modelo) no ocupa lugar (el
-    /// lienzo y lo demás crecen), pero se recuerda dónde estaba ([`Spot`]) y ahí vuelve. Devuelve
-    /// si cambió algo.
-    pub(crate) fn sync_timeline(&mut self, show: bool) -> bool {
-        let shown = self.state.find_tab(&PanelId::Timeline).is_some();
+    /// El timeline o el Preview a la vista (`show`) o fuera del árbol. Oculto (apagado, o no
+    /// disponible: el timeline en un artboard de fuente o de modelo, los dos en la pestaña de un
+    /// modelo) no ocupa lugar (lo demás crece), pero se recuerda dónde estaba ([`Spot`]) y ahí
+    /// vuelve; sin un lugar (o si ya no existe), el timeline va debajo del lienzo y el Preview a
+    /// flotar en su esquina. Devuelve si cambió algo.
+    pub(crate) fn sync_panel(&mut self, id: PanelId, show: bool) -> bool {
+        let shown = self.state.find_tab(&id).is_some();
         match (show, shown) {
-            (false, true) => self.hide_timeline(),
-            (true, false) => self.show_timeline(),
+            (false, true) => self.hide_panel(id),
+            (true, false) => self.show_panel(id),
             _ => return false,
         }
         true
     }
 
-    /// Saca el timeline del árbol y recuerda dónde estaba.
-    fn hide_timeline(&mut self) {
-        let Some(path) = self.state.find_tab(&PanelId::Timeline) else {
+    /// [`Self::sync_panel`] del timeline.
+    #[cfg(test)]
+    pub(crate) fn sync_timeline(&mut self, show: bool) -> bool {
+        self.sync_panel(PanelId::Timeline, show)
+    }
+
+    /// Saca `id` del árbol y recuerda dónde estaba (el Preview en su esquina, no: vuelve a ella).
+    fn hide_panel(&mut self, id: PanelId) {
+        let Some(path) = self.state.find_tab(&id) else {
             return;
         };
-        let spot = self.timeline_spot_of(path.node_path());
+        let spot = if id == PanelId::Preview && self.preview_anchored {
+            None
+        } else {
+            self.spot_of(id, path.node_path())
+        };
         let focus = self.focused_panel();
         // Si era lo único de su ventana, la ventana se va: lo que se iba a acomodar de ella también
         // (lo de las demás ventanas de un acomodo leído sigue; los índices de las superficies no
@@ -328,20 +355,23 @@ impl Workspace {
         if alone {
             self.placements.retain(|(s, _)| *s != path.surface);
         }
-        self.placing.retain(|(p, _, _)| *p != PanelId::Timeline);
+        self.placing.retain(|(p, _, _)| *p != id);
         self.state.remove_tab(path);
-        self.timeline_spot = spot;
+        self.spots.retain(|(p, _)| *p != id);
+        if let Some(spot) = spot {
+            self.spots.push((id, spot));
+        }
         self.refocus(focus);
     }
 
-    /// Dónde está el timeline del grupo `path`, para volver ahí (ver [`Spot`]).
-    fn timeline_spot_of(&self, path: NodePath) -> Option<Spot> {
+    /// Dónde está `id`, del grupo `path`, para volver ahí (ver [`Spot`]).
+    fn spot_of(&self, id: PanelId, path: NodePath) -> Option<Spot> {
         let leaf = self.state.leaf(path).ok()?;
-        if let Some(&with) = leaf.tabs.iter().find(|&&t| t != PanelId::Timeline) {
+        if let Some(&with) = leaf.tabs.iter().find(|&&t| t != id) {
             let index = leaf
                 .tabs
                 .iter()
-                .position(|&t| t == PanelId::Timeline)
+                .position(|&t| t == id)
                 .unwrap_or(leaf.tabs.len());
             return Some(Spot::Tab { with, index });
         }
@@ -350,14 +380,8 @@ impl Workspace {
             // Solo en una ventana: donde estaba lo de adentro (o donde se pidió, si todavía no se
             // dibujó).
             let rect = self.root_rect(path.surface).or_else(|| {
-                let (_, at, _) = self
-                    .placing
-                    .iter()
-                    .find(|(p, _, _)| *p == PanelId::Timeline)?;
-                Some(egui::Rect::from_min_size(
-                    *at,
-                    PanelId::Timeline.spec().default_size,
-                ))
+                let (_, at, _) = self.placing.iter().find(|(p, _, _)| *p == id)?;
+                Some(egui::Rect::from_min_size(*at, id.spec().default_size))
             })?;
             return Some(Spot::Window(rect));
         };
@@ -381,20 +405,25 @@ impl Workspace {
         })
     }
 
-    /// Vuelve a meter el timeline donde estaba (ver [`Spot`]); si ese lugar ya no existe (o no se
-    /// conoce), debajo del lienzo.
-    pub(super) fn show_timeline(&mut self) {
-        if self.state.find_tab(&PanelId::Timeline).is_some() {
+    /// Vuelve a meter `id` donde estaba (ver [`Spot`]); si ese lugar ya no existe (o no se
+    /// conoce), el timeline debajo del lienzo y el Preview a flotar en su esquina.
+    pub(super) fn show_panel(&mut self, id: PanelId) {
+        if self.state.find_tab(&id).is_some() {
             return;
         }
         let focus = self.focused_panel();
-        let placed = match self.timeline_spot.take() {
+        let spot = self
+            .spots
+            .iter()
+            .position(|(p, _)| *p == id)
+            .map(|i| self.spots.remove(i).1);
+        let placed = match spot {
             // En su lugar entre las pestañas, sin cambiar la que se ve.
             Some(Spot::Tab { with, index }) => match self.state.find_tab(&with) {
                 Some(path) => match self.state.leaf_mut(path.node_path()) {
                     Ok(leaf) => {
                         let index = index.min(leaf.tabs.len());
-                        leaf.tabs.insert(index, PanelId::Timeline);
+                        leaf.tabs.insert(index, id);
                         if leaf.active.0 >= index {
                             leaf.active = TabIndex(leaf.active.0 + 1);
                         }
@@ -406,14 +435,13 @@ impl Workspace {
             },
             Some(Spot::Beside { of, side, fraction }) => match node_with(&self.state, &of) {
                 Some(path) => {
-                    self.state
-                        .split(path, side, fraction, Node::leaf(PanelId::Timeline));
+                    self.state.split(path, side, fraction, Node::leaf(id));
                     true
                 }
                 None => false,
             },
             Some(Spot::Window(rect)) => {
-                let surface = self.state.add_window(vec![PanelId::Timeline]);
+                let surface = self.state.add_window(vec![id]);
                 if let Some(window) = self.state.get_window_state_mut(surface) {
                     window.set_position(rect.min.round());
                     window.set_size(rect.size().round());
@@ -429,10 +457,25 @@ impl Workspace {
             }
             None => false,
         };
+        if id == PanelId::Preview {
+            self.preview_anchored = !placed;
+        }
         if !placed {
-            put_below_canvas(&mut self.state);
+            match id {
+                PanelId::Preview => self.float_at_corner(id),
+                _ => put_below_canvas(&mut self.state),
+            }
         }
         self.refocus(focus);
+    }
+
+    /// `id` (el Preview) solo en una ventana nueva, de su tamaño de fábrica: dónde va (su esquina)
+    /// lo pide `show` cada frame (ver `Workspace::place_preview`).
+    fn float_at_corner(&mut self, id: PanelId) {
+        let surface = self.state.add_window(vec![id]);
+        if let Some(window) = self.state.get_window_state_mut(surface) {
+            window.set_size(id.spec().default_size);
+        }
     }
 
     /// El panel activo del grupo con el foco, si hay uno.
@@ -471,8 +514,9 @@ impl Workspace {
 
     /// Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`, para capturas): `library-tab`
     /// (Library en el grupo de Color), `split` (Groom debajo de Color), `float` (Lumen flotando),
-    /// `tools-right` (la toolbar a la derecha del lienzo), `tools-float` (la toolbar flotando) o
-    /// `timeline-right` (el timeline a la derecha del lienzo). `None` si no es ninguno de esos.
+    /// `tools-right` (la toolbar a la derecha del lienzo), `tools-float` (la toolbar flotando),
+    /// `timeline-right` (el timeline a la derecha del lienzo) o `preview-docked` (el Preview
+    /// acoplado debajo de Color; se ve con `view.preview`). `None` si no es ninguno de esos.
     pub(crate) fn demo(name: &str) -> Option<Workspace> {
         let mut w = Workspace::essentials();
         let (surface, node) = w.leaf_of(PanelId::Color)?;
@@ -482,6 +526,10 @@ impl Workspace {
             "tools-float" => w.float(PanelId::Tools, egui::pos2(320.0, 120.0)),
             "timeline-right" => w.dock(PanelId::Timeline, DockTarget::Split(cs, cn, Split::Right)),
             "library-tab" => w.dock(PanelId::Library, DockTarget::Leaf(surface, node)),
+            "preview-docked" => w.dock(
+                PanelId::Preview,
+                DockTarget::Split(surface, node, Split::Below),
+            ),
             "split" => w.dock(
                 PanelId::Groom,
                 DockTarget::Split(surface, node, Split::Below),
@@ -503,6 +551,10 @@ impl Workspace {
         self.strip.retain(|&p| p != id);
         if let Some(path) = self.state.find_tab(&id) {
             self.state.remove_tab(path);
+        }
+        // Lo que se mueve de lugar deja su esquina.
+        if id == PanelId::Preview {
+            self.preview_anchored = false;
         }
     }
 
@@ -669,16 +721,31 @@ impl Workspace {
     }
 
     /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
-    /// o más. Las ventanas flotantes siempre la llevan (es su título y de ahí se arrastran).
-    /// Devuelve si alguna cambió.
+    /// o más. Las ventanas flotantes la llevan (es su título y de ahí se arrastran), salvo la del
+    /// Preview solo con Pixel UI (su ventana es la del diseño, con su barra de título: ver
+    /// [`Workspace::bare_preview`]). Devuelve si alguna cambió.
     pub(crate) fn refresh_tab_bars(&mut self) -> bool {
+        let bare = self.bare_preview();
         let mut changed = false;
         for (path, leaf) in self.state.iter_leaves_mut() {
-            let hidden = path.surface.is_main() && leaf.tabs.len() <= 1;
+            let hidden =
+                (path.surface.is_main() && leaf.tabs.len() <= 1) || Some(path.surface) == bare;
             changed |= leaf.tab_bar_hidden != hidden;
             leaf.tab_bar_hidden = hidden;
         }
         changed
+    }
+
+    /// Con Pixel UI, la ventana del Preview solo (un solo grupo, con él solo): su ventana es la del
+    /// diseño (su marco y su barra de título, sin pestañas; ver `show`).
+    pub(crate) fn bare_preview(&self) -> Option<SurfaceIndex> {
+        let path = self.state.find_tab(&PanelId::Preview)?;
+        if !self.skinned || path.surface.is_main() {
+            return None;
+        }
+        let tree = &self.state[path.surface];
+        let leaves = tree.iter().filter(|n| n.is_leaf()).count();
+        (leaves == 1 && tree.num_tabs() == 1).then_some(path.surface)
     }
 
     /// Cada panel en un solo lugar: lo que está en el árbol sale de la tira (y la tira sin
@@ -985,10 +1052,11 @@ mod tests {
         assert_eq!(w.places(PanelId::Timeline), 1);
         assert_eq!(w.column_panels(), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
-        // Lo que se guarda ahora es la 4, y se lee igual (sin otro timeline).
+        // Lo que se guarda ahora es la 5 (tarea 5: con el Preview), y se lee igual (sin otro
+        // timeline).
         let again = w.to_saved();
         assert_eq!(again.version, SAVED_VERSION);
-        assert_eq!(SAVED_VERSION, 4);
+        assert_eq!(SAVED_VERSION, 5);
         let back = Workspace::from_saved(again);
         assert_eq!(back.state_tabs(), w.state_tabs());
         assert_eq!(back.places(PanelId::Timeline), 1);
@@ -1050,7 +1118,7 @@ mod tests {
         assert_eq!(w.places(PanelId::Timeline), 0);
         w.sync_timeline(true);
         assert!(w.floating(PanelId::Timeline));
-        // Cada panel del workspace, una vez (Preview todavía no es de él: tarea 5).
+        // Cada panel del workspace, una vez (el Preview, apagado, fuera del árbol).
         for &id in PanelId::ALL.iter().filter(|&&p| p != PanelId::Preview) {
             assert_eq!(w.places(id), 1, "{id:?}");
         }
@@ -1476,5 +1544,94 @@ mod tests {
             .memory(|m| m.area_rect(skin::window_area_id(surface)))
             .expect("Lumen's window");
         assert!(rect.is_finite(), "{rect:?}");
+    }
+
+    #[test]
+    fn the_preview_is_out_of_the_tree_until_shown_and_then_floats_at_its_corner() {
+        let mut w = Workspace::essentials();
+        assert_eq!(w.places(PanelId::Preview), 0, "off by default");
+        assert!(w.sync_panel(PanelId::Preview, true));
+        assert!(w.floating(PanelId::Preview));
+        assert!(
+            w.preview_anchored,
+            "at the corner of the window, like before"
+        );
+        assert!(!w.sync_panel(PanelId::Preview, true), "already shown");
+        assert!(w.sync_panel(PanelId::Preview, false));
+        assert_eq!(w.places(PanelId::Preview), 0);
+        // Vuelve a su esquina.
+        w.sync_panel(PanelId::Preview, true);
+        assert!(w.floating(PanelId::Preview) && w.preview_anchored);
+        // Movida (flotando en otro lugar o acoplada) ya no va anclada.
+        w.float(PanelId::Preview, egui::pos2(300.0, 200.0));
+        assert!(!w.preview_anchored);
+        // Cada panel del workspace, una vez.
+        for &id in PanelId::ALL {
+            assert_eq!(w.places(id), 1, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn a_hidden_preview_comes_back_where_it_was() {
+        let mut w = Workspace::essentials();
+        // Acoplada debajo de Color.
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Preview, DockTarget::Split(s, n, Split::Below));
+        let before = w.state_tabs();
+        w.sync_panel(PanelId::Preview, false);
+        assert_eq!(w.places(PanelId::Preview), 0);
+        w.sync_panel(PanelId::Preview, true);
+        assert!(w.docked(PanelId::Preview));
+        assert_eq!(w.state_tabs(), before);
+        // En pestaña con Color.
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Preview, DockTarget::Leaf(s, n));
+        w.sync_panel(PanelId::Preview, false);
+        w.sync_panel(PanelId::Preview, true);
+        assert_eq!(w.leaf_of(PanelId::Preview), w.leaf_of(PanelId::Color));
+        // El timeline, igual que antes (los dos se recuerdan a la vez).
+        w.sync_panel(PanelId::Timeline, false);
+        w.sync_panel(PanelId::Preview, false);
+        w.sync_panel(PanelId::Timeline, true);
+        w.sync_panel(PanelId::Preview, true);
+        assert!(w.timeline_below());
+        assert_eq!(w.leaf_of(PanelId::Preview), w.leaf_of(PanelId::Color));
+    }
+
+    #[test]
+    fn an_anchored_preview_is_not_saved_and_a_placed_one_is() {
+        // Anclada a su esquina (la de fábrica): no se guarda, y al leerla vuelve a su esquina.
+        let mut w = Workspace::essentials();
+        w.sync_panel(PanelId::Preview, true);
+        let saved = w.to_saved();
+        assert_eq!(saved.version, SAVED_VERSION);
+        assert_eq!(SAVED_VERSION, 5);
+        let back = Workspace::from_saved(saved);
+        assert_eq!(back.places(PanelId::Preview), 0);
+        // Acoplada (y oculta), sí: en su lugar.
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Preview, DockTarget::Split(s, n, Split::Below));
+        w.sync_panel(PanelId::Preview, false);
+        let back = Workspace::from_saved(w.to_saved());
+        assert!(back.docked(PanelId::Preview));
+        assert!(!back.preview_anchored);
+        // Flotando en otro lugar, también.
+        let mut w = Workspace::essentials();
+        w.float(PanelId::Preview, egui::pos2(300.0, 200.0));
+        let back = Workspace::from_saved(w.to_saved());
+        assert!(back.floating(PanelId::Preview));
+    }
+
+    #[test]
+    fn a_version_4_workspace_has_no_preview_in_its_tree() {
+        // En la 4 el Preview era su propia ventana: una llave "preview" en el árbol no puede venir
+        // de ahí y se descarta (con `view.preview`, el workspace lo pone en su esquina).
+        let mut w = Workspace::essentials();
+        w.float(PanelId::Preview, egui::pos2(300.0, 200.0));
+        let mut saved = w.to_saved();
+        saved.version = 4;
+        let back = Workspace::from_saved(saved);
+        assert_eq!(back.places(PanelId::Preview), 0);
+        assert_eq!(back.state_tabs(), Workspace::essentials().state_tabs());
     }
 }

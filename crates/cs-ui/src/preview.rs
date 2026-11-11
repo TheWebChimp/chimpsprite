@@ -1,12 +1,18 @@
 //! La ventanita de preview (como la de Aseprite): el artboard activo en el frame que se ve,
-//! centrado sobre el damero, en la ventana de la app. De fábrica, al zoom entero más grande que
-//! entra; la rueda lo cambia de a uno, arrastrando se mueve el dibujo y con doble clic vuelve a
-//! como estaba (o con centrar, en la barra). Su play anima el dibujo por su cuenta (sin mover el
-//! timeline) y la agarradera de la esquina la agranda o la achica.
+//! centrado sobre el damero. De fábrica, al zoom entero más grande que entra; la rueda lo cambia
+//! de a uno, arrastrando se mueve el dibujo y con doble clic vuelve a como estaba (o con centrar).
+//! Su play anima el dibujo por su cuenta (sin mover el timeline).
+//!
+//! Es un panel del workspace (fase D): flotando solo en su ventana (de fábrica, en la esquina de
+//! abajo a la derecha, como antes), con Pixel UI su ventana es la del diseño
+//! ([`Preview::window_contents`] y [`Preview::window_chrome`]: play y centrar en la barra de
+//! título y la agarradera de la esquina que la agranda o la achica); acoplado (o con otras
+//! pestañas), play y centrar van arriba de lo de adentro y el dibujo ocupa lo que queda
+//! ([`Preview::contents`]).
 
 use eframe::egui::{
-    self, Align2, Color32, ColorImage, CursorIcon, Pos2, Rect, Sense, TextureHandle,
-    TextureOptions, Ui, Vec2, vec2,
+    self, Color32, ColorImage, CursorIcon, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui,
+    Vec2, vec2,
 };
 use eframe::emath::GuiRounding as _;
 
@@ -25,10 +31,14 @@ const GRIP: f32 = 9.0;
 /// Los cuadros del damero, en puntos.
 const CHECKER_CELL: f32 = 4.0;
 const MAX_ZOOM: f32 = 32.0;
-/// De la esquina de abajo a la derecha de la pantalla.
-const OFFSET: Vec2 = vec2(-48.0, -48.0);
+/// De la esquina de abajo a la derecha de la pantalla: ahí va su ventana de fábrica.
+pub(crate) const OFFSET: Vec2 = vec2(-48.0, -48.0);
 /// Entre el play y la vista.
 const ROW_GAP: f32 = 3.0;
+/// El alto de la fila de play y centrar acoplado (con Pixel UI, la zona de sus íconos).
+const CONTROLS_HEIGHT: f32 = 9.0;
+/// Lo más bajo de lo de adentro acoplado: la fila de controles y la vista más chica.
+pub(crate) const MIN_HEIGHT: f32 = CONTROLS_HEIGHT + ROW_GAP + MIN_VIEW.y;
 
 /// La reproducción propia del preview, como la del timeline: el tag del frame donde empezó (o
 /// todos los frames), con la duración de cada frame.
@@ -77,52 +87,67 @@ impl Default for Preview {
 }
 
 impl Preview {
-    /// La ventana, con [`Self::contents`] adentro. Devuelve si se cerró con la ×.
-    pub fn show(
+    /// Lo que mide su ventana del diseño (con Pixel UI, solo en su ventana: ver
+    /// [`Self::window_contents`]): el diálogo con la vista adentro.
+    pub(crate) fn window_size(&self, ui: &Ui, skin: &Skin) -> Vec2 {
+        crate::pixel_ui::dialog_size(ui, skin, crate::dock::PREVIEW, self.size)
+    }
+
+    /// El marco y la barra de su ventana del diseño en `rect` (con Pixel UI, solo en su ventana),
+    /// después de [`Self::window_contents`]: el marco va en `background` (el lugar que se dejó
+    /// debajo de lo de adentro, con el pintor de su capa) y en la barra, sin botón (como en el
+    /// diseño), play o pausa (si hay animación) y centrar, y la ○ de cerrar. `ui` es de la capa de
+    /// la ventana, encima de lo demás de ella. Devuelve si se cerró (y para la reproducción).
+    pub(crate) fn window_chrome(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut Ui,
         editor: &Editor,
-        skin: Option<&Skin>,
-        canvas: Option<(egui::TextureId, Vec2)>,
+        skin: &Skin,
+        rect: Rect,
+        background: (&egui::Painter, egui::layers::ShapeIdx),
     ) -> bool {
-        let anchor = (Align2::RIGHT_BOTTOM, OFFSET);
-        let closed = match skin {
-            // Con Pixel UI, play o pausa (si hay animación) y centrar van en la barra de título,
-            // sin botón (como en el diseño), con la × de cerrar.
-            Some(skin) => {
-                let playing = self.playing();
-                let animated = editor.sprite().frames.len() > 1;
-                let (mut play, mut center) = (false, false);
-                let out = crate::pixel_ui::pixel_dialog_with_bar(
-                    ctx,
-                    skin,
-                    egui::Id::new("preview"),
-                    "Preview",
-                    true,
-                    anchor,
-                    |ui| self.contents(ui, editor, Some(skin), canvas),
-                    |ui, bar| (play, center) = bar_icons(ui, skin, bar, animated, playing),
-                );
-                if play {
-                    self.toggle_play(editor);
-                }
-                if center {
-                    self.zoom = None;
-                    self.pan = Vec2::ZERO;
-                }
-                out.closed
-            }
-            None => {
-                crate::pixel_ui::app_window(ctx, None, "preview", "Preview", true, anchor, |ui| {
-                    self.contents(ui, editor, None, canvas)
-                })
-                .1
-            }
-        };
-        if closed {
-            self.play = None;
+        let chrome = crate::pixel_ui::dialog_chrome(
+            ui,
+            skin,
+            egui::Id::new("preview"),
+            rect,
+            crate::dock::PREVIEW,
+            true,
+            false,
+        );
+        background
+            .0
+            .set(background.1, egui::Shape::Vec(chrome.shapes));
+        let animated = editor.sprite().frames.len() > 1;
+        let left = chrome.bar.left() + BAR_LEFT;
+        let (play, center) = bar_icons(ui, skin, chrome.bar, left, animated, self.playing());
+        self.controls(editor, play, center);
+        if chrome.closed {
+            self.stop();
         }
-        closed
+        chrome.closed
+    }
+
+    /// Lo que piden sus controles: prender o apagar la reproducción y centrar.
+    fn controls(&mut self, editor: &Editor, play: bool, center: bool) {
+        if play {
+            self.toggle_play(editor);
+        }
+        if center {
+            self.zoom = None;
+            self.pan = Vec2::ZERO;
+        }
+    }
+
+    /// Para la reproducción (al cerrarlo o apagarlo).
+    pub(crate) fn stop(&mut self) {
+        self.play = None;
+    }
+
+    /// Si se ve como entró: al zoom que entra y sin mover.
+    #[cfg(test)]
+    pub(crate) fn centered(&self) -> bool {
+        self.zoom.is_none() && self.pan == Vec2::ZERO
     }
 
     /// Reproduciendo (un tag con repeat que ya terminó sus vueltas se queda quieto en su último
@@ -134,7 +159,7 @@ impl Preview {
     }
 
     /// Prende o apaga la reproducción del artboard activo.
-    fn toggle_play(&mut self, editor: &Editor) {
+    pub(crate) fn toggle_play(&mut self, editor: &Editor) {
         // Si ya había terminado sus vueltas, vuelve a empezar.
         if self
             .play
@@ -237,9 +262,27 @@ impl Preview {
         self.shown = self.texture.as_ref().map(|t| (t.id(), t.size_vec2()));
     }
 
-    /// Lo de adentro de la ventana. `canvas`: la textura del lienzo con el frame del editor tal
-    /// cual, si la hay (se usa en vez de componer otra). Sin Pixel UI, arriba el botón de play
-    /// (con Pixel UI va en la barra de título del diseño, que es de la ventana).
+    /// Lo de adentro de su ventana del diseño (con Pixel UI, solo en su ventana): la vista, del
+    /// tamaño elegido con la agarradera (play y centrar van en la barra de título: ver
+    /// [`Self::window_chrome`]). `canvas`: la textura del lienzo con el frame del editor tal cual,
+    /// si la hay (se usa en vez de componer otra). `ui` recorta en el rect de la ventana (la
+    /// agarradera va contra su borde).
+    pub(crate) fn window_contents(
+        &mut self,
+        ui: &mut Ui,
+        editor: &Editor,
+        skin: &Skin,
+        canvas: Option<(egui::TextureId, Vec2)>,
+    ) {
+        self.canvas = canvas;
+        ui.spacing_mut().item_spacing.y = ROW_GAP;
+        self.view(ui, editor, Some(skin), self.size, true);
+    }
+
+    /// Lo de adentro como panel (acoplado, o en una ventana con pestañas; sin Pixel UI, también
+    /// solo en su ventana): arriba play o pausa y centrar (con Pixel UI, sus íconos sin botón,
+    /// como en la barra de su ventana; sin él, botones de egui) y debajo la vista, de todo lo que
+    /// queda (el tamaño lo pone su grupo). `canvas`, como en [`Self::window_contents`].
     pub fn contents(
         &mut self,
         ui: &mut Ui,
@@ -249,25 +292,47 @@ impl Preview {
     ) {
         self.canvas = canvas;
         ui.spacing_mut().item_spacing.y = ROW_GAP;
-        if skin.is_none() {
-            let label = if self.playing() { "Pause" } else { "Play" };
-            if ui.selectable_label(self.playing(), label).clicked() {
-                self.toggle_play(editor);
+        let playing = self.playing();
+        let (play, center) = match skin {
+            Some(skin) => {
+                let width = ui.available_width();
+                let (row, _) = ui.allocate_exact_size(vec2(width, CONTROLS_HEIGHT), Sense::hover());
+                let animated = editor.sprite().frames.len() > 1;
+                // El primer ícono a la orilla (su zona de clic, 2 más ancha, empieza en ella).
+                bar_icons(ui, skin, row, row.left() + 2.0, animated, playing)
             }
-        }
+            None => {
+                ui.horizontal(|ui| {
+                    let label = if playing { "Pause" } else { "Play" };
+                    let play = ui.selectable_label(playing, label).clicked();
+                    (play, ui.button("Center").clicked())
+                })
+                .inner
+            }
+        };
+        self.controls(editor, play, center);
+        let size = ui.available_size().floor().max(Vec2::splat(1.0));
+        self.view(ui, editor, skin, size, false);
+    }
+
+    /// La vista de `size`: el dibujo sobre el damero (la rueda, el arrastre y el doble clic) y, si
+    /// `grip`, la agarradera de la esquina.
+    fn view(&mut self, ui: &mut Ui, editor: &Editor, skin: Option<&Skin>, size: Vec2, grip: bool) {
         if self.playing() {
             let dt_ms = ui.input(|i| i.stable_dt).min(0.1) as f64 * 1000.0;
             self.tick(editor, dt_ms);
             ui.ctx().request_repaint();
         }
         self.update(ui.ctx(), editor);
-        let (rect, response) = ui.allocate_exact_size(self.size, Sense::click_and_drag());
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         let painter = ui.painter_at(rect);
         let background = skin.map_or(theme::CANVAS_BG, |s| s.colors().canvas);
         painter.rect_filled(rect, 0.0, background);
-        self.grip(ui, rect, skin);
-        let Some((texture, size)) = self.shown else {
+        if grip {
+            self.grip(ui, rect, skin);
+        }
+        let Some((texture, texture_size)) = self.shown else {
             return;
         };
         if response.double_clicked() {
@@ -277,7 +342,9 @@ impl Preview {
             self.pan += response.drag_delta();
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
         }
-        let mut zoom = self.zoom.unwrap_or_else(|| fit_zoom(size, self.size));
+        let mut zoom = self
+            .zoom
+            .unwrap_or_else(|| fit_zoom(texture_size, rect.size()));
         // La rueda: un paso por movimiento.
         if response.hovered() {
             let steps: Vec<bool> = ui.input(|i| {
@@ -300,7 +367,7 @@ impl Preview {
                 self.zoom = Some(zoom);
             }
         }
-        let shown = size * zoom;
+        let shown = texture_size * zoom;
         // En puntos enteros: los píxeles del dibujo caen justo en los de la pantalla.
         let min = (rect.center() - shown / 2.0 + self.pan).round();
         let image = Rect::from_min_size(min, shown).round_to_pixels(ppp);
@@ -310,6 +377,9 @@ impl Preview {
         let full = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         painter.image(texture, image, full, Color32::WHITE);
         // La agarradera va encima del dibujo: la del diseño o, sin ella, rayitas.
+        if !grip {
+            return;
+        }
         match skin.filter(|s| {
             s.piece(GRIP_PIECE, crate::skin::WidgetState::Normal)
                 .is_some()
@@ -387,15 +457,22 @@ fn grip_size(skin: Option<&Skin>) -> Vec2 {
         })
 }
 
-/// A la izquierda de la barra de título, centrados en su alto: el play (reproduciendo, la
-/// pausa), solo si hay animación, y centrar (volver al zoom y al lugar de
+/// A la izquierda de la barra de título (desde `left`), centrados en su alto: el play
+/// (reproduciendo, la pausa), solo si hay animación, y centrar (volver al zoom y al lugar de
 /// entrada). Devuelve cuál se tocó.
-fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, animated: bool, playing: bool) -> (bool, bool) {
+fn bar_icons(
+    ui: &mut Ui,
+    skin: &Skin,
+    bar: Rect,
+    left: f32,
+    animated: bool,
+    playing: bool,
+) -> (bool, bool) {
     let size = |name: &str| {
         skin.piece(name, crate::skin::WidgetState::Normal)
             .map_or(vec2(5.0, 5.0), |p| vec2(p.size[0] as f32, p.size[1] as f32))
     };
-    let mut x = bar.left() + BAR_LEFT;
+    let mut x = left;
     // Cada ícono en un lugar de `slot` de ancho (el play y la pausa, el de la más ancha: así
     // centrar no se mueve al cambiar entre ellos).
     let mut icon = |ui: &mut Ui, name: &str, label: &str, slot: f32| {

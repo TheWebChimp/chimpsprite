@@ -1,9 +1,10 @@
 //! El workspace en pantalla: [`show`] arma el `DockArea` con la piel en toda el área central,
 //! hospeda cada panel ([`Viewer`]; el lienzo, con `ChimpApp::canvas_area`; la toolbar, con su
 //! scroll y sus márgenes de siempre; el timeline debajo del lienzo, con el marco del panel de abajo
-//! de antes) y pega lo que va encima de egui_dock (las pestañas y la × del kit, la franja de agarre
-//! y el botón « de cada grupo, los divisores de la toolbar y del timeline tapados: ver
-//! [`cover_tools_divider`] y [`cover_timeline_divider`], y la tira de íconos:
+//! de antes; el Preview solo en su ventana, con la del diseño: ver [`PreviewWindow`]) y pega lo que
+//! va encima de egui_dock (las pestañas y la × del kit, la franja de agarre y el botón « de cada
+//! grupo, los divisores de la toolbar y del timeline tapados: ver [`cover_tools_divider`] y
+//! [`cover_timeline_divider`], el marco y la barra de la ventana del Preview y la tira de íconos:
 //! `ChimpApp::strip_area`). También lleva el ancho de la columna derecha (la preferencia del
 //! usuario, `view.palette_width`, el que tomó sola, [`host_width`], y el arrastre de su divisor) y
 //! el alto del timeline (`view.timeline_height`, ver [`timeline_height`]).
@@ -66,6 +67,8 @@ struct Viewer<'a> {
     timeline_top_less: i8,
     /// Lo que dejó la hoja del lienzo, si se dibujó.
     canvas: Option<CanvasArea>,
+    /// Con Pixel UI, el Preview solo en su ventana: la del diseño (ver [`PreviewWindow`]).
+    preview_window: Option<PreviewWindow>,
     actions: Vec<PanelAction>,
     hits: Vec<skin::TabHit>,
     /// Los que egui_dock cerró (sin Pixel UI, con su ×): van a la tira.
@@ -161,6 +164,33 @@ impl TabViewer for Viewer<'_> {
             });
             return;
         }
+        // El Preview: solo en su ventana con Pixel UI, lo de adentro de la ventana del diseño (su
+        // marco va debajo, en el lugar que se deja aquí, y su barra encima, después del
+        // `DockArea`); si no, con sus controles arriba. Como su ventana de antes, un diálogo no lo
+        // apaga.
+        if id == PanelId::Preview {
+            let app = &mut *self.app;
+            let canvas = app.doc.canvas.plain_texture(&app.doc.editor);
+            let shared_skin = app.pixel.shared_skin();
+            match (&mut self.preview_window, shared_skin.as_deref()) {
+                (Some(window), Some(skin)) => {
+                    // Lo de afuera: desde lo de adentro, con el margen del diálogo.
+                    let inset = egui::vec2(window.dialog.leftf(), window.dialog.topf());
+                    let rect = egui::Rect::from_min_size(ui.max_rect().min - inset, window.size);
+                    let mut painter = ui.painter().clone();
+                    painter.set_clip_rect(rect);
+                    let background = painter.add(egui::Shape::Noop);
+                    // La agarradera va contra el borde de la ventana, fuera del grupo.
+                    ui.set_clip_rect(rect);
+                    ui.visuals_mut().override_text_color = Some(skin.colors().text);
+                    app.preview
+                        .window_contents(ui, &app.doc.editor, skin, canvas);
+                    window.drawn = Some((rect, painter, background));
+                }
+                (_, skin) => app.preview.contents(ui, &app.doc.editor, skin, canvas),
+            }
+            return;
+        }
         // Una instancia por panel por frame (su estado y los ids de `forms` son globales): en la
         // pestaña de un modelo, al 3D lo hospeda su panel fijo; aquí, solo dónde está.
         if id == PanelId::Model && self.app.doc.editor.model_edit_on() {
@@ -214,8 +244,8 @@ impl TabViewer for Viewer<'_> {
 
     fn on_close(&mut self, tab: &mut PanelId) -> egui_dock::tab_viewer::OnCloseResponse {
         self.closed.push(*tab);
-        // El timeline lo saca `Workspace::sync_timeline`, que recuerda dónde estaba.
-        if *tab == PanelId::Timeline {
+        // El timeline y el Preview los saca `Workspace::sync_panel`, que recuerda dónde estaban.
+        if matches!(*tab, PanelId::Timeline | PanelId::Preview) {
             egui_dock::tab_viewer::OnCloseResponse::Ignore
         } else {
             egui_dock::tab_viewer::OnCloseResponse::Close
@@ -248,6 +278,16 @@ impl TabViewer for Viewer<'_> {
             // Debajo del lienzo, el marco lo pone el timeline (el del panel de abajo de antes).
             PanelId::Timeline if self.timeline_below => egui::Margin::ZERO,
             PanelId::Timeline => self.timeline_margin,
+            // Solo en su ventana con Pixel UI, lo de adentro donde va en el diálogo del diseño.
+            PanelId::Preview => match &self.preview_window {
+                Some(w) => egui::Margin {
+                    left: w.dialog.left - w.frame.left,
+                    right: w.dialog.right - w.frame.right,
+                    top: w.dialog.top - w.frame.top,
+                    bottom: w.dialog.bottom - w.frame.bottom,
+                },
+                None => egui::Margin::same(dock::FLYOUT_MARGIN),
+            },
             _ => egui::Margin::same(dock::FLYOUT_MARGIN),
         };
         if self.beside.contains(tab) {
@@ -257,10 +297,33 @@ impl TabViewer for Viewer<'_> {
         Some(style)
     }
 
+    /// El Preview solo en su ventana con Pixel UI pinta su propio fondo (el del diálogo).
+    fn clear_background(&self, tab: &PanelId) -> bool {
+        !(*tab == PanelId::Preview && self.preview_window.is_some())
+    }
+
     fn scroll_bars(&self, _tab: &PanelId) -> [bool; 2] {
         // El scroll es de cada panel (el del kit, o el suyo propio).
         [false, false]
     }
+}
+
+/// Con Pixel UI, el Preview solo en su ventana (`Workspace::bare_preview`): su ventana es la del
+/// diseño (la suya de antes: el marco `window` y su barra de título con play, centrar y la ○), no
+/// la de las ventanas del workspace. La ventana de egui_dock va del tamaño del diálogo
+/// (`Workspace::place_preview`), sin su marco (`skin::Armed::bare`), sin barra de pestañas (se
+/// arrastra de su franja de arriba, como un grupo acoplado solo, para acoplarlo) y sin fondo; lo
+/// de adentro va donde va en el diálogo y el marco y la barra se pintan aparte
+/// (`Preview::window_chrome`).
+struct PreviewWindow {
+    /// Lo que mide, el marco del diálogo incluido.
+    size: egui::Vec2,
+    /// Del borde del diálogo a lo de adentro y del de la ventana de egui_dock (`menu.side`) a su
+    /// grupo: lo de adentro va con la diferencia.
+    dialog: egui::Margin,
+    frame: egui::Margin,
+    /// Lo que dejó al dibujarse: su rect y el pintor de su capa con el lugar de su marco.
+    drawn: Option<(egui::Rect, egui::Painter, egui::layers::ShapeIdx)>,
 }
 
 /// El marco del timeline justo debajo del lienzo: el del panel de abajo de antes. Con Pixel UI, el
@@ -344,10 +407,23 @@ fn host_width(width: f32, whole: bool, docked: impl Iterator<Item = Extent>) -> 
 pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option<CanvasArea> {
     let ctx = ui.ctx().clone();
     let mut workspace = std::mem::replace(&mut app.workspace, Workspace::placeholder());
-    // El timeline, en el árbol si se quiere ver y tiene sentido (si no, fuera, recordando dónde
-    // estaba): lo que hacen View → Timeline, su botón de la tira y su atajo.
+    // El timeline y el Preview, en el árbol si se quieren ver y tienen sentido (si no, fuera,
+    // recordando dónde estaban): lo que hacen View → Timeline, sus botones de la tira y su atajo.
+    // Apagado, el Preview no sigue reproduciendo (en la pestaña de un modelo se oculta sin
+    // apagarse, como su ventana de antes).
     let model_tab = app.doc.editor.model_edit_on();
-    workspace.sync_timeline(app.view.timeline && PanelId::Timeline.available(app));
+    workspace.skinned = app.pixel.skin().is_some();
+    workspace.sync_panel(
+        PanelId::Timeline,
+        app.view.timeline && PanelId::Timeline.available(app),
+    );
+    workspace.sync_panel(
+        PanelId::Preview,
+        app.view.preview && PanelId::Preview.available(app),
+    );
+    if !app.view.preview {
+        app.preview.stop();
+    }
     workspace.tidy();
     tidy_canvas(&mut workspace.state, None);
     workspace.place_restored_windows(&ctx);
@@ -355,6 +431,19 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     workspace.refresh_tab_bars();
     let shared_skin = app.pixel.shared_skin();
     let skin: Option<&Skin> = shared_skin.as_deref();
+    // El Preview flotando: con Pixel UI y solo en su ventana, del tamaño de su ventana del diseño;
+    // en su esquina hasta que se lo mueve.
+    let preview_window = match (skin, workspace.bare_preview()) {
+        (Some(skin), Some(_)) => Some(PreviewWindow {
+            size: app.preview.window_size(ui, skin),
+            dialog: pixel_ui::dialog_margin(skin),
+            frame: skin::flyout_margin(skin),
+            drawn: None,
+        }),
+        _ => None,
+    };
+    let anchored = workspace.place_preview(&ctx, preview_window.as_ref().map(|w| w.size));
+    let preview_surface = workspace.leaf_of(PanelId::Preview).map(|(s, _)| s);
     let widths: HashMap<PanelId, f32> = match skin {
         Some(_) => PanelId::ALL
             .iter()
@@ -450,6 +539,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         canvas_bottom_less: if below { (sep - overlap) as i8 } else { 0 },
         timeline_top_less: (overlap - line).max(0.0) as i8,
         canvas: None,
+        preview_window,
         actions: Vec::new(),
         hits: Vec::new(),
         closed: Vec::new(),
@@ -481,6 +571,65 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .show_inside(ui, &mut viewer);
     }
     ui.advance_cursor_after_rect(area);
+    // El marco y la barra de la ventana del Preview (con Pixel UI, solo en ella), en su capa y
+    // encima de lo de ella: sus controles le ganan a la franja de agarre de su grupo (la de arriba,
+    // que egui_dock registra después de lo de adentro).
+    let mut bare = None;
+    if let Some(PreviewWindow {
+        drawn: Some((rect, painter, background)),
+        frame: egui::Margin { top: frame_top, .. },
+        ..
+    }) = viewer.preview_window.take()
+        && let Some(skin) = skin
+    {
+        let mut bar = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("workspace_preview")
+                .layer_id(painter.layer_id())
+                .max_rect(rect),
+        );
+        bar.set_clip_rect(rect);
+        // Como lo de adentro: invisible en la pasada de medir de su ventana, y con su opacidad.
+        if !painter.is_visible() {
+            bar.set_invisible();
+        }
+        bar.multiply_opacity(painter.opacity());
+        // De su barra de título se mueve (como su ventana de antes): un widget encima de la ventana
+        // de egui_dock, debajo de la franja de agarre de su grupo (la de arriba, de la que se lleva a
+        // acoplar), que con el radio de egui se quedaría también con lo de abajo de ella. Los
+        // controles de la barra, registrados después, le ganan.
+        let top = rect.top() + f32::from(frame_top) + skin::GRAB_STRIP;
+        let title = egui::Rect::from_x_y_ranges(
+            rect.x_range(),
+            top..=rect.top() + crate::kit::title_bar::HEIGHT,
+        );
+        let drag = bar.interact(
+            title,
+            egui::Id::new("workspace_preview_title"),
+            egui::Sense::drag(),
+        );
+        if drag.dragged()
+            && let Some((s, _)) = workspace.leaf_of(PanelId::Preview)
+            && let Some(window) = workspace.state.get_window_state_mut(s)
+        {
+            window.set_position(rect.min + drag.drag_delta());
+            workspace.preview_anchored = false;
+            ctx.request_repaint();
+        }
+        let app = &mut *viewer.app;
+        let editor = &app.doc.editor;
+        if app
+            .preview
+            .window_chrome(&mut bar, editor, skin, rect, (&painter, background))
+        {
+            viewer.closed.push(PanelId::Preview);
+        }
+        bare = Some(rect);
+    }
+    // Llevado a otro lugar (acoplado o a otra ventana, arrastrando su franja): deja su esquina.
+    if workspace.leaf_of(PanelId::Preview).map(|(s, _)| s) != preview_surface {
+        workspace.preview_anchored = false;
+    }
     // El divisor de la toolbar sola junto al lienzo: ni se ve ni se arrastra.
     let tools_divider = workspace.tools_side().zip(workspace.tools_divider(sep));
     if let Some((first, divider)) = tools_divider {
@@ -619,17 +768,25 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .filter(|r| r.is_positive())
             .collect();
         armed.canvas_drop = canvas_drop;
+        armed.bare = bare.into_iter().collect();
         skin::arm(&ctx, armed);
     }
     for id in closed {
-        if id == PanelId::Timeline {
+        match id {
             // Cerrarlo es apagarlo (como su botón de la tira y View → Timeline): sale del árbol y
             // vuelve a su lugar al prenderlo.
-            app.view.timeline = false;
-            workspace.sync_timeline(false);
-            ctx.request_repaint();
-        } else {
-            workspace.to_strip(id);
+            PanelId::Timeline => {
+                app.view.timeline = false;
+                workspace.sync_panel(id, false);
+                ctx.request_repaint();
+            }
+            // También el Preview (y deja de reproducir).
+            PanelId::Preview => {
+                app.apply_panel_action(&ctx, PanelAction::ClosePreview);
+                workspace.sync_panel(id, false);
+                ctx.request_repaint();
+            }
+            _ => workspace.to_strip(id),
         }
     }
     let released = tab_drag_released(&ctx, &workspace.state, &hits);
@@ -672,7 +829,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     fit_splits(&mut workspace.state, &m, sep, bar);
     fit_windows(&ctx, &mut workspace, &m, sep, bar);
     skin::snap(&ctx, &mut workspace.state);
-    skin::snap_windows(&ctx, &mut workspace.state);
+    skin::snap_windows(&ctx, &mut workspace.state, anchored);
     app.workspace = workspace;
     for action in actions {
         app.apply_panel_action(&ctx, action);

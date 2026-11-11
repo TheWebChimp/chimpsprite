@@ -198,15 +198,7 @@ pub fn pixel_dialog_with_bar<R>(
     add_contents: impl FnOnce(&mut Ui) -> R,
     bar_contents: impl FnOnce(&mut Ui, Rect),
 ) -> DialogOutput<R> {
-    let piece = skin.piece(DIALOG_PIECE, WidgetState::Normal);
-    let [left, top, right, bottom] = piece.map_or(FALLBACK_DIALOG, borders);
-    let side = |v: f32| (v + PADDING).min(i8::MAX as f32) as i8;
-    let margin = egui::Margin {
-        left: side(left),
-        right: side(right),
-        top: side(top),
-        bottom: side(bottom),
-    };
+    let margin = dialog_margin(skin);
     let text = skin.colors().text;
     // Abre en su lugar (el ancla) y, si se lo arrastró de la barra de título, sigue donde quedó.
     // Un `Area` anclado no se mueve aunque sea `movable`: la posición movida va en la memoria.
@@ -221,58 +213,120 @@ pub fn pixel_dialog_with_bar<R>(
     area.show(ctx, |ui| {
         // El marco se pinta detrás, cuando ya se sabe el tamaño del contenido.
         let background = ui.painter().add(Shape::Noop);
-        let font = TextStyle::Body.resolve(ui.style());
-        let galley = ui.painter().layout_no_wrap(title.to_owned(), font, text);
+        let title_width = title_width(ui, title, text);
         let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
             ui.visuals_mut().override_text_color = Some(text);
             // El título, el ○ y su aire.
-            ui.set_min_width(galley.size().x + TITLE_ROOM);
+            ui.set_min_width(title_width + TITLE_ROOM);
             add_contents(ui)
         });
-        let rect = inner.response.rect;
-        let ppp = ui.ctx().pixels_per_point();
-        let mut shapes = match piece {
-            Some(p) => piece_shapes(p, rect, ppp),
-            None => flat_shapes(skin, rect, top, ppp),
-        };
-        // La barra de título del UI kit (`kit::title_bar`): el título a la izquierda y, si se
-        // puede cerrar, el ○ (la × con el puntero encima).
-        let bar_height = crate::kit::title_bar::HEIGHT.min(top);
-        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), bar_height));
-        let parts = crate::kit::title_bar::layout(bar, false, closable);
-        let close = parts.close;
-        drag_title_bar(ui, id, rect, bar, close);
-        let close_response = close.map(|r| {
-            let response = ui.interact(r, id.with("close"), Sense::click());
-            let enabled = ui.is_enabled();
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close")
-            });
-            response
-        });
-        let closed = close_response.as_ref().is_some_and(|r| r.clicked());
-        let state = crate::kit::title_bar::TitleState {
-            focused: true,
-            menu: false,
-            close: close_response.as_ref().map(|r| r.hovered()),
-            play: None,
-        };
-        shapes.extend(crate::kit::title_bar::bar_shapes(
-            ui.painter(),
-            &crate::kit::title_bar::TitleLook::new(skin),
-            bar,
-            title,
-            state,
-            ppp,
-        ));
-        ui.painter().set(background, Shape::Vec(shapes));
-        bar_contents(ui, bar);
+        let chrome = dialog_chrome(ui, skin, id, inner.response.rect, title, closable, true);
+        ui.painter().set(background, Shape::Vec(chrome.shapes));
+        bar_contents(ui, chrome.bar);
         DialogOutput {
             inner: inner.inner,
-            closed,
+            closed: chrome.closed,
         }
     })
     .inner
+}
+
+/// Del borde de afuera de un diálogo a lo de adentro: los bordes de su marco (el 9-slice de
+/// `window`; arriba, con la barra de título) más [`PADDING`].
+pub(crate) fn dialog_margin(skin: &Skin) -> egui::Margin {
+    let piece = skin.piece(DIALOG_PIECE, WidgetState::Normal);
+    let [left, top, right, bottom] = piece.map_or(FALLBACK_DIALOG, borders);
+    let side = |v: f32| (v + PADDING).min(i8::MAX as f32) as i8;
+    egui::Margin {
+        left: side(left),
+        right: side(right),
+        top: side(top),
+        bottom: side(bottom),
+    }
+}
+
+/// El ancho del título de un diálogo (en la fuente del cuerpo).
+fn title_width(ui: &Ui, title: &str, color: Color32) -> f32 {
+    let font = TextStyle::Body.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(title.to_owned(), font, color)
+        .size()
+        .x
+}
+
+/// Lo que mide un diálogo de [`pixel_dialog_with_bar`] con `content` adentro: lo de adentro no es
+/// más angosto que el título, el ○ y su aire, y alrededor va [`dialog_margin`].
+pub(crate) fn dialog_size(ui: &Ui, skin: &Skin, title: &str, content: Vec2) -> Vec2 {
+    let min = title_width(ui, title, skin.colors().text) + TITLE_ROOM;
+    vec2(content.x.max(min), content.y) + dialog_margin(skin).sum()
+}
+
+/// El marco y la barra de título de un diálogo que ocupa `rect`, para pintar debajo de lo de
+/// adentro (`shapes`), con su ○ de cerrar si `closable` (en `ui`, con el id `id.with("close")`; un
+/// clic, `closed`) y, si `drag`, arrastrable de la barra (ver [`pixel_dialog_with_bar`]). `bar`
+/// es la barra: ahí van los controles sin botón (el play del preview).
+pub(crate) fn dialog_chrome(
+    ui: &Ui,
+    skin: &Skin,
+    id: Id,
+    rect: Rect,
+    title: &str,
+    closable: bool,
+    drag: bool,
+) -> DialogChrome {
+    let piece = skin.piece(DIALOG_PIECE, WidgetState::Normal);
+    let top = piece.map_or(FALLBACK_DIALOG, borders)[1];
+    let ppp = ui.ctx().pixels_per_point();
+    let mut shapes = match piece {
+        Some(p) => piece_shapes(p, rect, ppp),
+        None => flat_shapes(skin, rect, top, ppp),
+    };
+    // La barra de título del UI kit (`kit::title_bar`): el título a la izquierda y, si se
+    // puede cerrar, el ○ (la × con el puntero encima).
+    let bar_height = crate::kit::title_bar::HEIGHT.min(top);
+    let bar = Rect::from_min_size(rect.min, vec2(rect.width(), bar_height));
+    let parts = crate::kit::title_bar::layout(bar, false, closable);
+    let close = parts.close;
+    if drag {
+        drag_title_bar(ui, id, rect, bar, close);
+    }
+    let close_response = close.map(|r| {
+        let response = ui.interact(r, id.with("close"), Sense::click());
+        let enabled = ui.is_enabled();
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close"));
+        response
+    });
+    let closed = close_response.as_ref().is_some_and(|r| r.clicked());
+    let state = crate::kit::title_bar::TitleState {
+        focused: true,
+        menu: false,
+        close: close_response.as_ref().map(|r| r.hovered()),
+        play: None,
+    };
+    shapes.extend(crate::kit::title_bar::bar_shapes(
+        ui.painter(),
+        &crate::kit::title_bar::TitleLook::new(skin),
+        bar,
+        title,
+        state,
+        ppp,
+    ));
+    DialogChrome {
+        shapes,
+        bar,
+        closed,
+    }
+}
+
+/// Lo que da [`dialog_chrome`].
+pub(crate) struct DialogChrome {
+    /// El marco y la barra, para pintar debajo de lo de adentro.
+    pub shapes: Vec<Shape>,
+    /// La barra de título.
+    pub bar: Rect,
+    /// Si se hizo clic en el ○.
+    pub closed: bool,
 }
 
 /// Lo que ocupa la barra además del título: el aire de la izquierda, el ○ y su aire.

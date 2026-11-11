@@ -174,8 +174,9 @@ pub(super) fn window_visuals(style: &mut egui::Style, skin: &Skin) {
     style.spacing.window_margin = flyout_margin(skin);
 }
 
-/// Los bordes de `menu.side` (lo de fuera del centro de su 9-slice).
-fn flyout_margin(skin: &Skin) -> Margin {
+/// Los bordes de `menu.side` (lo de fuera del centro de su 9-slice): el margen de las ventanas
+/// flotantes.
+pub(super) fn flyout_margin(skin: &Skin) -> Margin {
     match skin
         .piece(FLYOUT, WidgetState::Normal)
         .and_then(|p| p.center.map(|c| (p, c)))
@@ -211,6 +212,9 @@ pub(super) struct Armed {
     /// verdad ocuparía lo soltado. egui_dock pinta el grupo entero ("como pestaña"), pero el lienzo
     /// no recibe pestañas: `tidy_canvas` lo parte al lado, del lado del cuadrante.
     pub canvas_drop: Option<(Rect, Rect)>,
+    /// Las ventanas que llevan su propio marco (la del Preview solo, con el del diálogo del
+    /// diseño): el de las ventanas del workspace no se pinta.
+    pub bare: Vec<Rect>,
 }
 
 impl Armed {
@@ -262,19 +266,20 @@ impl egui::Plugin for SkinRewriter {
         let ppp = output.pixels_per_point;
         for clipped in &mut output.shapes {
             if armed.in_scope(clipped.clip_rect) {
-                rewrite(&mut clipped.shape, &skin, ppp, armed.canvas_drop);
+                rewrite(&mut clipped.shape, &skin, ppp, &armed);
             }
         }
     }
 }
 
 /// Cambia los marcadores de `shape` (y de lo que lleva adentro). La zona de destino que cubre el
-/// grupo del lienzo entero (`canvas_drop`) se pinta como la mitad que de verdad queda.
-fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, canvas_drop: Option<(Rect, Rect)>) {
+/// grupo del lienzo entero (`canvas_drop`) se pinta como la mitad que de verdad queda; el marco
+/// de una ventana con el suyo propio (`bare`), nada.
+fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
     match shape {
         Shape::Vec(shapes) => {
             for s in shapes {
-                rewrite(s, skin, ppp, canvas_drop);
+                rewrite(s, skin, ppp, armed);
             }
         }
         Shape::Rect(r) => {
@@ -287,13 +292,17 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, canvas_drop: Option<(Rect, 
                 }
                 *shape = etched_in(r.rect, &c, ppp);
             } else if r.fill == M_DROP {
-                let rect = match canvas_drop {
+                let rect = match armed.canvas_drop {
                     Some((canvas, half)) if same_rect(r.rect, canvas) => half,
                     _ => r.rect,
                 };
                 *shape = Shape::Vec(drop_shapes(skin, rect, ppp));
             } else if r.fill == M_WINDOW {
-                *shape = Shape::Vec(frame_shapes(skin, r.rect, ppp));
+                *shape = if armed.bare.iter().any(|&b| same_rect(b, r.rect)) {
+                    Shape::Noop
+                } else {
+                    Shape::Vec(frame_shapes(skin, r.rect, ppp))
+                };
             } else if r.stroke.color == M_DROP {
                 // El contorno de "soltar aquí = ventana nueva" (sin el centro: lo de abajo se ve).
                 let mut s = Shape::Vec(ring_shapes(skin, r.rect, ppp));
@@ -462,14 +471,20 @@ pub(super) fn snap<T>(ctx: &egui::Context, state: &mut DockState<T>) {
     }
 }
 
-/// Las ventanas flotantes a puntos enteros al soltarlas (arrastradas quedan en x.5).
-pub(super) fn snap_windows<T>(ctx: &egui::Context, state: &mut DockState<T>) {
+/// Las ventanas flotantes a puntos enteros al soltarlas (arrastradas quedan en x.5), salvo
+/// `keep` (la del Preview en su esquina: va donde iba su ventana de antes, que con una pantalla
+/// que termina en medio punto queda en medio punto).
+pub(super) fn snap_windows<T>(
+    ctx: &egui::Context,
+    state: &mut DockState<T>,
+    keep: Option<SurfaceIndex>,
+) {
     if ctx.input(|i| i.pointer.any_down()) {
         return;
     }
     let windows: Vec<SurfaceIndex> = state
         .iter_surfaces_indexed()
-        .filter(|(i, s)| !i.is_main() && !s.is_empty())
+        .filter(|(i, s)| !i.is_main() && !s.is_empty() && Some(*i) != keep)
         .map(|(i, _)| i)
         .collect();
     for s in windows {
@@ -722,13 +737,17 @@ mod tests {
         let half = canvas.with_max_x(canvas.center().x);
         let bounds = |shape: &Shape| shape.visual_bounding_rect();
         // egui_dock pinta el lienzo entero ("como pestaña", a medio píxel): se pinta la mitad.
+        let armed = Armed {
+            canvas_drop: Some((canvas, half)),
+            ..Default::default()
+        };
         let mut zone = Shape::rect_filled(canvas.translate(vec2(0.5, 0.0)), 0.0, M_DROP);
-        rewrite(&mut zone, &skin, 2.0, Some((canvas, half)));
+        rewrite(&mut zone, &skin, 2.0, &armed);
         assert_eq!(bounds(&zone), half);
         // Otra zona (un borde del lienzo, un grupo) queda como la pinta egui_dock.
         let other = canvas.with_min_y(canvas.center().y);
         let mut zone = Shape::rect_filled(other, 0.0, M_DROP);
-        rewrite(&mut zone, &skin, 2.0, Some((canvas, half)));
+        rewrite(&mut zone, &skin, 2.0, &armed);
         assert_eq!(bounds(&zone), other);
     }
 

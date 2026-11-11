@@ -343,7 +343,11 @@ impl ChimpApp {
             PanelAction::NewTilemap => {
                 self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
             }
-            PanelAction::ClosePreview => self.view.preview = false,
+            // Cerrarlo es apagarlo, y deja de reproducir.
+            PanelAction::ClosePreview => {
+                self.view.preview = false;
+                self.preview.stop();
+            }
         }
     }
 
@@ -894,10 +898,13 @@ mod tests {
         use super::PanelAction;
         let mut app = test_app();
         let ctx = egui::Context::default();
-        // La × del Preview lo apaga.
+        // La × del Preview lo apaga y para su reproducción.
         app.view.preview = true;
+        app.preview.toggle_play(&app.doc.editor);
+        assert!(app.preview.playing());
         app.apply_panel_action(&ctx, PanelAction::ClosePreview);
         assert!(!app.view.preview);
+        assert!(!app.preview.playing(), "closing it stops its play");
         // New Tilemap Layer desde la línea de tiempo abre su diálogo.
         assert!(app.new_tilemap.is_none());
         app.apply_panel_action(&ctx, PanelAction::NewTilemap);

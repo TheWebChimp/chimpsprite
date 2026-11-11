@@ -20,13 +20,12 @@ pub(crate) enum Body {
 /// Dónde vive un panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Host {
-    /// Un panel del árbol del workspace que no es del dock (la toolbar, el timeline): acoplado o
-    /// flotando; la toolbar también en la tira (ahí su botón abre su flyout, como los del dock).
+    /// Un panel del árbol del workspace que no es del dock (la toolbar, el timeline, el preview):
+    /// acoplado o flotando; la toolbar también en la tira (ahí su botón abre su flyout, como los
+    /// del dock).
     Tree,
     /// La columna fija de la derecha (el color).
     Right,
-    /// Una ventanita flotante (el preview).
-    Window,
     /// El centro del workspace: la hoja protegida del árbol (el lienzo).
     Center,
     /// Flotando junto a su botón del dock (su cuerpo lo dice `PanelSpec::body`).
@@ -53,7 +52,8 @@ pub enum PanelId {
     Color,
     /// La línea de tiempo: un panel del árbol (fase D), debajo del lienzo en Essentials.
     Timeline,
-    /// La ventanita de preview.
+    /// La ventanita de preview: un panel del árbol (fase D), flotando en la esquina de abajo a la
+    /// derecha en Essentials.
     Preview,
     Artboards,
     Library,
@@ -256,10 +256,14 @@ impl PanelId {
                 plain: "▣",
                 reference_width: crate::preview::VIEW.x,
                 min_width: crate::preview::MIN_VIEW.x,
+                // Cerrarlo es apagarlo (`view.preview`): no va a la tira (su botón de la tira lo
+                // prende y lo apaga).
                 closable: true,
-                host: Host::Window,
+                host: Host::Tree,
                 body: Body::Fixed,
-                min_height: 0.0,
+                min_height: crate::preview::MIN_HEIGHT,
+                // Sin Pixel UI, su ventana; con Pixel UI, solo en su ventana va del tamaño de la
+                // del diseño (ver `Workspace::place_preview`).
                 default_size: egui::vec2(crate::preview::VIEW.x, DEFAULT_HEIGHT),
             },
             PanelId::Artboards => flyout(
@@ -525,7 +529,7 @@ mod tests {
         assert!(matches!(PanelId::Color.spec().host, Host::Right));
         // Fase D, tarea 4: el timeline es un panel del árbol (ya no la franja fija de abajo).
         assert!(matches!(PanelId::Timeline.spec().host, Host::Tree));
-        assert!(matches!(PanelId::Preview.spec().host, Host::Window));
+        assert!(matches!(PanelId::Preview.spec().host, Host::Tree));
         // `Host::Flyout` ya no lleva el cuerpo: está en `spec.body`.
         for (id, body) in [
             (PanelId::Font, Body::Fixed),

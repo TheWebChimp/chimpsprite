@@ -13048,3 +13048,233 @@ fn closing_the_timeline_tab_turns_it_off_and_it_comes_back_in_its_group() {
         h.app.workspace.leaf_of(PanelId::Color)
     );
 }
+
+/// Con Pixel UI, una pestaña con un sprite de dos frames (el play del Preview se ve) y el Preview
+/// prendido.
+fn with_the_preview(view: ViewSettings) -> LayoutHarness {
+    let mut h = LayoutHarness::new(view, true);
+    h.app.doc.editor.insert_empty_frame();
+    h.app.view.preview = true;
+    for _ in 0..4 {
+        h.frame();
+    }
+    h
+}
+
+/// El nodo `label` dentro de `area` (el timeline también tiene un "Play").
+fn node_in(h: &LayoutHarness, label: &str, area: Rect) -> Rect {
+    h.nodes
+        .iter()
+        .find(|(l, r)| l == label && area.contains_rect(*r))
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no {label:?} in {area:?}: {:?}", h.nodes))
+}
+
+/// El marco del diálogo del diseño (`window`) que se dibujó, entero.
+fn dialog_frame(h: &LayoutHarness) -> Option<Rect> {
+    h.drawn("window").into_iter().reduce(|a, b| a.union(b))
+}
+
+#[test]
+fn with_the_preview_on_essentials_floats_it_where_its_window_was() {
+    // Fase D, tarea 5: el Preview es un panel del árbol que flota (una ventana de egui_dock) donde
+    // estaba su ventana propia, con el marco y la barra del diseño: las medidas de antes (la
+    // esquina de abajo a la derecha a 48 de la de la pantalla).
+    use crate::panel_registry::PanelId;
+    let h = with_the_preview(pixel_ui());
+    assert!(
+        h.app.workspace.floating(PanelId::Preview),
+        "a floating panel"
+    );
+    assert_eq!(
+        dialog_frame(&h),
+        Some(Rect::from_min_max(pos2(946.0, 582.0), pos2(1152.0, 752.0)))
+    );
+    assert_eq!(
+        h.drawn("preview.grip"),
+        vec![Rect::from_min_max(pos2(1139.0, 739.0), pos2(1152.0, 752.0))]
+    );
+    let window = dialog_frame(&h).unwrap();
+    assert_eq!(
+        node_in(&h, "Play", window),
+        Rect::from_min_max(pos2(950.0, 584.0), pos2(959.0, 593.0))
+    );
+    assert_eq!(
+        node_in(&h, "Center", window),
+        Rect::from_min_max(pos2(960.0, 584.0), pos2(969.0, 593.0))
+    );
+    assert_eq!(
+        node_in(&h, "Close", window),
+        Rect::from_min_max(pos2(1141.0, 585.0), pos2(1150.0, 594.0))
+    );
+    let title = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Preview")
+        .map(|(_, r, _)| *r);
+    assert_eq!(
+        title,
+        Some(Rect::from_min_max(pos2(950.0, 581.5), pos2(984.0, 595.5)))
+    );
+    // Sin el marco de las ventanas del workspace (`menu.side`) ni marcadores sin cambiar.
+    assert!(h.drawn("menu.side").is_empty());
+    assert!(
+        !h.shapes
+            .iter()
+            .any(|c| crate::workspace::has_marker(&c.shape))
+    );
+}
+
+#[test]
+fn the_floating_preview_follows_the_corner_of_the_window_until_it_is_moved() {
+    // Como la ventana de antes (anclada a la esquina): al cambiar el tamaño de la app, sigue a
+    // 48 de la esquina; movida, se queda donde se la dejó.
+    let mut h = with_the_preview(pixel_ui());
+    h.size = Vec2::new(1000.0, 700.0);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let frame = dialog_frame(&h).unwrap();
+    assert_eq!(frame.max, pos2(1000.0 - 48.0, 700.0 - 48.0));
+    assert_eq!(frame.size(), Vec2::new(206.0, 170.0));
+    // Arrastrada de su barra de título (entre el título y la ○), 30 a la izquierda y 20 arriba.
+    let at = pos2(frame.center().x, frame.top() + 9.0);
+    h.drag(at, at - Vec2::new(30.0, 20.0));
+    for _ in 0..2 {
+        h.frame();
+    }
+    let moved = dialog_frame(&h).unwrap();
+    assert_eq!(moved.min, frame.min - Vec2::new(30.0, 20.0));
+    h.size = Vec2::new(1200.0, 800.0);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(
+        dialog_frame(&h).unwrap(),
+        moved,
+        "it stays where it was left"
+    );
+}
+
+#[test]
+fn the_preview_docked_below_color_has_its_controls_inside_and_they_work() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    for view in [pixel_ui(), plain()] {
+        let mut h = with_the_preview(view);
+        let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+        h.app
+            .workspace
+            .dock(PanelId::Preview, DockTarget::Split(s, n, Split::Below));
+        for _ in 0..4 {
+            h.frame();
+        }
+        let pixel = h.app.pixel.skin().is_some();
+        assert!(h.app.workspace.docked(PanelId::Preview), "pixel={pixel}");
+        let leaf = h.app.workspace.leaf_rect(PanelId::Preview).unwrap();
+        // Sin su ventana: ni el marco ni la barra con su título.
+        if pixel {
+            assert!(dialog_frame(&h).is_none());
+        }
+        assert!(
+            !h.text_rects
+                .iter()
+                .any(|(t, r, _)| t == "Preview" && !leaf.contains_rect(*r)),
+            "pixel={pixel}: no window title"
+        );
+        // Play y centrar, arriba dentro de su grupo.
+        let play = node_in(&h, "Play", leaf);
+        node_in(&h, "Center", leaf);
+        assert!(play.top() < leaf.top() + 12.0, "pixel={pixel}: {play:?}");
+        h.click(play.center(), PointerButton::Primary);
+        assert!(h.app.preview.playing(), "pixel={pixel}: it plays");
+        node_in(&h, "Pause", leaf);
+        // El dibujo, debajo: arrastrado se mueve; centrar lo regresa.
+        let view = pos2(leaf.center().x, (leaf.center().y + leaf.bottom()) / 2.0);
+        h.drag(view, view + Vec2::new(20.0, 10.0));
+        assert!(!h.app.preview.centered(), "pixel={pixel}: dragged");
+        h.click(node_in(&h, "Center", leaf).center(), PointerButton::Primary);
+        assert!(h.app.preview.centered(), "pixel={pixel}: centered again");
+    }
+}
+
+#[test]
+fn closing_or_turning_off_the_preview_stops_its_play_and_takes_it_out_of_the_tree() {
+    use crate::panel_registry::PanelId;
+    let mut h = with_the_preview(pixel_ui());
+    let window = dialog_frame(&h).unwrap();
+    h.click(node_in(&h, "Play", window).center(), PointerButton::Primary);
+    assert!(h.app.preview.playing());
+    // Su ○.
+    h.click(
+        node_in(&h, "Close", window).center(),
+        PointerButton::Primary,
+    );
+    h.frame();
+    assert!(!h.app.view.preview);
+    assert!(!h.app.preview.playing(), "closing it stops it");
+    assert_eq!(h.app.workspace.places(PanelId::Preview), 0);
+    // Su botón de la tira (lo mismo que View → Preview): también.
+    h.click(h.button("Preview").center(), PointerButton::Primary);
+    for _ in 0..2 {
+        h.frame();
+    }
+    assert!(h.app.workspace.floating(PanelId::Preview));
+    h.click(node_in(&h, "Play", window).center(), PointerButton::Primary);
+    assert!(h.app.preview.playing());
+    h.click(h.button("Preview").center(), PointerButton::Primary);
+    h.frame();
+    assert!(!h.app.view.preview);
+    assert!(!h.app.preview.playing(), "turning it off stops it");
+    assert_eq!(h.app.workspace.places(PanelId::Preview), 0);
+}
+
+#[test]
+fn the_preview_toggle_takes_it_out_of_the_tree_and_back_where_it_was() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert_eq!(
+        h.app.workspace.places(PanelId::Preview),
+        0,
+        "off by default"
+    );
+    // Movida a otro lugar: vuelve ahí.
+    h.click(h.button("Preview").center(), PointerButton::Primary);
+    for _ in 0..2 {
+        h.frame();
+    }
+    h.app.workspace.float(PanelId::Preview, pos2(300.0, 200.0));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let moved = dialog_frame(&h).unwrap();
+    assert_eq!(moved.min, pos2(300.0, 200.0));
+    h.click(h.button("Preview").center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.workspace.places(PanelId::Preview), 0);
+    assert!(dialog_frame(&h).is_none());
+    h.click(h.button("Preview").center(), PointerButton::Primary);
+    for _ in 0..4 {
+        h.frame();
+    }
+    assert!(h.app.workspace.floating(PanelId::Preview));
+    assert_eq!(dialog_frame(&h), Some(moved));
+    // Acoplada debajo de Color: vuelve ahí.
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Preview, DockTarget::Split(s, n, Split::Below));
+    for _ in 0..3 {
+        h.frame();
+    }
+    let docked = h.app.workspace.leaf_rect(PanelId::Preview);
+    h.app.view.preview = false;
+    h.frame();
+    assert!(!h.app.workspace.docked(PanelId::Preview));
+    h.app.view.preview = true;
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(h.app.workspace.leaf_rect(PanelId::Preview), docked);
+}
