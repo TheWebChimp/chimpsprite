@@ -12534,3 +12534,105 @@ fn the_toolbar_floats_in_a_window_of_its_width() {
     // angosta más que su barra de pestañas: 92), no del de la barra con nombres (184).
     assert!(tools.width() <= 100.0, "{tools:?}");
 }
+
+// --- Fase D, tarea 3 (revisión) ---
+
+#[test]
+fn the_toolbars_divider_paints_nothing_over_a_group_below_it() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    // Groom debajo del lienzo y la toolbar a la izquierda del lienzo:
+    // `H[V[H[Tools | Canvas] / Groom] | Color]`. El divisor de la toolbar termina arriba de Groom:
+    // ni el fondo de la toolbar ni la línea de egui bajan sobre Groom.
+    for view in [pixel_ui(), plain()] {
+        let pixel = view.pixel_ui;
+        let mut h = LayoutHarness::new(view, true);
+        let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+        h.app
+            .workspace
+            .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Below));
+        let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+        h.app
+            .workspace
+            .dock(PanelId::Tools, DockTarget::Split(s, n, Split::Left));
+        for _ in 0..4 {
+            h.frame();
+        }
+        let w = &h.app.workspace;
+        let tools = w.leaf_rect(PanelId::Tools).unwrap();
+        let groom = w.leaf_rect(PanelId::Groom).unwrap();
+        assert!(tools.bottom() < groom.top(), "{tools:?} above {groom:?}");
+        assert!(
+            tools.left() < groom.right() && tools.right() > groom.left(),
+            "{tools:?} over {groom:?}"
+        );
+        // Lo del color del fondo de los paneles que cruza el borde de arriba de Groom (desde
+        // arriba de él hasta adentro), en su ancho.
+        let fill = h.ctx.global_style().visuals.panel_fill;
+        let crossing = |r: &Rect| {
+            r.top() < groom.top() - 0.5
+                && r.bottom() > groom.top() + 1.0
+                && r.left() < groom.right()
+                && r.right() > groom.left()
+        };
+        fn filled(shape: &egui::Shape, out: &mut Vec<(egui::Color32, Rect)>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| filled(s, out)),
+                egui::Shape::Rect(r) => out.push((r.fill, r.rect)),
+                _ => {}
+            }
+        }
+        let mut rects = h.colored_rects();
+        for c in &h.shapes {
+            filled(&c.shape, &mut rects);
+        }
+        let over: Vec<_> = rects
+            .into_iter()
+            .filter(|(c, r)| *c == fill && crossing(r))
+            .collect();
+        assert_eq!(over, vec![], "pixel {pixel}: the toolbar's fill over Groom");
+        let lines: Vec<_> = vertical(h.separator_lines_in(groom))
+            .into_iter()
+            .filter(crossing)
+            .collect();
+        assert_eq!(
+            lines,
+            vec![],
+            "pixel {pixel}: the toolbar's line over Groom"
+        );
+    }
+}
+
+#[test]
+fn the_toolbars_flyout_scrolls_in_a_low_window() {
+    use crate::panel_registry::PanelId;
+    // Con la toolbar en la tira, su flyout en una ventana baja: no cabe, se desplaza con la rueda
+    // (como acoplada).
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.to_strip(PanelId::Tools);
+    h.size = vec2(1200.0, 330.0);
+    for _ in 0..3 {
+        h.frame();
+    }
+    h.click(h.button("Tools").center(), PointerButton::Primary);
+    let marquee = h.button("Rectangular Marquee");
+    h.frame_with(vec![Event::PointerMoved(marquee.center())]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }]);
+    for _ in 0..10 {
+        h.frame();
+    }
+    let after = h
+        .buttons
+        .iter()
+        .find(|(l, _)| l == "Rectangular Marquee")
+        .map(|(_, r)| *r);
+    assert!(
+        after.is_none_or(|r| r.top() < marquee.top()),
+        "{after:?} vs {marquee:?}"
+    );
+}

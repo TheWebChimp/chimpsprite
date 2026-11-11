@@ -161,8 +161,10 @@ impl Workspace {
                 main.split_left(NodeIndex::root(), 0.5, vec![PanelId::Canvas]);
             }
         }
+        super::fit::tidy_canvas(&mut state, None);
         // Antes de la 3, la toolbar era el panel fijo de la izquierda: a la izquierda de todo (su
-        // ancho lo pone `pin_sides`).
+        // ancho lo pone `pin_sides`). Después de `tidy_canvas`, que puede meter el lienzo partiendo
+        // la raíz: la toolbar queda a la izquierda también de él.
         if saved.version < 3 {
             let main = state.main_surface_mut();
             if main.num_tabs() == 0 {
@@ -171,7 +173,6 @@ impl Workspace {
                 main.split_left(NodeIndex::root(), 0.5, vec![PanelId::Tools]);
             }
         }
-        super::fit::tidy_canvas(&mut state, None);
         // Lo que egui_dock da por bueno al dibujar: la pestaña activa y el grupo con el foco de
         // cada árbol, existentes, y números finitos (RON lee `NaN` e `inf`: con una fracción así
         // los rects salen NaN, egui se queja en debug y en release nunca se arregla). Los rects
@@ -648,6 +649,23 @@ mod tests {
         let back = Workspace::from_saved(again);
         assert_eq!(back.state_tabs(), w.state_tabs());
         assert_eq!(back.places(PanelId::Tools), 1);
+    }
+
+    #[test]
+    fn a_version_2_workspace_without_the_canvas_still_gets_the_toolbar_far_left() {
+        // Una 2 mal guardada, sin el lienzo (solo Color): `tidy_canvas` lo mete partiendo la raíz;
+        // la toolbar va después, a la izquierda de todo: `H[Tools | H[Canvas | Color]]`.
+        let saved = SavedWorkspace {
+            version: 2,
+            state: DockState::new(vec!["color".to_string()]),
+            strip: Vec::new(),
+        };
+        let w = Workspace::from_saved(saved);
+        let root = NodeIndex::root();
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Canvas]);
+        assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
+        assert_eq!(w.tools_side(), Some(true));
     }
 
     #[test]

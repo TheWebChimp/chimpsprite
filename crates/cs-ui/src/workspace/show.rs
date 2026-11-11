@@ -585,8 +585,10 @@ fn tools_margin(
 /// ancho de la toolbar (`pin_sides`).
 ///
 /// El `DockArea` va a puntos enteros y el área puede terminar en medio punto (sin Pixel UI, la
-/// barra de estado): el panel de antes llegaba hasta `bottom`, así que lo de debajo de la toolbar
-/// (`leaf`) y de su divisor hasta ahí también lleva su fondo (y su línea).
+/// barra de estado): el panel de antes llegaba hasta `bottom`, así que si el divisor llega al
+/// fondo del `DockArea` (le falta menos de un punto para `bottom`), lo de debajo de la toolbar
+/// (`leaf`) y de su divisor hasta ahí también lleva su fondo (y su línea). Si no llega (la toolbar
+/// junto al lienzo encima de otro grupo), nada más abajo: es de ese grupo.
 fn cover_tools_divider(
     ui: &mut egui::Ui,
     skin: Option<&Skin>,
@@ -597,7 +599,11 @@ fn cover_tools_divider(
     let ppp = ui.ctx().pixels_per_point();
     // Donde lo pinta egui_dock (`show_separator`): a píxel físico.
     let x = |v: f32| (v * ppp).round() / ppp;
-    let bottom = bottom.max(divider.bottom());
+    let bottom = if bottom - divider.bottom() < 1.0 {
+        bottom.max(divider.bottom())
+    } else {
+        divider.bottom()
+    };
     let rect = egui::Rect::from_x_y_ranges(
         x(divider.left())..=x(divider.right()),
         divider.top()..=bottom,

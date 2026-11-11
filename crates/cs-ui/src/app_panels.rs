@@ -435,7 +435,15 @@ impl ChimpApp {
             bottom: Some(anchor.column.bottom() - dock::FLYOUT_MARGIN as f32),
         };
         let mut action = None;
-        let contents = |ui: &mut egui::Ui| action = self.draw_panel(ui, id, &panel);
+        let contents = |ui: &mut egui::Ui| {
+            // La toolbar, con su scroll (como acoplada): con la UI a 2× o 3× en una ventana baja
+            // no cabe en la columna.
+            if id == PanelId::Tools {
+                panels::tools_scroll_area().show(ui, |ui| action = self.draw_panel(ui, id, &panel));
+            } else {
+                action = self.draw_panel(ui, id, &panel);
+            }
+        };
         let width = match (id, skin) {
             // La caja de la toolbar (sin su margen: el flyout pone el suyo).
             (PanelId::Tools, Some(skin)) => {
