@@ -11916,6 +11916,56 @@ fn the_workspace_is_saved_and_a_new_app_restores_it() {
     assert_eq!(app.workspace.strip(), PanelId::DOCK);
 }
 
+#[test]
+fn an_unreadable_workspace_is_backed_up_once_and_never_overwritten_silently() {
+    use crate::panel_registry::PanelId;
+    // Lo que una versión más nueva (u otra cosa) dejó en la llave y esta no sabe leer: los
+    // workspaces del usuario van ahí adentro.
+    let unreadable = "(version:99,state:Nope,user:[(\"Mine\",())])".to_owned();
+    let mut storage = MemoryStorage::default();
+    storage
+        .0
+        .insert(crate::WORKSPACE_KEY.to_owned(), unreadable.clone());
+    let new_app = || {
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        ChimpApp::with_parts(Default::default(), pixel_ui(), palettes)
+    };
+    let mut app = new_app();
+    app.restore_workspace(&storage);
+    assert!(app.workspace.docked(PanelId::Color), "Essentials");
+    // Al guardar, lo de antes queda respaldado (una vez) y la llave lleva lo de ahora.
+    eframe::App::save(&mut app, &mut storage);
+    assert_eq!(
+        storage.0.get(crate::WORKSPACE_UNREADABLE_KEY),
+        Some(&unreadable)
+    );
+    assert_ne!(storage.0.get(crate::WORKSPACE_KEY), Some(&unreadable));
+    let ours = storage.0.get(crate::WORKSPACE_KEY).cloned();
+    eframe::App::save(&mut app, &mut storage);
+    assert_eq!(
+        storage.0.get(crate::WORKSPACE_UNREADABLE_KEY),
+        Some(&unreadable)
+    );
+    assert_eq!(storage.0.get(crate::WORKSPACE_KEY).cloned(), ours);
+    // Otro ilegible, con un respaldo distinto ya guardado: el respaldo de antes no se pisa.
+    let other = "(version:100)garbage".to_owned();
+    storage.0.insert(crate::WORKSPACE_KEY.to_owned(), other);
+    let mut app = new_app();
+    app.restore_workspace(&storage);
+    eframe::App::save(&mut app, &mut storage);
+    assert_eq!(
+        storage.0.get(crate::WORKSPACE_UNREADABLE_KEY),
+        Some(&unreadable)
+    );
+    // Uno que se lee no deja respaldo.
+    let mut clean = MemoryStorage::default();
+    eframe::App::save(&mut new_app(), &mut clean);
+    let mut app = new_app();
+    app.restore_workspace(&clean);
+    eframe::App::save(&mut app, &mut clean);
+    assert!(!clean.0.contains_key(crate::WORKSPACE_UNREADABLE_KEY));
+}
+
 /// Guarda la configuración de `h` y abre con ella una app nueva, con un contexto de egui nuevo
 /// (como al volver a abrir la app).
 fn reopened(h: &mut LayoutHarness) -> LayoutHarness {

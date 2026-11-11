@@ -1643,24 +1643,64 @@ mod tests {
         assert!(Workspace::from_saved(back).docked(PanelId::Groom));
     }
 
+    /// Lo que guarda `main` hoy (la fase C, `SAVED_VERSION = 1`, a1b7541) con la columna derecha
+    /// partida (Color sobre Groom, Groom con el 60 %), tal cual lo escribe `eframe::set_value`: la
+    /// forma es la de un `app.ron` de verdad (solo `version`, `state` y `strip`).
+    const MAIN_V1: &str = "(version:1,state:(surfaces:[Main((nodes:[Vertical((rect:(min:(x:\
+        579.0,y:63.0),max:(x:960.0,y:485.0)),fraction:0.4,fully_collapsed:false,\
+        collapsed_leaf_count:0)),Leaf((rect:(min:(x:579.0,y:63.0),max:(x:960.0,y:231.0)),\
+        viewport:(min:(x:579.0,y:63.0),max:(x:960.0,y:231.0)),tabs:[\"color\"],active:(0),\
+        scroll:0.0,collapsed:false,tab_bar_hidden:true)),Leaf((rect:(min:(x:579.0,y:231.0),\
+        max:(x:960.0,y:485.0)),viewport:(min:(x:579.0,y:231.0),max:(x:960.0,y:485.0)),\
+        tabs:[\"groom\"],active:(0),scroll:0.0,collapsed:false,tab_bar_hidden:true))],\
+        focused_node:Some((1)),collapsed:false,collapsed_leaf_count:0))],focused_surface:None),\
+        strip:[\"artboards\",\"library\",\"slices\",\"lospec\",\"dafont\",\"lumen\",\"font\",\
+        \"model\"])";
+
+    /// Lo de `ron` (de `main`: la fase C) leído como la app al abrir (`Workspaces::from_saved`):
+    /// Essentials, con cada panel una vez y el lienzo a la izquierda de la columna de antes, que
+    /// conserva su ancho (el de `view.palette_width`).
+    fn assert_phase_c_migrates(ron: &str, version: u32) {
+        let saved: SavedWorkspace = ron::from_str(ron).unwrap();
+        assert_eq!(saved.version, version);
+        let (ws, w) = super::super::Workspaces::from_saved(saved);
+        assert_eq!(ws.current(), super::super::presets::ESSENTIALS);
+        assert!(ws.user_names().is_empty());
+        for &id in PanelId::ALL {
+            let want = usize::from(id != PanelId::Preview);
+            assert_eq!(w.places(id), want, "v{version}: {id:?}");
+        }
+        assert!(
+            w.docked(PanelId::Color) && w.docked(PanelId::Groom),
+            "v{version}"
+        );
+        assert_ne!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
+        let mut app = test_app();
+        app.view.palette_width = Some(300.0);
+        app.workspace = w;
+        frames(&egui::Context::default(), &mut app);
+        let column = app.workspace.column_rect().expect("the right column");
+        assert_eq!(column.width(), 300.0, "v{version}: {column:?}");
+        assert_eq!(
+            app.workspace.column_panels(),
+            [PanelId::Color, PanelId::Groom]
+        );
+    }
+
+    #[test]
+    fn a_workspace_saved_by_main_is_read_as_essentials_with_every_panel_once() {
+        assert_phase_c_migrates(MAIN_V1, 1);
+        // Lo de antes del campo `version` (la 0, el mismo formato).
+        let v0 = MAIN_V1.replacen("version:1,", "", 1);
+        assert_ne!(v0, MAIN_V1);
+        assert_phase_c_migrates(&v0, 0);
+    }
+
     #[test]
     fn a_version_1_workspace_gets_the_canvas_left_of_its_column_which_keeps_its_width() {
         // Lo que guardaba la fase C: la columna derecha sola (Color sobre Groom), sin lienzo.
-        let mut state = DockState::new(vec!["color".to_string()]);
-        state
-            .main_surface_mut()
-            .split_below(NodeIndex::root(), 0.4, vec!["groom".to_string()]);
-        let saved = SavedWorkspace {
-            version: 1,
-            state,
-            strip: Vec::new(),
-            left: Vec::new(),
-            top: Vec::new(),
-            bottom: Vec::new(),
-            ..SavedWorkspace::default()
-        };
-        let ron = ron::to_string(&saved).unwrap();
-        let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
+        let ron = MAIN_V1;
+        let w = Workspace::from_saved(ron::from_str(ron).unwrap());
         // `H[Tools | H[Canvas | V[Color / Groom]]]`: el lienzo a la izquierda de la columna de
         // antes, y la toolbar (que era el panel fijo) a la izquierda de todo.
         let main = w.state.main_surface();
@@ -1691,7 +1731,7 @@ mod tests {
         // Y la columna, del ancho elegido (el de `view.palette_width`, que no va en el árbol).
         let mut app = test_app();
         app.view.palette_width = Some(300.0);
-        app.workspace = Workspace::from_saved(ron::from_str(&ron).unwrap());
+        app.workspace = Workspace::from_saved(ron::from_str(ron).unwrap());
         frames(&egui::Context::default(), &mut app);
         let column = app.workspace.column_rect().expect("the right column");
         assert_eq!(column.width(), 300.0, "{column:?}");

@@ -145,6 +145,9 @@ const MASCOT_KEY: &str = "chimpsprite.mascot";
 const GIF_KEY: &str = "chimpsprite.gif";
 /// El acomodo de los paneles (la tira, lo acoplado y lo flotante) y los workspaces con nombre.
 const WORKSPACE_KEY: &str = "chimpsprite.workspace";
+/// Lo que había en `WORKSPACE_KEY` y no se pudo leer (de una versión más nueva o roto), tal cual:
+/// lleva los workspaces con nombre del usuario, que si no se perderían al guardar.
+const WORKSPACE_UNREADABLE_KEY: &str = "chimpsprite.workspace.unreadable";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -157,6 +160,9 @@ pub struct ChimpApp {
     /// Si `save` guarda el acomodo: no cuando es uno de demostración
     /// (`CHIMPSPRITE_DEMO_WORKSPACE`), que no debe pisar el del usuario.
     save_workspace: bool,
+    /// Lo que había en `WORKSPACE_KEY` al abrir y no se pudo leer: `save` lo respalda una vez en
+    /// `WORKSPACE_UNREADABLE_KEY` (ver `back_up_unreadable_workspace`).
+    unreadable_workspace: Option<String>,
     /// Documento de la pestaña activa (un marcador vacío si se está en Home).
     doc: tabs::DocState,
     tabs: tabs::Tabs,
@@ -379,6 +385,7 @@ impl ChimpApp {
         Self {
             palette_natural_width: None,
             save_workspace: true,
+            unreadable_workspace: None,
             doc: tabs::DocState::untitled(""),
             tabs: tabs::Tabs::default(),
             capture: capture::Capture::from_env(),
@@ -462,10 +469,39 @@ impl ChimpApp {
 
     /// El acomodo de los paneles guardado (`WORKSPACE_KEY`) y los workspaces con nombre. Sin él
     /// (una configuración de antes) o ilegible, se queda Essentials de fábrica; de uno que se lee
-    /// se descarta lo que no sirva (ver `Workspaces::from_saved`).
+    /// se descarta lo que no sirva (ver `Workspaces::from_saved`). Lo ilegible se avisa en el log y
+    /// se recuerda tal cual: `save` lo respalda antes de pisar la llave.
     fn restore_workspace(&mut self, storage: &dyn eframe::Storage) {
-        if let Some(saved) = eframe::get_value(storage, WORKSPACE_KEY) {
-            (self.workspaces, self.workspace) = workspace::Workspaces::from_saved(saved);
+        let Some(text) = storage.get_string(WORKSPACE_KEY) else {
+            return;
+        };
+        match ron::from_str(&text) {
+            Ok(saved) => {
+                (self.workspaces, self.workspace) = workspace::Workspaces::from_saved(saved);
+            }
+            Err(err) => {
+                log::warn!(
+                    "the saved workspaces cannot be read ({err}): using {}; they are kept                      under {WORKSPACE_UNREADABLE_KEY}",
+                    workspace::FACTORY[0]
+                );
+                self.unreadable_workspace = Some(text);
+            }
+        }
+    }
+
+    /// Respalda (una vez) lo que no se pudo leer de `WORKSPACE_KEY` en `WORKSPACE_UNREADABLE_KEY`.
+    /// Un respaldo distinto que ya esté ahí no se pisa (el primero es el más viejo: lo del
+    /// usuario antes de que se perdiera nada); se avisa en el log.
+    fn back_up_unreadable_workspace(&mut self, storage: &mut dyn eframe::Storage) {
+        let Some(text) = self.unreadable_workspace.take() else {
+            return;
+        };
+        match storage.get_string(WORKSPACE_UNREADABLE_KEY) {
+            None => storage.set_string(WORKSPACE_UNREADABLE_KEY, text),
+            Some(old) if old == text => {}
+            Some(_) => log::warn!(
+                "an older unreadable workspace is already kept under {WORKSPACE_UNREADABLE_KEY}:                  keeping it; this one is lost: {text}"
+            ),
         }
     }
 
@@ -1785,6 +1821,7 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, MASCOT_KEY, &self.mascot.settings);
         eframe::set_value(storage, GIF_KEY, &self.gif_settings);
         if self.save_workspace {
+            self.back_up_unreadable_workspace(storage);
             let saved = self.workspaces.to_saved(&self.workspace);
             eframe::set_value(storage, WORKSPACE_KEY, &saved);
         }

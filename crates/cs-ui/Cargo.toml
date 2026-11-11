@@ -31,6 +31,9 @@ egui_taffy = "=0.14.0"
 # la piel depende de detalles internos suyos (tres ids, cómo pinta y más: ver la lista de
 # `workspace/skin.rs`).
 egui_dock = { version = "=0.21.1", features = ["serde"] }
+# Para leer el acomodo guardado (`chimpsprite.workspace`) como lo guarda eframe y saber si no se
+# pudo (la misma versión que usa eframe con `persistence`: no compila nada extra).
+ron = "0.12"
 
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -64,5 +67,3 @@ web-sys = { version = "0.3", features = [
 [dev-dependencies]
 # Para decodificar los GIF de GIF settings en los tests (la misma versión que usa cs-io).
 gif = "0.14"
-# Para leer y escribir el acomodo guardado en los tests como lo guarda eframe (la misma versión).
-ron = "0.12"
