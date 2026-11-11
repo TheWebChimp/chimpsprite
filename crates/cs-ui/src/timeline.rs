@@ -21,6 +21,7 @@ use crate::pixel_ui::Tip as _;
 use crate::skin::Skin;
 use crate::{kit, menus, theme, widgets};
 
+pub(crate) use pixel::MIN_WIDTH;
 pub use pixel::panel_frame as pixel_panel_frame;
 
 /// Medidas de la grilla de capas × frames: las de siempre o, con Pixel UI, las del diseño.

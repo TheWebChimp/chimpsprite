@@ -291,7 +291,8 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 /// pide su panel con Pixel UI (el ancho de su fila más ancha y el alto del editor entero con la
 /// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). La toolbar, su ancho (el de
 /// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo y el
-/// timeline, el mínimo de su ficha (sin margen: su hoja va de borde a borde). El Preview, el alto
+/// timeline, el mínimo de su ficha (sin margen: la hoja del lienzo va de borde a borde; el marco
+/// del timeline, que depende de dónde va, lo suma `workspace_minima`). El Preview, el alto
 /// de su modo (`preview::min_height`) con el margen. Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
 /// scroll, la barra (así los acomoda el `Viewer` de `show`).
@@ -315,8 +316,8 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                 // La toolbar lleva su margen en su ancho (ver `toolbar_width`).
                 (PanelId::Tools, _) => egui::vec2(toolbar_width(skin), 0.0),
                 // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
-                // que lleva su hoja, ver `ChimpApp::canvas_area_min`). El timeline tampoco (su
-                // margen es el de su marco; debajo del lienzo el workspace le suma la tira).
+                // que lleva su hoja, ver `ChimpApp::canvas_area_min`). El timeline tampoco: su
+                // marco y, debajo del lienzo, la tira se los suma `workspace_minima`.
                 (PanelId::Canvas | PanelId::Timeline, _) => {
                     egui::vec2(id.spec().min_width, id.spec().min_height)
                 }
@@ -1729,6 +1730,43 @@ mod tests {
             library.width() >= min_of(&ctx, &app, PanelId::Library).x,
             "{library:?}"
         );
+    }
+
+    #[test]
+    fn a_saved_timeline_narrower_than_its_minimum_is_widened() {
+        // Un acomodo guardado de cuando el mínimo del timeline era 64 (el del lienzo): a la
+        // derecha del lienzo casi sin ancho, o flotando en una ventana angosta. El ajuste de
+        // siempre (`fit_splits`, `fit_windows`) le da su mínimo con el margen de su grupo.
+        let room = crate::timeline::MIN_WIDTH + 2.0 * f32::from(pixel_ui::WORKSPACE_MARGIN);
+        let mut app = test_app();
+        app.view.timeline = true;
+        let ctx = egui::Context::default();
+        let mut w = Workspace::demo("timeline-right").unwrap();
+        let split = split_of_panel(&w, PanelId::Timeline);
+        if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[split] {
+            s.fraction = 0.99;
+        }
+        let saved = ron::to_string(&w.to_saved()).unwrap();
+        app.workspace = Workspace::from_saved(ron::from_str(&saved).unwrap());
+        frames(&ctx, &mut app);
+        let leaf = app.workspace.leaf_rect(PanelId::Timeline).unwrap();
+        assert!(leaf.width() >= room, "docked: {leaf:?} vs {room}");
+        // Flotando en una ventana de 40 de ancho.
+        let mut w = Workspace::demo("timeline-narrow").unwrap();
+        let (surface, _) = w.leaf_of(PanelId::Timeline).unwrap();
+        w.state
+            .get_window_state_mut(surface)
+            .unwrap()
+            .set_size(egui::vec2(40.0, 420.0));
+        let saved = ron::to_string(&w.to_saved()).unwrap();
+        app.workspace = Workspace::from_saved(ron::from_str(&saved).unwrap());
+        frames(&ctx, &mut app);
+        let (surface, _) = app.workspace.leaf_of(PanelId::Timeline).unwrap();
+        let inner = app
+            .workspace
+            .root_rect(surface)
+            .expect("the timeline's window");
+        assert!(inner.width() >= room, "floating: {inner:?} vs {room}");
     }
 
     #[test]

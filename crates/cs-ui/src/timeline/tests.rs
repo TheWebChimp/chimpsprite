@@ -1453,7 +1453,7 @@ const BAR_CONTROLS: [&str; 18] = [
 
 /// El timeline con Pixel UI con `w` de ancho a la vista: la ventana mide `w` más lo que le quita
 /// la tira de la derecha (medido en un arnés de 600, no adivinado). Alto como acoplado junto al
-/// lienzo (450 de 700): a 64 la barra tiene 12 filas (264) y en 190 no se verían todas.
+/// lienzo (450 de 700): en su mínimo la barra tiene muchas filas y en 190 no se verían todas.
 fn pixel_seen(w: f32) -> Harness {
     let probe = Harness::pixel(600.0);
     let strip = 600.0 - probe.visible_width();
@@ -1484,10 +1484,51 @@ fn bar_nodes(h: &Harness) -> Vec<(String, Rect)> {
     bar
 }
 
+/// Lo más angosto que se ve del timeline debajo del lienzo: su mínimo (`timeline::MIN_WIDTH`,
+/// la caja con la barra) con el aire de la derecha de su marco.
+fn narrowest() -> f32 {
+    crate::timeline::MIN_WIDTH + f32::from(crate::dock::LEFT_AIR)
+}
+
+/// De dónde a dónde puede ir la barra a lo ancho: el interior de la caja (`workspace.box`, sin
+/// su borde de 3) sin el aire de la barra (3) a cada lado.
+fn bar_room(h: &Harness) -> (f32, f32) {
+    let divider = h.drawn("timeline.divider")[0].top();
+    let outer = h
+        .drawn("workspace.box")
+        .into_iter()
+        .filter(|r| r.top() < divider)
+        .fold(Rect::NOTHING, |a, r| a.union(r));
+    (outer.left() + 6.0, outer.right() - 6.0)
+}
+
+/// Los nodos de la barra que no caben en `bar_room`.
+fn out_of_the_box(h: &Harness) -> Vec<String> {
+    let (left, right) = bar_room(h);
+    bar_nodes(h)
+        .into_iter()
+        .filter(|(_, r)| r.left() < left || r.right() > right)
+        .map(|(t, _)| t)
+        .collect()
+}
+
+#[test]
+fn the_minimum_width_fits_the_widest_part_of_the_bar() {
+    // 79: 64 (el stepper de la duración, la parte más ancha que no se parte) con el aire de la
+    // barra y el borde de la caja a cada lado (76) y el aire de la derecha del marco (3).
+    assert_eq!(narrowest(), 79.0);
+    let h = pixel_seen(narrowest());
+    assert_eq!(out_of_the_box(&h), Vec::<String>::new());
+    // Un punto menos ya no: el stepper de la duración pisa el borde de la caja.
+    let h = pixel_seen(narrowest() - 1.0);
+    assert_eq!(out_of_the_box(&h), ["Longer frame"]);
+}
+
 #[test]
 fn the_button_row_wraps_down_to_the_minimum() {
     let mut rows = Vec::new();
-    for w in [64.0, 69.0, 70.0, 80.0, 100.0, 126.0, 127.0, 200.0] {
+    let min = narrowest();
+    for w in [min, 80.0, 100.0, 126.0, 127.0, 200.0] {
         let h = pixel_seen(w);
         let bar = bar_nodes(&h);
         for label in BAR_CONTROLS {
@@ -1496,23 +1537,14 @@ fn the_button_row_wraps_down_to_the_minimum() {
                 "{w}: {label} in the bar {bar:?}"
             );
         }
-        // Nada se sale de lo que se ve del timeline. A 64 la barra mide 49 (64 − 15: la caja,
-        // su aire a la derecha y el de la barra) y lo que no se parte y es más ancho se sale: el
-        // combo (59) a 64 y el stepper de la duración (64: el campo de "100ms" mide 34) hasta
-        // 69 (ver `KNOWN_GAPS` del barrido de anchos).
+        // Nada se sale de lo que se ve del timeline ni de su caja (con el aire de la barra).
         let outside: Vec<&str> = bar
             .iter()
             .filter(|(_, r)| r.left() < 0.0 || r.right() > w)
             .map(|(t, _)| t.as_str())
             .collect();
-        let expected: &[&str] = if w == 64.0 {
-            &["Normal", "Longer frame"]
-        } else if w == 69.0 {
-            &["Longer frame"]
-        } else {
-            &[]
-        };
-        assert_eq!(outside, expected, "{w}: {bar:?}");
+        assert_eq!(outside, Vec::<&str>::new(), "{w}: {bar:?}");
+        assert_eq!(out_of_the_box(&h), Vec::<String>::new(), "{w}: {bar:?}");
         // Los controles, en puntos enteros y sin encimarse: los botones de un grupo solo
         // comparten la columna de su borde (se cruzan en 1 punto de ancho).
         let controls: Vec<&(String, Rect)> = bar
@@ -1541,7 +1573,7 @@ fn the_button_row_wraps_down_to_the_minimum() {
         rows.push((w, tops.len()));
     }
     let of = |w: f32| rows.iter().find(|(x, _)| *x == w).unwrap().1;
-    assert!(of(64.0) > of(127.0), "more rows when narrower: {rows:?}");
+    assert!(of(min) > of(127.0), "more rows when narrower: {rows:?}");
 }
 
 /// Con `w` a la vista y 4 frames en el primero: un clic en "Last frame" y uno en "Play". Devuelve
@@ -1564,8 +1596,8 @@ fn last_then_play(w: f32) -> (usize, bool, Harness) {
 fn a_split_group_keeps_its_buttons_working() {
     let wide = last_then_play(600.0);
     assert_eq!((wide.0, wide.1), (3, true));
-    let (frame, playing, h) = last_then_play(64.0);
-    // A 64, Play y Last frame van en filas de abajo de las del primero del grupo.
+    let (frame, playing, h) = last_then_play(narrowest());
+    // En su mínimo, Play y Last frame van en filas de abajo de las del primero del grupo.
     let first = h.rect("First frame").top();
     assert!(h.rect("Pause").top() > first, "Play went down a row");
     assert!(

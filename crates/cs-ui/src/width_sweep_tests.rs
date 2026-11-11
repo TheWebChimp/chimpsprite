@@ -50,19 +50,17 @@ struct Gap {
 }
 
 const KNOWN_GAPS: &[Gap] = &[
-    // El timeline (la fila de botones de arriba ya se parte por botón, fase E tarea 6):
-    // - La tabla va en un scroll a lo ancho y las columnas de la izquierda no se quedan fijas: el
-    //   botón "Add Layer Mask" de la capa activa (al final de la columna del nombre, x 104..115)
-    //   queda fuera hasta que se desplaza, de 64 a 114.
-    // - En la barra, lo que no se parte y es más ancho que ella: el stepper de la duración (64,
-    //   "Longer frame" hasta 70) de 64 a 69 y el combo del modo de mezcla (59) a 64.
+    // La tabla de capas del timeline va en un scroll a lo ancho (las columnas de la izquierda no
+    // se quedan fijas): el botón "Add Layer Mask" de la capa activa, al final de la columna del
+    // nombre (x 104..115), queda fuera hasta que se desplaza, desde su mínimo (76) hasta 114. La
+    // fila de botones de arriba ya no: se parte por botón y su mínimo es el de su parte más ancha
+    // (fase E, tarea 6).
     Gap {
         panel: PanelId::Timeline,
-        from: 64.0,
+        from: crate::timeline::MIN_WIDTH,
         to: 114.0,
         kind: Kind::Outside,
-        why: "its table scrolls sideways (Add Layer Mask) and, below 70, the duration stepper \
-              and the blend combo are wider than its bar",
+        why: "the layer table scrolls sideways: Add Layer Mask is reachable by scrolling",
     },
     // Lospec no se migró a `forms` (filas de `ui.horizontal` con textos de alturas distintas): las
     // filas de cada paleta de la lista (su título y "CREATED BY …", sus Apply, Append y Save) caen

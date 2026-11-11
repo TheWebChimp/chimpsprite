@@ -981,7 +981,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
 /// Lo mínimo de cada panel en su grupo de `w` (ver [`minima`]): el lienzo, lo que lleva su hoja
 /// este frame (`canvas`); el timeline justo debajo del lienzo, la tira (`strip`) más; los pegados
 /// al divisor de la columna derecha y la toolbar junto al lienzo, un divisor (`sep`) menos (su
-/// margen de ese lado cuenta desde la línea).
+/// margen de ese lado cuenta desde la línea). Con Pixel UI, el timeline lleva su marco: debajo
+/// del lienzo, el aire de su derecha (`timeline::pixel_panel_frame`); en otro lugar, el margen de
+/// su grupo a cada lado (`timeline_margin`), así lo de adentro nunca mide menos que su mínimo.
 fn workspace_minima(
     ui: &egui::Ui,
     skin: Option<&Skin>,
@@ -992,10 +994,18 @@ fn workspace_minima(
 ) -> Minima {
     let mut m = beside_minima(minima(ui, skin), &w.beside_column(), sep);
     m.insert(PanelId::Canvas, canvas);
-    if w.timeline_below()
-        && let Some(min) = m.get_mut(&PanelId::Timeline)
-    {
-        min.x += strip;
+    let below = w.timeline_below();
+    if let Some(min) = m.get_mut(&PanelId::Timeline) {
+        if skin.is_some() {
+            min.x += if below {
+                f32::from(dock::LEFT_AIR)
+            } else {
+                2.0 * f32::from(pixel_ui::WORKSPACE_MARGIN)
+            };
+        }
+        if below {
+            min.x += strip;
+        }
     }
     if w.tools_side().is_some()
         && let Some(min) = m.get_mut(&PanelId::Tools)

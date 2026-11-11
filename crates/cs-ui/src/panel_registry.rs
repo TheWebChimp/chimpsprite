@@ -107,9 +107,10 @@ pub(crate) struct PanelSpec {
 /// (si su ficha no pide más).
 pub(crate) const DEFAULT_HEIGHT: f32 = 300.0;
 
-/// Lo más angosto y lo más bajo del timeline (lo de `egui::Panel::bottom` de antes: 20 de alto;
-/// a lo ancho, lo del lienzo, que lo tenía debajo).
-pub(crate) const TIMELINE_MIN: egui::Vec2 = egui::vec2(CANVAS_MIN_WIDTH, 20.0);
+/// Lo más angosto y lo más bajo del timeline: a lo ancho, lo que pide su barra con Pixel UI (su
+/// parte más ancha que no se parte dentro de su caja, `timeline::MIN_WIDTH`, sin su marco: el
+/// workspace se lo suma); a lo alto, lo de `egui::Panel::bottom` de antes (20).
+pub(crate) const TIMELINE_MIN: egui::Vec2 = egui::vec2(crate::timeline::MIN_WIDTH, 20.0);
 /// El ancho de fábrica del timeline fuera de su lugar debajo del lienzo (flotando o a un lado).
 pub(crate) const TIMELINE_DEFAULT_WIDTH: f32 = 400.0;
 

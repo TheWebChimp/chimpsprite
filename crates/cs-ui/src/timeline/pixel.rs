@@ -275,6 +275,17 @@ const fn group_width(n: usize) -> f32 {
     BUTTON_PITCH * n as f32 + 1.0
 }
 
+/// La parte más ancha de la barra que no se parte: el stepper de la duración con hasta 3 cifras
+/// (15 + 34 + 15: el campo de "100ms" mide 34) y el combo con "Difference" (los demás modos, 59).
+/// Con 4 o 5 cifras (1000 ms o más) el campo crece 5 o 10.
+const WIDEST_PART: f32 = 64.0;
+/// El borde de la caja (`workspace.box`) a cada lado.
+const BOX_BORDER: f32 = 3.0;
+/// Lo más angosto del timeline con Pixel UI, sin su marco (lo que recibe `show`: la caja con la
+/// barra): [`WIDEST_PART`] con el aire de la barra y el borde de la caja a cada lado. Más angosto,
+/// esa parte saldría de la caja. El workspace le suma su marco (ver `workspace_minima`).
+pub(crate) const MIN_WIDTH: f32 = WIDEST_PART + 2.0 * (BAR_PAD + BOX_BORDER);
+
 /// Lo que cambia el ancho de una fila cuando dos botones de un grupo van juntos: comparten la
 /// columna de su borde (−1).
 const SHARED_EDGE: f32 = BUTTON_PITCH - group_width(1);
