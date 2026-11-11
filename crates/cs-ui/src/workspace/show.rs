@@ -67,7 +67,7 @@ struct Viewer<'a> {
     timeline_top_less: i8,
     /// Lo que dejó la hoja del lienzo, si se dibujó.
     canvas: Option<CanvasArea>,
-    /// Con Pixel UI, el Preview solo en su ventana: la del diseño (ver [`PreviewWindow`]).
+    /// El Preview solo en su ventana: la de antes (ver [`PreviewWindow`]).
     preview_window: Option<PreviewWindow>,
     actions: Vec<PanelAction>,
     hits: Vec<skin::TabHit>,
@@ -126,6 +126,7 @@ impl TabViewer for Viewer<'_> {
             let panel = PanelCtx {
                 modal: self.modal,
                 bottom: None,
+                window: None,
             };
             let shared_skin = app.pixel.shared_skin();
             let frame = timeline_frame(ui.style(), shared_skin.as_deref(), self.timeline_top_less);
@@ -153,6 +154,7 @@ impl TabViewer for Viewer<'_> {
             let panel = PanelCtx {
                 modal: self.modal,
                 bottom: None,
+                window: None,
             };
             let app = &mut *self.app;
             let mut area = panels::tools_scroll_area();
@@ -164,30 +166,33 @@ impl TabViewer for Viewer<'_> {
             });
             return;
         }
-        // El Preview: solo en su ventana con Pixel UI, lo de adentro de la ventana del diseño (su
-        // marco va debajo, en el lugar que se deja aquí, y su barra encima, después del
-        // `DockArea`); si no, con sus controles arriba. Como su ventana de antes, un diálogo no lo
-        // apaga.
-        if id == PanelId::Preview {
-            let app = &mut *self.app;
-            let canvas = app.doc.canvas.plain_texture(&app.doc.editor);
-            let shared_skin = app.pixel.shared_skin();
-            match (&mut self.preview_window, shared_skin.as_deref()) {
-                (Some(window), Some(skin)) => {
-                    // Lo de afuera: desde lo de adentro, con el margen del diálogo.
-                    let inset = egui::vec2(window.dialog.leftf(), window.dialog.topf());
-                    let rect = egui::Rect::from_min_size(ui.max_rect().min - inset, window.size);
-                    let mut painter = ui.painter().clone();
-                    painter.set_clip_rect(rect);
-                    let background = painter.add(egui::Shape::Noop);
-                    // La agarradera va contra el borde de la ventana, fuera del grupo.
-                    ui.set_clip_rect(rect);
-                    ui.visuals_mut().override_text_color = Some(skin.colors().text);
-                    app.preview
-                        .window_contents(ui, &app.doc.editor, skin, canvas);
-                    window.drawn = Some((rect, painter, background));
-                }
-                (_, skin) => app.preview.contents(ui, &app.doc.editor, skin, canvas),
+        // El Preview solo en su ventana: lo de adentro de su ventana de antes, en ella (lo de
+        // afuera, desde lo de adentro de su grupo). Con Pixel UI su marco va debajo, en el lugar
+        // que se deja aquí, y su barra encima, después del `DockArea`. Acoplado (o con otras
+        // pestañas), como los demás.
+        if id == PanelId::Preview
+            && let Some(window) = &mut self.preview_window
+        {
+            let rect = egui::Rect::from_min_size(ui.max_rect().min - window.inset, window.size);
+            // El primer frame de su ventana es la pasada de medir de egui (su área, en otro lugar):
+            // egui_dock arma el cuerpo con `Ui::new`, que no la hereda; lo de adentro, tampoco se ve.
+            if window.measuring {
+                ui.set_invisible();
+            }
+            if self.skinned {
+                let mut painter = ui.painter().clone();
+                painter.set_clip_rect(rect);
+                let background = painter.add(egui::Shape::Noop);
+                window.drawn = Some((rect, painter, background));
+            }
+            let panel = PanelCtx {
+                modal: self.modal,
+                bottom: None,
+                window: Some(rect),
+            };
+            // Su × (sin Pixel UI): cerrarlo, como la de las pestañas.
+            if let Some(PanelAction::ClosePreview) = self.app.draw_panel(ui, id, &panel) {
+                self.closed.push(id);
             }
             return;
         }
@@ -205,6 +210,7 @@ impl TabViewer for Viewer<'_> {
         let panel = PanelCtx {
             modal: self.modal,
             bottom: Some(bottom),
+            window: None,
         };
         // En un `scope`: su rect es lo que ocupó el contenido (el `Ui` del cuerpo ya viene
         // agrandado al cuerpo entero).
@@ -278,14 +284,9 @@ impl TabViewer for Viewer<'_> {
             // Debajo del lienzo, el marco lo pone el timeline (el del panel de abajo de antes).
             PanelId::Timeline if self.timeline_below => egui::Margin::ZERO,
             PanelId::Timeline => self.timeline_margin,
-            // Solo en su ventana con Pixel UI, lo de adentro donde va en el diálogo del diseño.
+            // Solo en su ventana, lo de adentro donde va en su ventana de antes.
             PanelId::Preview => match &self.preview_window {
-                Some(w) => egui::Margin {
-                    left: w.dialog.left - w.frame.left,
-                    right: w.dialog.right - w.frame.right,
-                    top: w.dialog.top - w.frame.top,
-                    bottom: w.dialog.bottom - w.frame.bottom,
-                },
+                Some(w) => w.margin,
                 None => egui::Margin::same(dock::FLYOUT_MARGIN),
             },
             _ => egui::Margin::same(dock::FLYOUT_MARGIN),
@@ -297,7 +298,8 @@ impl TabViewer for Viewer<'_> {
         Some(style)
     }
 
-    /// El Preview solo en su ventana con Pixel UI pinta su propio fondo (el del diálogo).
+    /// El Preview solo en su ventana lleva el fondo de su ventana de antes (el del diálogo o el
+    /// de la `egui::Window`).
     fn clear_background(&self, tab: &PanelId) -> bool {
         !(*tab == PanelId::Preview && self.preview_window.is_some())
     }
@@ -308,22 +310,80 @@ impl TabViewer for Viewer<'_> {
     }
 }
 
-/// Con Pixel UI, el Preview solo en su ventana (`Workspace::bare_preview`): su ventana es la del
-/// diseño (la suya de antes: el marco `window` y su barra de título con play, centrar y la ○), no
-/// la de las ventanas del workspace. La ventana de egui_dock va del tamaño del diálogo
-/// (`Workspace::place_preview`), sin su marco (`skin::Armed::bare`), sin barra de pestañas (se
-/// arrastra de su franja de arriba, como un grupo acoplado solo, para acoplarlo) y sin fondo; lo
-/// de adentro va donde va en el diálogo y el marco y la barra se pintan aparte
-/// (`Preview::window_chrome`).
+/// El Preview solo en su ventana (`Workspace::bare_preview`): su ventana es la suya de antes, no
+/// la de las ventanas del workspace. La ventana de egui_dock queda como contenedor (lugar, capa,
+/// acoplar): del tamaño de la de antes (`Workspace::place_preview`), sin barra de pestañas y sin
+/// el fondo de su grupo; lo de adentro va donde iba en la de antes.
+/// - Con Pixel UI, la del diseño (el marco `window` y su barra de título con play, centrar y la
+///   ○): el marco de egui_dock (`menu.side`) se borra de su capa (`skin::hide_window_frame`), se
+///   arrastra para acoplarlo de su franja de arriba (como un grupo acoplado solo) y el marco y la
+///   barra del diseño se pintan aparte (`Preview::window_chrome`).
+/// - Sin él, la `egui::Window` de antes: su marco es el de la ventana de egui_dock (el mismo
+///   `Frame::window`) y adentro, su barra de título, "Play" y la vista (`Preview::plain_window`).
+///   Se mueve de la barra (como toda ventana de egui_dock sin barra de pestañas); sin Pixel UI los
+///   grupos sin barra no tienen franja de agarre, así que no se acopla arrastrándola.
 struct PreviewWindow {
-    /// Lo que mide, el marco del diálogo incluido.
+    /// Lo que mide, con su marco.
     size: egui::Vec2,
-    /// Del borde del diálogo a lo de adentro y del de la ventana de egui_dock (`menu.side`) a su
-    /// grupo: lo de adentro va con la diferencia.
-    dialog: egui::Margin,
-    frame: egui::Margin,
-    /// Lo que dejó al dibujarse: su rect y el pintor de su capa con el lugar de su marco.
+    /// Del borde de la ventana a lo de adentro de su grupo, y el margen de lo de adentro en su
+    /// grupo (lo que hay de más del marco de egui_dock hasta donde va en la de antes).
+    inset: egui::Vec2,
+    margin: egui::Margin,
+    /// Con Pixel UI: lo que hay arriba en el marco de egui_dock (su franja de agarre va ahí).
+    frame_top: f32,
+    /// Su ventana es nueva: este frame egui la mide sin mostrarla (ver [`PreviewWindow::new`]).
+    measuring: bool,
+    /// Con Pixel UI, lo que dejó al dibujarse: su rect y el pintor de su capa con el lugar de su
+    /// marco.
     drawn: Option<(egui::Rect, egui::Painter, egui::layers::ShapeIdx)>,
+}
+
+impl PreviewWindow {
+    /// La de antes del Preview, solo en su ventana: con Pixel UI, la del diseño (su diálogo, con la
+    /// diferencia hasta el marco de las ventanas del workspace de margen); sin él, la de egui (el
+    /// mismo marco que el de egui_dock, sin margen de más). `surface`: su ventana; si su área de
+    /// egui todavía no existe, este frame es su pasada de medir (en el lugar de fábrica de egui,
+    /// con el tamaño de fábrica de un área: la esquina se aplica desde el frame siguiente).
+    fn new(
+        ui: &egui::Ui,
+        skin: Option<&Skin>,
+        preview: &crate::preview::Preview,
+        surface: SurfaceIndex,
+    ) -> Self {
+        let measuring = egui::AreaState::load(ui.ctx(), skin::window_area_id(surface)).is_none();
+        match skin {
+            Some(skin) => {
+                let dialog = pixel_ui::dialog_margin(skin);
+                let frame = skin::flyout_margin(skin);
+                PreviewWindow {
+                    size: preview.window_size(ui, skin),
+                    inset: egui::vec2(dialog.leftf(), dialog.topf()),
+                    margin: egui::Margin {
+                        left: dialog.left - frame.left,
+                        right: dialog.right - frame.right,
+                        top: dialog.top - frame.top,
+                        bottom: dialog.bottom - frame.bottom,
+                    },
+                    frame_top: frame.topf(),
+                    measuring,
+                    drawn: None,
+                }
+            }
+            None => {
+                let frame = egui::Frame::window(ui.style());
+                let edge = frame.stroke.width;
+                let margin = frame.inner_margin;
+                PreviewWindow {
+                    size: preview.plain_window_size(ui),
+                    inset: egui::vec2(edge + margin.leftf(), edge + margin.topf()),
+                    margin: egui::Margin::ZERO,
+                    frame_top: 0.0,
+                    measuring,
+                    drawn: None,
+                }
+            }
+        }
+    }
 }
 
 /// El marco del timeline justo debajo del lienzo: el del panel de abajo de antes. Con Pixel UI, el
@@ -412,7 +472,6 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     // Apagado, el Preview no sigue reproduciendo (en la pestaña de un modelo se oculta sin
     // apagarse, como su ventana de antes).
     let model_tab = app.doc.editor.model_edit_on();
-    workspace.skinned = app.pixel.skin().is_some();
     workspace.sync_panel(
         PanelId::Timeline,
         app.view.timeline && PanelId::Timeline.available(app),
@@ -421,6 +480,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         PanelId::Preview,
         app.view.preview && PanelId::Preview.available(app),
     );
+    // Apagado de View → Preview o de su botón de la tira (que solo cambian `view.preview`), no
+    // sigue reproduciendo; cerrarlo lo para `PanelAction::ClosePreview`.
     if !app.view.preview {
         app.preview.stop();
     }
@@ -431,17 +492,10 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     workspace.refresh_tab_bars();
     let shared_skin = app.pixel.shared_skin();
     let skin: Option<&Skin> = shared_skin.as_deref();
-    // El Preview flotando: con Pixel UI y solo en su ventana, del tamaño de su ventana del diseño;
-    // en su esquina hasta que se lo mueve.
-    let preview_window = match (skin, workspace.bare_preview()) {
-        (Some(skin), Some(_)) => Some(PreviewWindow {
-            size: app.preview.window_size(ui, skin),
-            dialog: pixel_ui::dialog_margin(skin),
-            frame: skin::flyout_margin(skin),
-            drawn: None,
-        }),
-        _ => None,
-    };
+    // El Preview flotando: solo en su ventana, del tamaño de su ventana de antes; en su esquina
+    // hasta que se lo mueve.
+    let bare_preview = workspace.bare_preview();
+    let preview_window = bare_preview.map(|s| PreviewWindow::new(ui, skin, &app.preview, s));
     let anchored = workspace.place_preview(&ctx, preview_window.as_ref().map(|w| w.size));
     let preview_surface = workspace.leaf_of(PanelId::Preview).map(|(s, _)| s);
     let widths: HashMap<PanelId, f32> = match skin {
@@ -573,11 +627,15 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     ui.advance_cursor_after_rect(area);
     // El marco y la barra de la ventana del Preview (con Pixel UI, solo en ella), en su capa y
     // encima de lo de ella: sus controles le ganan a la franja de agarre de su grupo (la de arriba,
-    // que egui_dock registra después de lo de adentro).
-    let mut bare = None;
+    // que egui_dock registra después de lo de adentro). El marco de egui_dock, ahí no.
+    if skin.is_some()
+        && let Some(surface) = bare_preview
+    {
+        skin::hide_window_frame(&ctx, surface);
+    }
     if let Some(PreviewWindow {
         drawn: Some((rect, painter, background)),
-        frame: egui::Margin { top: frame_top, .. },
+        frame_top,
         ..
     }) = viewer.preview_window.take()
         && let Some(skin) = skin
@@ -598,7 +656,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         // de egui_dock, debajo de la franja de agarre de su grupo (la de arriba, de la que se lleva a
         // acoplar), que con el radio de egui se quedaría también con lo de abajo de ella. Los
         // controles de la barra, registrados después, le ganan.
-        let top = rect.top() + f32::from(frame_top) + skin::GRAB_STRIP;
+        let top = rect.top() + frame_top + skin::GRAB_STRIP;
         let title = egui::Rect::from_x_y_ranges(
             rect.x_range(),
             top..=rect.top() + crate::kit::title_bar::HEIGHT,
@@ -624,7 +682,6 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         {
             viewer.closed.push(PanelId::Preview);
         }
-        bare = Some(rect);
     }
     // Llevado a otro lugar (acoplado o a otra ventana, arrastrando su franja): deja su esquina.
     if workspace.leaf_of(PanelId::Preview).map(|(s, _)| s) != preview_surface {
@@ -768,7 +825,6 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .filter(|r| r.is_positive())
             .collect();
         armed.canvas_drop = canvas_drop;
-        armed.bare = bare.into_iter().collect();
         skin::arm(&ctx, armed);
     }
     for id in closed {
@@ -829,6 +885,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     fit_splits(&mut workspace.state, &m, sep, bar);
     fit_windows(&ctx, &mut workspace, &m, sep, bar);
     skin::snap(&ctx, &mut workspace.state);
+    // La del Preview en su esquina no (excepción deliberada a los puntos enteros: va donde iba su
+    // ventana de antes, a medio punto si la pantalla termina en uno).
     skin::snap_windows(&ctx, &mut workspace.state, anchored);
     app.workspace = workspace;
     for action in actions {

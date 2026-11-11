@@ -261,9 +261,10 @@ impl PanelId {
                 closable: true,
                 host: Host::Tree,
                 body: Body::Fixed,
+                // El de Pixel UI; el de cada modo lo pone el workspace (`preview::min_height`).
                 min_height: crate::preview::MIN_HEIGHT,
-                // Sin Pixel UI, su ventana; con Pixel UI, solo en su ventana va del tamaño de la
-                // del diseño (ver `Workspace::place_preview`).
+                // En una ventana con otras pestañas; solo en su ventana va del tamaño de su ventana
+                // de antes (ver `Workspace::place_preview`).
                 default_size: egui::vec2(crate::preview::VIEW.x, DEFAULT_HEIGHT),
             },
             PanelId::Artboards => flyout(

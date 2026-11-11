@@ -207,8 +207,8 @@ impl Workspace {
         });
     }
 
-    /// La ventana del Preview flotando: solo en ella con Pixel UI (`bare`: lo que mide su ventana
-    /// del diseño), de ese tamaño cada frame (como su ventana de antes, no se agranda de los
+    /// La ventana del Preview flotando: solo en ella (`bare`: lo que mide su ventana de antes, la
+    /// del diseño o la `egui::Window`), de ese tamaño cada frame (como su ventana de antes, no se agranda de los
     /// bordes: lo hace su agarradera); en su esquina ([`Workspace::preview_anchored`]), con la
     /// esquina de abajo a la derecha a `preview::OFFSET` de la de la pantalla (lo que hacía el ancla
     /// de su ventana de antes, con el tamaño de la ventana) hasta que se la arrastra. Acoplado, ya
@@ -278,7 +278,8 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 /// pide su panel con Pixel UI (el ancho de su fila más ancha y el alto del editor entero con la
 /// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). La toolbar, su ancho (el de
 /// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo y el
-/// timeline, el mínimo de su ficha (sin margen: su hoja va de borde a borde). Los demás, el `min_width`
+/// timeline, el mínimo de su ficha (sin margen: su hoja va de borde a borde). El Preview, el alto
+/// de su modo (`preview::min_height`) con el margen. Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
 /// scroll, la barra (así los acomoda [`Viewer`]).
 pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
@@ -292,6 +293,12 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                     crate::color_panel::panel_min_height(ui, skin),
                 ),
                 (PanelId::Color, None) => egui::Vec2::ZERO,
+                // El Preview, con la fila de sus controles de cada modo (los íconos con Pixel UI,
+                // los botones de egui sin él): su vista nunca menos que la más chica.
+                (PanelId::Preview, _) => egui::vec2(
+                    id.spec().min_width + margin,
+                    crate::preview::min_height(ui, skin) + margin,
+                ),
                 // La toolbar lleva su margen en su ancho (ver `toolbar_width`).
                 (PanelId::Tools, _) => egui::vec2(toolbar_width(skin), 0.0),
                 // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
@@ -526,7 +533,7 @@ pub(super) fn fit_windows(ctx: &egui::Context, w: &mut Workspace, m: &Minima, se
         return;
     }
     let screen = ctx.content_rect().size();
-    // La del Preview solo con Pixel UI va del tamaño de su ventana del diseño (`place_preview`).
+    // La del Preview solo va del tamaño de su ventana de antes (`place_preview`).
     let bare = w.bare_preview();
     let windows: Vec<SurfaceIndex> = w
         .state

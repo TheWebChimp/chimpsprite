@@ -13156,6 +13156,253 @@ fn the_floating_preview_follows_the_corner_of_the_window_until_it_is_moved() {
     );
 }
 
+/// Los rects llenos pintados en el último frame (con su forma), de adentro de las listas.
+fn painted_rects(h: &LayoutHarness) -> Vec<(egui::epaint::RectShape, Rect)> {
+    fn walk(shape: &egui::Shape, clip: Rect, out: &mut Vec<(egui::epaint::RectShape, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, out)),
+            egui::Shape::Rect(r) => out.push((r.clone(), clip)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &h.shapes {
+        walk(&clipped.shape, clipped.clip_rect, &mut out);
+    }
+    out
+}
+
+/// La vista del Preview dentro de `area` (y más chica: no el fondo de su grupo): su fondo,
+/// recortado justo a ella (`painter_at`), de al menos el ancho más chico de la vista.
+fn preview_view(h: &LayoutHarness, area: Rect) -> Option<Rect> {
+    painted_rects(h)
+        .into_iter()
+        .map(|(r, clip)| (r.rect, clip, r.fill))
+        .find(|(r, clip, fill)| {
+            r == clip
+                && *r != area
+                && *fill != egui::Color32::TRANSPARENT
+                && area.contains_rect(*r)
+                && r.width() >= crate::preview::MIN_VIEW.x
+        })
+        .map(|(r, _, _)| r)
+}
+
+#[test]
+fn without_pixel_ui_the_preview_floats_in_its_egui_window_where_it_was() {
+    // Sin Pixel UI, la `egui::Window` de antes (en una ventana de egui_dock sin pestañas): en el
+    // mismo lugar y con las mismas medidas, sacadas de una sonda sobre 8a62e16 (la esquina de
+    // abajo a la derecha a 48 de la de la pantalla, del ancho de fábrica de una `egui::Window`).
+    use crate::panel_registry::PanelId;
+    let mut h = with_the_preview(plain());
+    assert!(h.app.workspace.floating(PanelId::Preview));
+    let window = Rect::from_min_max(pos2(812.0, 539.0), pos2(1152.0, 752.0));
+    assert_eq!(
+        h.app.workspace.window_rect(&h.ctx, PanelId::Preview),
+        Some(window)
+    );
+    let rects = painted_rects(&h);
+    // El marco de la ventana y, arriba, el de su barra de título (sin las esquinas de abajo: su
+    // borde de abajo es la línea que la separa).
+    assert!(rects.iter().any(|(r, _)| r.rect == window));
+    let bar = Rect::from_min_max(pos2(812.0, 539.0), pos2(1152.0, 574.0));
+    let bar = rects
+        .iter()
+        .find(|(r, _)| {
+            r.rect == bar
+                && r.corner_radius.sw == 0
+                && r.corner_radius.se == 0
+                && r.corner_radius.nw > 0
+        })
+        .map(|(r, _)| r.clone())
+        .expect("the title bar");
+    // Resaltada, como la de egui de la ventana de arriba de todas (sin un diálogo encima).
+    let open = h.ctx.global_style().visuals.widgets.open.weak_bg_fill;
+    assert_eq!(bar.fill.to_opaque(), open.to_opaque());
+    // Su título (uno solo: sin la pestaña de egui_dock) y su ×.
+    let titles: Vec<Rect> = h
+        .text_rects
+        .iter()
+        .filter(|(t, _, _)| t == "Preview")
+        .map(|(_, r, _)| *r)
+        .collect();
+    assert_eq!(
+        titles,
+        vec![Rect::from_min_max(
+            pos2(935.65625, 546.0),
+            pos2(999.625, 567.0)
+        )]
+    );
+    assert_eq!(
+        node_in(&h, "Close window", window),
+        Rect::from_min_max(pos2(1127.625, 549.5), pos2(1141.625, 563.5))
+    );
+    // "Play" y la vista de 192×144.
+    assert_eq!(
+        node_in(&h, "Play", window),
+        Rect::from_min_max(pos2(819.0, 580.0), pos2(850.78125, 598.0))
+    );
+    assert_eq!(
+        preview_view(&h, window),
+        Some(Rect::from_min_max(pos2(819.0, 601.0), pos2(1011.0, 745.0)))
+    );
+    // La agarradera: la esquina de la vista (9×9).
+    h.frame_with(vec![Event::PointerMoved(pos2(1006.0, 740.0))]);
+    h.frame();
+    assert_eq!(h.cursor, egui::CursorIcon::ResizeNwSe);
+    h.frame_with(vec![Event::PointerMoved(pos2(1000.0, 740.0))]);
+    h.frame();
+    assert_ne!(h.cursor, egui::CursorIcon::ResizeNwSe);
+}
+
+#[test]
+fn the_preview_shows_up_at_its_corner_from_its_first_visible_frame() {
+    // Prendido, su ventana se ve en su esquina desde el primer frame en que se ve (no en el lugar
+    // de fábrica de egui_dock): del tamaño de la de antes desde el principio. El primer frame de
+    // un área nueva de egui es una pasada de medir (no se ve; egui la acomoda con su tamaño de
+    // fábrica de área).
+    let corner_title = Rect::from_min_max(pos2(935.65625, 546.0), pos2(999.625, 567.0));
+    let corner_dialog = Rect::from_min_max(pos2(946.0, 582.0), pos2(1152.0, 752.0));
+    let corner_grip = Rect::from_min_max(pos2(1139.0, 739.0), pos2(1152.0, 752.0));
+    for view in [plain(), pixel_ui()] {
+        let mut h = LayoutHarness::new(view, true);
+        h.app.doc.editor.insert_empty_frame();
+        h.app.view.preview = true;
+        let pixel = h.app.pixel.skin().is_some();
+        let mut seen = None;
+        for k in 1..=3 {
+            h.frame();
+            // Lo que se ve de su ventana: con Pixel UI el marco del diálogo (y lo de adentro: su
+            // agarradera); sin él, su título.
+            let (drawn, expected) = if pixel {
+                let grip = h.drawn("preview.grip");
+                assert!(
+                    grip.is_empty() || grip == vec![corner_grip],
+                    "frame {k}: {grip:?}"
+                );
+                (dialog_frame(&h), corner_dialog)
+            } else {
+                let title = h
+                    .text_rects
+                    .iter()
+                    .find(|(t, _, _)| t == "Preview")
+                    .map(|(_, r, _)| *r);
+                (title, corner_title)
+            };
+            if let Some(drawn) = drawn {
+                assert_eq!(drawn, expected, "pixel={pixel}, frame {k}");
+                seen.get_or_insert(k);
+            }
+        }
+        assert_eq!(seen, Some(2), "pixel={pixel}: shown from its second frame");
+    }
+}
+
+#[test]
+fn without_pixel_ui_its_x_closes_it_and_its_title_bar_moves_it() {
+    use crate::panel_registry::PanelId;
+    let mut h = with_the_preview(plain());
+    let window = h
+        .app
+        .workspace
+        .window_rect(&h.ctx, PanelId::Preview)
+        .unwrap();
+    // Arrastrada de su barra de título (a la izquierda del título), 30 a la izquierda y 20 arriba.
+    let at = pos2(window.left() + 40.0, window.top() + 17.0);
+    h.drag(at, at - vec2(30.0, 20.0));
+    for _ in 0..2 {
+        h.frame();
+    }
+    let moved = h
+        .app
+        .workspace
+        .window_rect(&h.ctx, PanelId::Preview)
+        .unwrap();
+    assert_eq!(moved.min, window.min - vec2(30.0, 20.0));
+    assert_eq!(moved.size(), window.size());
+    // Su × lo cierra (lo apaga y para su reproducción).
+    h.click(node_in(&h, "Play", moved).center(), PointerButton::Primary);
+    assert!(h.app.preview.playing());
+    h.click(
+        node_in(&h, "Close window", moved).center(),
+        PointerButton::Primary,
+    );
+    h.frame();
+    assert!(!h.app.view.preview);
+    assert!(!h.app.preview.playing(), "closing it stops it");
+    assert_eq!(h.app.workspace.places(PanelId::Preview), 0);
+}
+
+#[test]
+fn the_preview_docked_at_its_minimum_height_keeps_its_smallest_view() {
+    // Acoplado debajo de Color y bajado su divisor hasta abajo: en su mínimo, la vista es la más
+    // chica, con la fila de controles de cada modo (los íconos con Pixel UI; los botones de egui,
+    // más altos, sin él).
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    for view in [pixel_ui(), plain()] {
+        let mut h = with_the_preview(view);
+        let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+        h.app
+            .workspace
+            .dock(PanelId::Preview, DockTarget::Split(s, n, Split::Below));
+        for _ in 0..4 {
+            h.frame();
+        }
+        let pixel = h.app.pixel.skin().is_some();
+        let leaf = h.app.workspace.leaf_rect(PanelId::Preview).unwrap();
+        let divider = pos2(leaf.center().x, leaf.top() - 1.0);
+        let bottom = pos2(divider.x, h.size.y);
+        drag(&mut h, divider, bottom);
+        for _ in 0..2 {
+            h.frame();
+        }
+        let leaf = h.app.workspace.leaf_rect(PanelId::Preview).unwrap();
+        let view = preview_view(&h, leaf).unwrap_or_else(|| panic!("pixel={pixel}: no view"));
+        assert_eq!(
+            view.height(),
+            crate::preview::MIN_VIEW.y,
+            "pixel={pixel}: {leaf:?} {view:?}"
+        );
+    }
+}
+
+#[test]
+fn resizing_the_preview_from_its_grip_never_shows_the_workspace_window_frame() {
+    // Con Pixel UI, mientras se agranda de la agarradera (el área de egui puede ir un frame atrás
+    // del tamaño pedido), su ventana lleva solo el marco de su diálogo: nunca el de las ventanas
+    // del workspace (`menu.side`) ni un marcador sin cambiar.
+    let mut h = with_the_preview(pixel_ui());
+    let before = dialog_frame(&h).unwrap();
+    let from = h.drawn("preview.grip")[0].center();
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    for k in 1..=5 {
+        let at = from + vec2(-12.0, -9.0) * k as f32;
+        h.frame_with(vec![Event::PointerMoved(at)]);
+        assert!(h.drawn("menu.side").is_empty(), "step {k}");
+        assert!(
+            !h.shapes
+                .iter()
+                .any(|c| crate::workspace::has_marker(&c.shape)),
+            "step {k}"
+        );
+    }
+    let to = from + vec2(-60.0, -45.0);
+    h.frame_with(vec![press(to, false)]);
+    for _ in 0..2 {
+        h.frame();
+        assert!(h.drawn("menu.side").is_empty());
+    }
+    assert_ne!(dialog_frame(&h), Some(before), "it was resized");
+}
+
 #[test]
 fn the_preview_docked_below_color_has_its_controls_inside_and_they_work() {
     use crate::panel_registry::PanelId;

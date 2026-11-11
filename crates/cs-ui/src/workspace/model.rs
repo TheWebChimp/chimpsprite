@@ -105,7 +105,6 @@ impl Workspace {
             sides: Default::default(),
             spots: Vec::new(),
             preview_anchored: false,
-            skinned: false,
         }
     }
 
@@ -722,7 +721,7 @@ impl Workspace {
 
     /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
     /// o más. Las ventanas flotantes la llevan (es su título y de ahí se arrastran), salvo la del
-    /// Preview solo con Pixel UI (su ventana es la del diseño, con su barra de título: ver
+    /// Preview solo (su ventana es la de antes, con su barra de título: ver
     /// [`Workspace::bare_preview`]). Devuelve si alguna cambió.
     pub(crate) fn refresh_tab_bars(&mut self) -> bool {
         let bare = self.bare_preview();
@@ -736,11 +735,12 @@ impl Workspace {
         changed
     }
 
-    /// Con Pixel UI, la ventana del Preview solo (un solo grupo, con él solo): su ventana es la del
-    /// diseño (su marco y su barra de título, sin pestañas; ver `show`).
+    /// La ventana del Preview solo (un solo grupo, con él solo): su ventana es la de antes (con
+    /// Pixel UI la del diseño, sin él la `egui::Window`: su marco y su barra de título, sin
+    /// pestañas; ver `show::PreviewWindow`).
     pub(crate) fn bare_preview(&self) -> Option<SurfaceIndex> {
         let path = self.state.find_tab(&PanelId::Preview)?;
-        if !self.skinned || path.surface.is_main() {
+        if path.surface.is_main() {
             return None;
         }
         let tree = &self.state[path.surface];

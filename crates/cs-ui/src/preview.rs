@@ -4,10 +4,11 @@
 //! Su play anima el dibujo por su cuenta (sin mover el timeline).
 //!
 //! Es un panel del workspace (fase D): flotando solo en su ventana (de fábrica, en la esquina de
-//! abajo a la derecha, como antes), con Pixel UI su ventana es la del diseño
+//! abajo a la derecha, como antes), su ventana es la de antes: con Pixel UI la del diseño
 //! ([`Preview::window_contents`] y [`Preview::window_chrome`]: play y centrar en la barra de
-//! título y la agarradera de la esquina que la agranda o la achica); acoplado (o con otras
-//! pestañas), play y centrar van arriba de lo de adentro y el dibujo ocupa lo que queda
+//! título y la agarradera de la esquina que la agranda o la achica); sin él, la `egui::Window`
+//! de antes ([`Preview::plain_window`]: su barra de título, "Play" y la agarradera). Acoplado (o
+//! con otras pestañas), play y centrar van arriba de lo de adentro y el dibujo ocupa lo que queda
 //! ([`Preview::contents`]).
 
 use eframe::egui::{
@@ -35,10 +36,39 @@ const MAX_ZOOM: f32 = 32.0;
 pub(crate) const OFFSET: Vec2 = vec2(-48.0, -48.0);
 /// Entre el play y la vista.
 const ROW_GAP: f32 = 3.0;
-/// El alto de la fila de play y centrar acoplado (con Pixel UI, la zona de sus íconos).
+/// El alto de la fila de play y centrar acoplado con Pixel UI (la zona de sus íconos; sin él, la
+/// de los botones de egui: ver [`controls_height`]).
 const CONTROLS_HEIGHT: f32 = 9.0;
-/// Lo más bajo de lo de adentro acoplado: la fila de controles y la vista más chica.
+/// Lo más bajo de lo de adentro acoplado con Pixel UI: la fila de controles y la vista más chica
+/// (el de la ficha; el de cada modo, [`min_height`]).
 pub(crate) const MIN_HEIGHT: f32 = CONTROLS_HEIGHT + ROW_GAP + MIN_VIEW.y;
+/// El ancho de fábrica de una `egui::Window` (el de su `Resize`, con el marco): el de la ventana
+/// de antes sin Pixel UI (su barra de título toma todo el ancho, así que no se angostaba).
+const PLAIN_WINDOW_WIDTH: f32 = 340.0;
+
+/// La fila de play y centrar acoplado: con Pixel UI, la de sus íconos; sin él, la de los botones
+/// de egui.
+fn controls_height(ui: &Ui, skin: Option<&Skin>) -> f32 {
+    match skin {
+        Some(_) => CONTROLS_HEIGHT,
+        None => plain_row_height(ui),
+    }
+}
+
+/// El alto de un botón de egui con texto (lo que mide la fila de "Play" sin Pixel UI).
+fn plain_row_height(ui: &Ui) -> f32 {
+    let spacing = ui.spacing();
+    let text = ui.text_style_height(&egui::TextStyle::Button);
+    spacing
+        .interact_size
+        .y
+        .max(text + 2.0 * spacing.button_padding.y)
+}
+
+/// Lo más bajo de lo de adentro acoplado en cada modo: la fila de controles y la vista más chica.
+pub(crate) fn min_height(ui: &Ui, skin: Option<&Skin>) -> f32 {
+    controls_height(ui, skin) + ROW_GAP + MIN_VIEW.y
+}
 
 /// La reproducción propia del preview, como la del timeline: el tag del frame donde empezó (o
 /// todos los frames), con la duración de cada frame.
@@ -97,7 +127,8 @@ impl Preview {
     /// después de [`Self::window_contents`]: el marco va en `background` (el lugar que se dejó
     /// debajo de lo de adentro, con el pintor de su capa) y en la barra, sin botón (como en el
     /// diseño), play o pausa (si hay animación) y centrar, y la ○ de cerrar. `ui` es de la capa de
-    /// la ventana, encima de lo demás de ella. Devuelve si se cerró (y para la reproducción).
+    /// la ventana, encima de lo demás de ella. Devuelve si se cerró (cerrarlo es
+    /// `PanelAction::ClosePreview`, que para la reproducción).
     pub(crate) fn window_chrome(
         &mut self,
         ui: &mut Ui,
@@ -122,10 +153,66 @@ impl Preview {
         let left = chrome.bar.left() + BAR_LEFT;
         let (play, center) = bar_icons(ui, skin, chrome.bar, left, animated, self.playing());
         self.controls(editor, play, center);
-        if chrome.closed {
-            self.stop();
-        }
         chrome.closed
+    }
+
+    /// Lo que mide su ventana sin Pixel UI (solo en ella): la `egui::Window` de antes, con su
+    /// barra de título, "Play" y la vista con su agarradera; de su ancho de fábrica o, con una
+    /// vista más ancha, de lo que pide la vista.
+    pub(crate) fn plain_window_size(&self, ui: &Ui) -> Vec2 {
+        let frame = egui::Frame::window(ui.style());
+        let stroke = frame.stroke.width;
+        let margin = frame.inner_margin;
+        let title = margin.sum().y + title_height(ui, TITLE);
+        let width = (self.size.x + margin.sum().x + 2.0 * stroke).max(PLAIN_WINDOW_WIDTH);
+        let height =
+            3.0 * stroke + title + margin.sum().y + plain_row_height(ui) + ROW_GAP + self.size.y;
+        vec2(width, height)
+    }
+
+    /// Sin Pixel UI, solo en su ventana: lo de adentro de la `egui::Window` de antes en `rect` (lo
+    /// de afuera de la ventana). Su marco es el de la ventana de egui_dock que lo lleva (el mismo
+    /// `Frame::window`); aquí, recortado por dentro del borde como en la de antes, su barra de
+    /// título (la de egui: el título al centro y la ×, con la línea de abajo) y debajo, con el
+    /// margen de las ventanas, "Play" y la vista con su agarradera. Devuelve si se cerró con la ×.
+    pub(crate) fn plain_window(
+        &mut self,
+        ui: &mut Ui,
+        editor: &Editor,
+        rect: Rect,
+        canvas: Option<(egui::TextureId, Vec2)>,
+    ) -> bool {
+        self.canvas = canvas;
+        let frame = egui::Frame::window(ui.style());
+        let stroke = frame.stroke.width;
+        let margin = frame.inner_margin;
+        let inner = rect.shrink(stroke);
+        let mut ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("preview_window")
+                .max_rect(inner)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        ui.set_clip_rect(inner);
+        let (title, closed) = egui_title_bar(&mut ui, TITLE, frame);
+        let top = title.bottom() + stroke + f32::from(margin.top);
+        let body = Rect::from_min_max(
+            egui::pos2(inner.left() + f32::from(margin.left), top),
+            inner.max - vec2(f32::from(margin.right), f32::from(margin.bottom)),
+        );
+        let mut body = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("preview_window_body")
+                .max_rect(body)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        body.spacing_mut().item_spacing.y = ROW_GAP;
+        let playing = self.playing();
+        let label = if playing { "Pause" } else { "Play" };
+        let play = body.selectable_label(playing, label).clicked();
+        self.controls(editor, play, false);
+        self.view(&mut body, editor, None, self.size, true);
+        closed
     }
 
     /// Lo que piden sus controles: prender o apagar la reproducción y centrar.
@@ -279,10 +366,9 @@ impl Preview {
         self.view(ui, editor, Some(skin), self.size, true);
     }
 
-    /// Lo de adentro como panel (acoplado, o en una ventana con pestañas; sin Pixel UI, también
-    /// solo en su ventana): arriba play o pausa y centrar (con Pixel UI, sus íconos sin botón,
-    /// como en la barra de su ventana; sin él, botones de egui) y debajo la vista, de todo lo que
-    /// queda (el tamaño lo pone su grupo). `canvas`, como en [`Self::window_contents`].
+    /// Lo de adentro como panel (acoplado, o en una ventana con pestañas): arriba play o pausa y
+    /// centrar (con Pixel UI, sus íconos sin botón, como en la barra de su ventana; sin él,
+    /// botones de egui) y debajo la vista, de todo lo que queda (el tamaño lo pone su grupo). `canvas`, como en [`Self::window_contents`].
     pub fn contents(
         &mut self,
         ui: &mut Ui,
@@ -500,6 +586,85 @@ fn bar_icons(
     let (at, center) = icon(ui, CENTER_PIECE, "Center", size(CENTER_PIECE).x);
     crate::kit::icon::paint(ui, skin, CENTER_PIECE, at, &center);
     (play, center.clicked())
+}
+
+/// El título de su ventana.
+const TITLE: &str = "Preview";
+
+/// El alto de una línea de la fuente de los encabezados (la del título de una `egui::Window`).
+fn heading_height(ui: &Ui) -> f32 {
+    let font = egui::TextStyle::Heading.resolve(ui.style());
+    ui.fonts_mut(|f| f.row_height(&font))
+}
+
+/// Lo de adentro de la barra de título de una `egui::Window` con `title`, a lo alto: su texto (a
+/// píxeles enteros) o el lugar de la ×, lo más alto.
+fn title_height(ui: &Ui, title: &str) -> f32 {
+    let font = egui::TextStyle::Heading.resolve(ui.style());
+    let text = ui
+        .painter()
+        .layout_no_wrap(title.to_owned(), font, Color32::PLACEHOLDER);
+    text.size().y.max(heading_height(ui))
+}
+
+/// La barra de título de una `egui::Window` cerrable, sin plegar (la de su `title_ui`, que es
+/// privada: lo mismo con lo público de egui): el título al centro con la fuente de los
+/// encabezados y la × a la derecha, con el margen de la ventana, y debajo el marco de la ventana
+/// (`frame`, sin sombra ni esquinas de abajo; su borde de abajo es la línea que la separa), con el
+/// fondo resaltado si su ventana es la de arriba de todas. Va
+/// arriba de `ui` (lo de adentro del borde de la ventana). Devuelve su rect y si se tocó la ×.
+fn egui_title_bar(ui: &mut Ui, title: &str, frame: egui::Frame) -> (Rect, bool) {
+    let background = ui.painter().add(egui::Shape::Noop);
+    // El lugar de la ×, del alto del título (como egui: así queda centrada en él).
+    let slot = Vec2::splat(heading_height(ui));
+    let button = Vec2::splat(ui.spacing().icon_width);
+    let close = egui::Id::new("__window_close_button");
+    let mut text = egui::Atom::from(title);
+    text.shrink = true;
+    let mut atoms = egui::Atoms::default();
+    atoms.push_right(egui::Atom::grow());
+    atoms.push_right(text);
+    atoms.push_right(egui::Atom::grow());
+    atoms.push_right(egui::Atom::custom(close, slot));
+    let gap = ui.spacing().item_spacing.x;
+    let mut child = ui.new_child(egui::UiBuilder::new());
+    let width = child.available_width();
+    let layout = egui::AtomLayout::new(atoms)
+        .gap(gap)
+        .fallback_font(egui::TextStyle::Heading)
+        .wrap_mode(egui::TextWrapMode::Truncate)
+        .frame(egui::Frame::NONE.inner_margin(frame.inner_margin))
+        .min_size(vec2(width, 0.0))
+        .show(&mut child);
+    let closed = layout
+        .rect(close)
+        .is_some_and(|r| close_button(&mut child, r.shrink2((slot - button) / 2.0)).clicked());
+    let mut header = frame.inner_margin(0).shadow(egui::epaint::Shadow::NONE);
+    // La de la ventana de arriba de todas (como egui: sin un diálogo encima), resaltada.
+    if Some(ui.layer_id()) == ui.ctx().top_layer_id() {
+        header = header.fill(ui.visuals().widgets.open.weak_bg_fill);
+    }
+    header.corner_radius.sw = 0;
+    header.corner_radius.se = 0;
+    ui.painter().set(background, header.paint(layout.rect));
+    (layout.rect, closed)
+}
+
+/// La × de una `egui::Window`: dos rayas con el color de los widgets en su estado.
+fn close_button(ui: &mut Ui, rect: Rect) -> egui::Response {
+    let id = ui.auto_id_with("window_close_button");
+    let response = ui.interact(rect, id, Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close window")
+    });
+    let visuals = ui.style().interact(&response);
+    let rect = rect.shrink(2.0).expand(visuals.expansion);
+    let stroke = visuals.fg_stroke;
+    let painter = ui.painter();
+    painter.line_segment([rect.left_top(), rect.right_bottom()], stroke);
+    painter.line_segment([rect.right_top(), rect.left_bottom()], stroke);
+    response
 }
 
 /// La agarradera: tres rayitas en diagonal, con la tinta de los íconos y su luz.

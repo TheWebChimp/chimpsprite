@@ -212,9 +212,6 @@ pub(super) struct Armed {
     /// verdad ocuparía lo soltado. egui_dock pinta el grupo entero ("como pestaña"), pero el lienzo
     /// no recibe pestañas: `tidy_canvas` lo parte al lado, del lado del cuadrante.
     pub canvas_drop: Option<(Rect, Rect)>,
-    /// Las ventanas que llevan su propio marco (la del Preview solo, con el del diálogo del
-    /// diseño): el de las ventanas del workspace no se pinta.
-    pub bare: Vec<Rect>,
 }
 
 impl Armed {
@@ -273,8 +270,7 @@ impl egui::Plugin for SkinRewriter {
 }
 
 /// Cambia los marcadores de `shape` (y de lo que lleva adentro). La zona de destino que cubre el
-/// grupo del lienzo entero (`canvas_drop`) se pinta como la mitad que de verdad queda; el marco
-/// de una ventana con el suyo propio (`bare`), nada.
+/// grupo del lienzo entero (`canvas_drop`) se pinta como la mitad que de verdad queda.
 fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
     match shape {
         Shape::Vec(shapes) => {
@@ -298,11 +294,7 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
                 };
                 *shape = Shape::Vec(drop_shapes(skin, rect, ppp));
             } else if r.fill == M_WINDOW {
-                *shape = if armed.bare.iter().any(|&b| same_rect(b, r.rect)) {
-                    Shape::Noop
-                } else {
-                    Shape::Vec(frame_shapes(skin, r.rect, ppp))
-                };
+                *shape = Shape::Vec(frame_shapes(skin, r.rect, ppp));
             } else if r.stroke.color == M_DROP {
                 // El contorno de "soltar aquí = ventana nueva" (sin el centro: lo de abajo se ve).
                 let mut s = Shape::Vec(ring_shapes(skin, r.rect, ppp));
@@ -391,6 +383,28 @@ pub(super) fn window_area_id(surface: SurfaceIndex) -> Id {
     Id::new(format!("window {surface:?}"))
 }
 
+/// Sin el marco de las ventanas del workspace (`menu.side`) en la ventana flotante `surface` (la
+/// del Preview solo, que lleva el de su diálogo): su marcador, ya pintado en la capa de su área,
+/// se borra. Por la capa y no por el rect: mientras se agranda de la agarradera, el área puede ir
+/// un frame atrás del tamaño pedido.
+pub(super) fn hide_window_frame(ctx: &egui::Context, surface: SurfaceIndex) {
+    fn unmark(shape: &mut Shape) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter_mut().for_each(unmark),
+            Shape::Rect(r) if r.fill == M_WINDOW => *shape = Shape::Noop,
+            _ => {}
+        }
+    }
+    let layer = egui::LayerId::new(egui::Order::Middle, window_area_id(surface));
+    ctx.graphics_mut(|g| {
+        if let Some(list) = g.get_mut(layer) {
+            for i in 0..list.next_idx().0 {
+                list.mutate_shape(egui::layers::ShapeIdx(i), |c| unmark(&mut c.shape));
+            }
+        }
+    });
+}
+
 /// Si `response` (la que llega a `on_tab_button`) es la de una pestaña que se está arrastrando:
 /// mientras se arrastra, egui_dock la pinta aparte y da la respuesta de `id.with("dragged")`
 /// (`show/leaf.rs`).
@@ -473,7 +487,8 @@ pub(super) fn snap<T>(ctx: &egui::Context, state: &mut DockState<T>) {
 
 /// Las ventanas flotantes a puntos enteros al soltarlas (arrastradas quedan en x.5), salvo
 /// `keep` (la del Preview en su esquina: va donde iba su ventana de antes, que con una pantalla
-/// que termina en medio punto queda en medio punto).
+/// que termina en medio punto queda en medio punto). Es una excepción deliberada a "rects en
+/// puntos enteros": así se ve igual que la de antes (0 píxeles distintos).
 pub(super) fn snap_windows<T>(
     ctx: &egui::Context,
     state: &mut DockState<T>,

@@ -1525,6 +1525,7 @@ impl ChimpApp {
         let fixed = PanelCtx {
             modal,
             bottom: None,
+            window: None,
         };
         let shared_skin = self.pixel.shared_skin();
         let skin = shared_skin.as_deref();

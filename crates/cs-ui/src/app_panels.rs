@@ -46,6 +46,9 @@ pub(crate) struct PanelCtx {
     /// El fondo disponible del panel: hasta ahí llega la lista de Lospec. Sin él, el de abajo
     /// de `ui.max_rect()`.
     pub bottom: Option<f32>,
+    /// Solo en su ventana, que lleva la de antes (el Preview, ver [`ChimpApp::draw_preview`]):
+    /// el rect de la ventana, de afuera.
+    pub window: Option<egui::Rect>,
 }
 
 #[cfg(test)]
@@ -126,6 +129,10 @@ impl ChimpApp {
         if id == PanelId::Color {
             return self.draw_color(ui, panel.modal);
         }
+        // El Preview tampoco se apaga (como su ventana de antes).
+        if id == PanelId::Preview {
+            return self.draw_preview(ui, panel.window);
+        }
         // La franja del logo de Lospec queda fuera de lo que apaga el modal, como siempre.
         if id == PanelId::Lospec {
             palette_ui::lospec_band(ui, self.pixel.skin());
@@ -202,10 +209,38 @@ impl ChimpApp {
                 std::mem::take(&mut self.doc.timeline.new_tilemap)
                     .then_some(PanelAction::NewTilemap)
             }
-            PanelId::Preview => {
-                // La textura del lienzo, si muestra el frame del editor tal cual.
-                let canvas = self.doc.canvas.plain_texture(&self.doc.editor);
-                self.preview.contents(ui, &self.doc.editor, skin, canvas);
+            PanelId::Preview => unreachable!("el Preview se dibuja con draw_preview"),
+        }
+    }
+
+    /// El Preview en `ui`. Solo en su ventana (`window`: su rect), lo de la ventana de antes: con
+    /// Pixel UI, lo de adentro de la del diseño (su marco y su barra los pinta el workspace
+    /// después, ver `Preview::window_chrome`), recortado a la ventana (la agarradera va contra su
+    /// borde); sin él, lo de la `egui::Window` de antes (su barra de título con la ×: cerrarlo es
+    /// [`PanelAction::ClosePreview`]). Si no, como panel: sus controles arriba y la vista. Un
+    /// diálogo no lo apaga, como a su ventana de antes.
+    fn draw_preview(
+        &mut self,
+        ui: &mut egui::Ui,
+        window: Option<egui::Rect>,
+    ) -> Option<PanelAction> {
+        // La textura del lienzo, si muestra el frame del editor tal cual.
+        let canvas = self.doc.canvas.plain_texture(&self.doc.editor);
+        let editor = &self.doc.editor;
+        let skin = self.pixel.skin();
+        match (window, skin) {
+            (Some(rect), Some(skin)) => {
+                ui.set_clip_rect(rect);
+                ui.visuals_mut().override_text_color = Some(skin.colors().text);
+                self.preview.window_contents(ui, editor, skin, canvas);
+                None
+            }
+            (Some(rect), None) => self
+                .preview
+                .plain_window(ui, editor, rect, canvas)
+                .then_some(PanelAction::ClosePreview),
+            (None, skin) => {
+                self.preview.contents(ui, editor, skin, canvas);
                 None
             }
         }
@@ -437,6 +472,7 @@ impl ChimpApp {
         let panel = PanelCtx {
             modal,
             bottom: Some(anchor.column.bottom() - dock::FLYOUT_MARGIN as f32),
+            window: None,
         };
         let mut action = None;
         let contents = |ui: &mut egui::Ui| {
@@ -662,6 +698,7 @@ mod tests {
         let modal = PanelCtx {
             modal: true,
             bottom: None,
+            window: None,
         };
         let mut app = test_app();
         let ctx = egui::Context::default();
@@ -708,6 +745,7 @@ mod tests {
         let modal = PanelCtx {
             modal: true,
             bottom: None,
+            window: None,
         };
         let out = draw_with(&ctx, &mut app, PanelId::Lospec, &modal);
         let stripe = crate::palette_ui::BAND_COLORS[0];
