@@ -697,41 +697,52 @@ fn glyph_section(
     }
     // El campo Component con Add, Unlink y Build.
     let buildable = cs_core::decomposition(ch).is_some();
+    // Con Pixel UI, la fila del alto de sus controles (17) un punto más abajo: centrados en la de
+    // egui (18), los botones caían a medio punto (el campo se redondea solo y ya iba ahí).
+    if skin.is_some() {
+        ui.add_space(1.0);
+    }
     let (add, unlink, build) = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = GLYPH_GAP;
-            let button = |ui: &mut Ui, label: &str, enabled: bool| {
-                ui.add_enabled_ui(enabled, |ui| match skin {
-                    Some(skin) => kit::button::button(ui, skin, label),
-                    None => pixel_ui::text_button(ui, label),
-                })
-                .inner
-            };
-            let field = match skin {
-                Some(skin) => kit::input::text_input(
-                    ui,
-                    skin,
-                    &mut state.component_char,
-                    COMPONENT_FIELD_W,
-                    "Component",
-                    "Component",
-                ),
-                None => ui.add(
-                    egui::TextEdit::singleline(&mut state.component_char)
-                        .desired_width(COMPONENT_FIELD_W)
-                        .hint_text("Component"),
-                ),
-            };
-            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let add = button(ui, "Add", true).clicked() || entered;
-            let unlink = button(ui, "Unlink", composite)
-                .on_disabled_hover_text("Only for composite glyphs")
-                .clicked();
-            let build = button(ui, "Build", buildable)
-                .on_disabled_hover_text("Not an accented letter")
-                .on_hover_text("Build this accented letter from its base and mark")
-                .clicked();
-            (add, unlink, build)
+        .scope(|ui| {
+            if skin.is_some() {
+                ui.spacing_mut().interact_size.y = kit::button::HEIGHT;
+            }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = GLYPH_GAP;
+                let button = |ui: &mut Ui, label: &str, enabled: bool| {
+                    ui.add_enabled_ui(enabled, |ui| match skin {
+                        Some(skin) => kit::button::button(ui, skin, label),
+                        None => pixel_ui::text_button(ui, label),
+                    })
+                    .inner
+                };
+                let field = match skin {
+                    Some(skin) => kit::input::text_input(
+                        ui,
+                        skin,
+                        &mut state.component_char,
+                        COMPONENT_FIELD_W,
+                        "Component",
+                        "Component",
+                    ),
+                    None => ui.add(
+                        egui::TextEdit::singleline(&mut state.component_char)
+                            .desired_width(COMPONENT_FIELD_W)
+                            .hint_text("Component"),
+                    ),
+                };
+                let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let add = button(ui, "Add", true).clicked() || entered;
+                let unlink = button(ui, "Unlink", composite)
+                    .on_disabled_hover_text("Only for composite glyphs")
+                    .clicked();
+                let build = button(ui, "Build", buildable)
+                    .on_disabled_hover_text("Not an accented letter")
+                    .on_hover_text("Build this accented letter from its base and mark")
+                    .clicked();
+                (add, unlink, build)
+            })
+            .inner
         })
         .inner;
     if add {

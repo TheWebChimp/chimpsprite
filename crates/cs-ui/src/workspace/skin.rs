@@ -534,29 +534,204 @@ pub(super) fn tab_item(id: PanelId) -> TabItem {
     }
 }
 
-/// Lo que se ve de las pestañas en la barra del grupo de rect `leaf`: la barra sin el lugar del
-/// botón « ([`COLLAPSE_ROOM`]).
-pub(super) fn visible_tabs(leaf: Rect) -> Rect {
-    Rect::from_min_size(
+// ---------------------------------------------------------------------------------------------
+// Las barras con más pestañas de las que caben.
+
+/// El aire entre las flechas del kit y el « del grupo.
+const ARROWS_AIR: f32 = 1.0;
+
+/// Cómo van las pestañas del kit en la barra de un grupo (con Pixel UI). Las acomoda
+/// `kit::tabs::layout` en la barra sin el lugar del « ([`COLLAPSE_ROOM`]): si no caben, se achican
+/// parejo y, si ni así, van las flechas del kit a la izquierda del « (con [`ARROWS_AIR`] de aire) y
+/// se recorren con ellas (o con la rueda) de una en una; ni la última ni su × quedan bajo el «.
+///
+/// egui_dock (que les da el clic y las arrastra) las pone en el mismo lugar: cada una del ancho del
+/// kit (`TabStyle::minimum_width`, ver [`TabBar::dock_width`]) y corridas a la izquierda lo que
+/// ocupan las de antes de la primera que se ve (`LeafNode::scroll`). egui_dock no las deja correr
+/// más que hasta que la última toca el final de su barra y el kit deja la última pegada a la
+/// izquierda (con lugar libre después): la última lleva de más lo que falte (`tail`), que queda
+/// bajo las flechas y el aire de antes de ellas (ver `show::tab_arrows`, que les ganan el puntero).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TabBar {
+    pub path: NodePath,
+    pub tabs: Vec<PanelId>,
+    /// El ancho de cada pestaña (de todas, en el orden del grupo) y su nombre como entra.
+    pub widths: Vec<f32>,
+    pub names: Vec<String>,
+    /// Desde cuál se ven y desde cuál se ve la última.
+    pub offset: usize,
+    pub last_offset: usize,
+    /// Las que se ven: su índice en el grupo y su fila (sin lo que la activa baja).
+    pub shown: Vec<(usize, Rect)>,
+    /// Las flechas, si no caben.
+    pub arrows: Option<Rect>,
+    /// Lo que egui_dock las corre a la izquierda y lo que lleva de más la última.
+    pub scroll: f32,
+    pub tail: f32,
+    /// De la orilla izquierda de la barra al «: hasta ahí llegan las pestañas de egui_dock.
+    pub room: Rect,
+}
+
+impl TabBar {
+    /// Lo que egui_dock tiene que saber para ponerlas igual: si cambia entre lo pedido antes del
+    /// `DockArea` y lo de después (el grupo cambió de ancho), el frame se vuelve a dibujar.
+    pub(super) fn dock_layout(&self) -> (NodePath, &[PanelId], &[f32], f32, f32) {
+        (self.path, &self.tabs, &self.widths, self.scroll, self.tail)
+    }
+
+    /// El ancho de la pestaña `i` en egui_dock (la última, con lo de más).
+    pub(super) fn dock_width(&self, i: usize) -> f32 {
+        let tail = if i + 1 == self.tabs.len() {
+            self.tail
+        } else {
+            0.0
+        };
+        self.widths[i] + tail
+    }
+
+    /// La fila de `id`, si se ve.
+    pub(super) fn row(&self, id: PanelId) -> Option<Rect> {
+        let i = self.tabs.iter().position(|&t| t == id)?;
+        self.shown.iter().find(|(j, _)| *j == i).map(|(_, r)| *r)
+    }
+
+    /// Lo que se ve de las pestañas: de la orilla izquierda de la barra a las flechas (o al «).
+    pub(super) fn visible(&self) -> Rect {
+        match self.arrows {
+            Some(a) => self.room.with_max_x(a.left()),
+            None => self.room,
+        }
+    }
+
+    pub(super) fn can_prev(&self) -> bool {
+        self.offset > 0
+    }
+
+    pub(super) fn can_next(&self) -> bool {
+        self.shown
+            .last()
+            .is_some_and(|(i, _)| i + 1 < self.tabs.len())
+    }
+}
+
+/// Dónde se guarda desde cuál se ven las pestañas del grupo `path` (y cuál estaba al frente: la
+/// que pasa al frente se trae a la vista, como en `kit::tabs::tab_strip`).
+pub(super) fn tabs_offset_id(path: NodePath) -> Id {
+    Id::new(("workspace_tabs_offset", path.surface, path.node))
+}
+
+/// La barra del grupo `path` (de rect `leaf`) con `tabs` y la de al frente `active`, desde la que
+/// se ven según la memoria; `step` la corre antes (la rueda: −1 o 1). Guarda desde cuál se ven.
+pub(super) fn plan_bar(
+    ui: &egui::Ui,
+    path: NodePath,
+    leaf: Rect,
+    (tabs, active): (&[PanelId], usize),
+    step: i32,
+) -> TabBar {
+    use kit::tabs::{GAP, HEIGHT, layout};
+    let memory = tabs_offset_id(path);
+    let items: Vec<TabItem> = tabs.iter().map(|&t| tab_item(t)).collect();
+    let (offset, seen): (usize, Option<PanelId>) =
+        ui.data(|d| d.get_temp(memory)).unwrap_or((0, None));
+    let offset = offset.saturating_add_signed(step as isize);
+    let room = Rect::from_min_max(
         leaf.min,
-        vec2((leaf.width() - COLLAPSE_ROOM).max(0.0), TAB_BAR_H),
-    )
+        egui::pos2(
+            (leaf.right() - COLLAPSE_ROOM).max(leaf.left()),
+            leaf.top() + TAB_BAR_H,
+        ),
+    );
+    let mut strip = Strip::new(room.left(), room.right(), room.top());
+    let mut lay = layout(ui, &strip, &items, offset);
+    if lay.arrows.is_some() {
+        strip.right = (room.right() - ARROWS_AIR).max(room.left());
+        lay = layout(ui, &strip, &items, offset);
+    }
+    // La que pasó al frente, a la vista.
+    let front = tabs.get(active).copied();
+    if lay.arrows.is_some() && seen != front && active < tabs.len() {
+        if active < lay.offset {
+            lay = layout(ui, &strip, &items, active);
+        }
+        while lay.placed.last().is_some_and(|p| p.index < active) && lay.offset < lay.last_offset {
+            lay = layout(ui, &strip, &items, lay.offset + 1);
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(memory, (lay.offset, front)));
+    let widths = kit::tabs::widths(ui, &strip, &items);
+    let n = tabs.len();
+    let (scroll, tail) = if lay.arrows.is_some() {
+        let scroll: f32 = widths[..lay.offset].iter().map(|w| w + GAP).sum();
+        let total = widths.iter().sum::<f32>() + GAP * n.saturating_sub(1) as f32;
+        (scroll, (scroll - (total - room.width())).max(0.0))
+    } else {
+        (0.0, 0.0)
+    };
+    let mut names: Vec<String> = items.iter().map(|t| t.label.clone()).collect();
+    for p in &lay.placed {
+        names[p.index] = p.name.clone();
+    }
+    TabBar {
+        path,
+        tabs: tabs.to_vec(),
+        widths,
+        names,
+        offset: lay.offset,
+        last_offset: lay.last_offset,
+        shown: lay
+            .placed
+            .iter()
+            .map(|p| {
+                (
+                    p.index,
+                    Rect::from_min_size(p.rect.min, vec2(p.rect.width(), HEIGHT)),
+                )
+            })
+            .collect(),
+        arrows: lay.arrows,
+        scroll,
+        tail,
+        room,
+    }
 }
 
-/// La fila de una pestaña (sin lo que la activa baja) a partir del rect de egui_dock.
-pub(super) fn tab_row(rect: Rect) -> Rect {
-    Rect::from_min_size(rect.min, vec2(rect.width(), kit::tabs::HEIGHT))
+/// Las barras de los grupos de `state` que llevan barra de pestañas (con su rect del último
+/// frame que se dibujó). `wheel`: la rueda sobre la de alguno (la que tiene flechas) la corre.
+pub(super) fn plan_bars(
+    ui: &egui::Ui,
+    state: &DockState<PanelId>,
+    wheel: Option<(egui::Pos2, i32)>,
+) -> Vec<TabBar> {
+    state
+        .iter_leaves()
+        .filter(|(_, leaf)| !leaf.tab_bar_hidden && !leaf.tabs.is_empty())
+        .filter(|(_, leaf)| leaf.rect.is_positive())
+        .map(|(path, leaf)| {
+            let row = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), TAB_BAR_H));
+            let step = wheel
+                .filter(|(p, _)| row.contains(*p))
+                .map_or(0, |(_, s)| s);
+            let bar = plan_bar(ui, path, leaf.rect, (&leaf.tabs, leaf.active.0), 0);
+            if step != 0 && bar.arrows.is_some() {
+                plan_bar(ui, path, leaf.rect, (&leaf.tabs, leaf.active.0), step)
+            } else {
+                bar
+            }
+        })
+        .collect()
 }
 
-/// Las pestañas del kit sobre las de egui_dock, en su misma capa: por cada grupo con barra, la
-/// línea grabada cortada debajo de la activa y sus pestañas (la activa al final, tapa a sus
-/// vecinas); la que se arrastra, además, como fantasma bajo el puntero. En los grupos sin barra
+/// Las pestañas del kit sobre las de egui_dock, en su misma capa: por cada grupo con barra (ver
+/// [`TabBar`]), la línea grabada cortada debajo de la activa y las pestañas que se ven, con su
+/// nombre como entra (la activa al final, tapa a sus vecinas; las flechas las pone
+/// `show::tab_arrows`); la que se arrastra, además, como fantasma bajo el puntero. En los grupos sin barra
 /// (`hidden`), la franja de arriba resaltada con el puntero encima, y su fantasma al arrastrarla.
 pub(super) fn paint_tabs(
     ui: &egui::Ui,
     skin: &Skin,
     state: &DockState<PanelId>,
-    hits: &[TabHit],
+    (hits, bars): (&[TabHit], &[TabBar]),
     dock_id: Id,
 ) {
     let ctx = ui.ctx();
@@ -615,53 +790,78 @@ pub(super) fn paint_tabs(
             }
             continue;
         }
-        // Sin pestañas dibujadas (el grupo no se ve), nada.
+        // Sin pestañas dibujadas (el grupo no se ve) o sin su barra acomodada, nada.
         let Some(first) = leaf.tabs.first().and_then(|&t| hit_of(t)) else {
+            continue;
+        };
+        let Some(plan) = bars.iter().find(|b| b.path == path && b.tabs == leaf.tabs) else {
             continue;
         };
         let bar = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), TAB_BAR_H));
         let screen = first.response.ctx.content_rect();
         let layer = ctx.layer_painter(first.response.layer_id);
-        // La línea, a todo lo ancho; las pestañas, sin tapar el lugar del «.
-        let painter = layer.with_clip_rect(visible_tabs(leaf.rect).intersect(screen));
-        let active_rect = hit_of(active).map(|h| {
-            Rect::from_min_size(
-                h.response.rect.min,
-                vec2(h.response.rect.width(), kit::tabs::ACTIVE_HEIGHT),
-            )
-        });
+        // La línea, a todo lo ancho; las pestañas, las que se ven (sin tapar las flechas ni el «).
+        let painter = layer.with_clip_rect(plan.visible().intersect(screen));
+        let active_rect = plan
+            .row(active)
+            .map(|r| r.with_max_y(r.top() + kit::tabs::ACTIVE_HEIGHT));
         let strip = Strip::new(bar.left(), bar.right(), bar.top());
         layer
             .with_clip_rect(bar.intersect(screen))
             .extend(kit::tabs::line_shapes(ui, skin, &strip, active_rect));
-        let mut order: Vec<PanelId> = leaf.tabs.clone();
-        order.sort_by_key(|&p| p == active);
-        for id in order {
+        let mut order: Vec<(usize, Rect)> = plan.shown.clone();
+        order.sort_by_key(|&(i, _)| plan.tabs[i] == active);
+        for (i, row) in order {
+            let id = plan.tabs[i];
             let Some(h) = hit_of(id) else { continue };
-            let row = tab_row(h.response.rect);
             let item = tab_item(id);
-            let mark_hovered = pointer.is_some_and(|p| {
-                item.mark != kit::tabs::TabMark::None
-                    && kit::tabs::mark_rect(row).expand(2.0).contains(p)
-            });
+            let mark = tab_mark(plan, i);
+            let mark_hovered =
+                pointer.is_some_and(|p| mark.is_some_and(|m| m.expand(2.0).contains(p)));
             let look = TabLook {
                 active: id == active,
                 hovered: id != active && h.response.hovered(),
                 mark_hovered,
             };
+            let shown = if mark.is_some() {
+                item.clone()
+            } else {
+                TabItem {
+                    mark: kit::tabs::TabMark::None,
+                    ..item.clone()
+                }
+            };
             painter.extend(kit::tabs::tab_shapes(
                 ui,
                 skin,
                 row,
-                &item,
-                &item.label,
+                &shown,
+                &plan.names[i],
                 look,
             ));
-            if is_dragged_tab(&h.response) {
+        }
+        // La que se arrastra (solo se agarra una que se ve), del ancho del kit.
+        for (i, &id) in plan.tabs.iter().enumerate() {
+            if let Some(h) = hit_of(id)
+                && is_dragged_tab(&h.response)
+            {
+                let row = Rect::from_min_size(
+                    h.response.rect.min,
+                    vec2(plan.widths[i], kit::tabs::HEIGHT),
+                );
                 ghost(row, id);
             }
         }
     }
+}
+
+/// La × de la pestaña `i` de `plan`, si se ve y le cabe (como en `kit::tabs::tab_strip`: en una
+/// pestaña más angosta que su marco no hay ×).
+pub(super) fn tab_mark(plan: &TabBar, i: usize) -> Option<Rect> {
+    let item = tab_item(plan.tabs[i]);
+    let (_, row) = plan.shown.iter().find(|(j, _)| *j == i)?;
+    (item.mark != kit::tabs::TabMark::None && row.width() >= kit::tabs::chrome(&item))
+        .then(|| kit::tabs::mark_rect(*row))
 }
 
 #[cfg(test)]

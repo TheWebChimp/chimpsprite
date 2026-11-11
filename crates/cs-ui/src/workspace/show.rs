@@ -256,6 +256,10 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn on_close(&mut self, tab: &mut PanelId) -> egui_dock::tab_viewer::OnCloseResponse {
+        // Con un diálogo modal no se cierra nada (por si un clic se coló hasta su ×).
+        if self.modal {
+            return egui_dock::tab_viewer::OnCloseResponse::Ignore;
+        }
         self.closed.push(*tab);
         // El timeline y el Preview los saca `Workspace::sync_panel`, que recuerda dónde estaban.
         if matches!(*tab, PanelId::Timeline | PanelId::Preview) {
@@ -511,13 +515,45 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     let preview_window = bare_preview.map(|s| PreviewWindow::new(ui, skin, &app.preview, s));
     let anchored = workspace.place_preview(&ctx, preview_window.as_ref().map(|w| w.size));
     let preview_surface = workspace.leaf_of(PanelId::Preview).map(|(s, _)| s);
-    let widths: HashMap<PanelId, f32> = match skin {
+    let mut widths: HashMap<PanelId, f32> = match skin {
         Some(_) => PanelId::ALL
             .iter()
             .map(|&p| (p, kit::tabs::natural_width(ui, &skin::tab_item(p))))
             .collect(),
         None => HashMap::new(),
     };
+    // Con Pixel UI, las pestañas de cada barra donde las pone el kit (achicadas o con sus flechas
+    // si no caben; ver `skin::TabBar`): egui_dock las pone igual. La rueda sobre una barra que no
+    // cabe la recorre de una en una (la de egui_dock, que la correría a su manera, no llega).
+    let bars = match skin {
+        Some(_) => {
+            // Solo en la primera pasada del frame: si se descarta, la otra ve la misma rueda.
+            let first = ctx.current_pass_index() == 0;
+            let wheel = if modal || !first {
+                None
+            } else {
+                tab_wheel(&ctx)
+            };
+            let bars = skin::plan_bars(ui, &workspace.state, wheel);
+            let pointer = ctx.input(|i| i.pointer.hover_pos());
+            if pointer.is_some_and(|p| {
+                bars.iter()
+                    .any(|b| b.arrows.is_some() && b.room.contains(p))
+            }) {
+                ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+            }
+            bars
+        }
+        None => Vec::new(),
+    };
+    for bar in &bars {
+        if let Ok(leaf) = workspace.state.leaf_mut(bar.path) {
+            leaf.scroll = -bar.scroll;
+        }
+        for (i, &id) in bar.tabs.iter().enumerate() {
+            widths.insert(id, bar.dock_width(i));
+        }
+    }
     let style = match skin {
         Some(skin) => skin::dock_style(ui.style(), skin),
         None => skin::plain_style(ui.style()),
@@ -644,11 +680,24 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         style: ui.style().clone(),
     };
     let strip = workspace.strip_at(Edge::Right).to_vec();
+    // Con un diálogo modal, lo que el `DockArea` cambiaría (ver `Frozen`) se repone después.
+    let frozen = modal.then(|| Frozen::take(&workspace.state));
     {
         let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(dock_rect));
         // El marco de las ventanas flotantes (solo lo leen los marcos).
         if let Some(skin) = skin {
             skin::window_visuals(ui.style_mut(), skin);
+        }
+        // Con un diálogo modal, lo de egui_dock de la superficie principal (divisores, pestañas y
+        // sus ×, franjas de agarre) queda apagado: no recibe clics ni arrastres (tampoco los de
+        // accesibilidad) y no se resalta. Sin que se vea distinto: apagar un `Ui` lo atenúa, y aquí
+        // se le devuelve su opacidad. El cuerpo de cada pestaña no: egui_dock lo arma con
+        // `Ui::new` (lo apaga `draw_panel`, salvo Color y el Preview, como siempre). Las ventanas
+        // flotantes tampoco lo heredan (son `egui::Window` aparte): ver `modal_shields`.
+        if modal {
+            let opacity = ui.opacity();
+            ui.disable();
+            ui.set_opacity(opacity);
         }
         DockArea::new(&mut workspace.state)
             .id(dock_id())
@@ -666,6 +715,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .hidable_tab_bars(true)
             .draggable_tabs(!modal)
             .show_inside(ui, &mut viewer);
+    }
+    if let Some(frozen) = frozen {
+        frozen.restore(&mut workspace.state);
     }
     ui.advance_cursor_after_rect(area);
     // El marco y la barra de la ventana del Preview (con Pixel UI, solo en ella), en su capa y
@@ -725,6 +777,10 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         {
             viewer.closed.push(PanelId::Preview);
         }
+    }
+    // Con un diálogo modal, las ventanas flotantes no se agarran (encima de lo de ellas).
+    if modal {
+        modal_shields(ui, skin, &workspace.state);
     }
     // Llevado a otro lugar (acoplado o a otra ventana, arrastrando su franja): deja su esquina.
     if workspace.leaf_of(PanelId::Preview).map(|(s, _)| s) != preview_surface {
@@ -835,16 +891,39 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         .iter_leaves()
         .filter_map(|(_, leaf)| leaf.tabs.get(leaf.active.0).copied())
         .collect();
+    // Las barras con el ancho que sus grupos tomaron en este frame: si egui_dock tendría que haber
+    // puesto sus pestañas de otra forma (un grupo cambió de ancho), el frame se vuelve a dibujar.
+    let bars_after = match skin {
+        Some(_) => skin::plan_bars(ui, &workspace.state, None),
+        None => Vec::new(),
+    };
+    let bars_moved = bars
+        .iter()
+        .map(skin::TabBar::dock_layout)
+        .ne(bars_after.iter().map(skin::TabBar::dock_layout));
+    let bars = bars_after;
     for h in &hits {
         let title = h.id.spec().title;
         let selected = active.contains(&h.id);
         h.response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, !modal, selected, title)
         });
+        // Su lugar, el de la del kit (en egui_dock la última puede llevar de más).
+        if let Some(row) = bars.iter().find_map(|b| b.row(h.id)) {
+            ctx.accesskit_node_builder(h.response.id, |node| {
+                node.set_bounds(egui::accesskit::Rect {
+                    x0: row.min.x.into(),
+                    y0: row.min.y.into(),
+                    x1: row.max.x.into(),
+                    y1: row.max.y.into(),
+                });
+            });
+        }
     }
     if let Some(skin) = skin {
-        skin::paint_tabs(ui, skin, &workspace.state, &hits, dock_id());
-        closed.extend(close_marks(ui, &workspace.state, &hits, modal));
+        skin::paint_tabs(ui, skin, &workspace.state, (&hits, &bars), dock_id());
+        closed.extend(close_marks(ui, &bars, &hits, modal));
+        tab_arrows(ui, skin, &bars, &hits, modal);
         // La línea de arriba de cada divisor vertical que llega a la barra de opciones cruza su
         // brillo (como los separadores de la barra y el borde del panel derecho de antes).
         paint_crossings(
@@ -936,7 +1015,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     // Si un panel se soltó en otro grupo (o junto al lienzo), la barra de algún grupo cambia: este
     // frame ya se dibujó con la de antes, así que se descarta y se vuelve a dibujar (sin el
     // parpadeo de un frame).
-    changed |= workspace.refresh_tab_bars();
+    changed |= workspace.refresh_tab_bars() | bars_moved;
     if changed {
         ctx.request_discard("workspace layout changed");
     }
@@ -1268,9 +1347,10 @@ fn collapse_buttons(
         } else {
             &mut *ui
         };
-        let response = ui
-            .interact(rect, id, egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let mut response = ui.interact(rect, id, egui::Sense::click());
+        if !modal {
+            response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !modal, COLLAPSE));
         let hovered = !modal && response.hovered();
@@ -1301,11 +1381,11 @@ fn collapse_buttons(
 }
 
 /// La × del kit de cada pestaña que se puede cerrar, encima de la de egui_dock (en su capa):
-/// devuelve los paneles cuya × se apretó. Solo las que se ven enteras en su barra (con muchas
-/// pestañas, las de la punta quedan cortadas o fuera).
+/// devuelve los paneles cuya × se apretó. Solo las de las pestañas que se ven en su barra (ver
+/// `skin::TabBar`) y en las que cabe.
 fn close_marks(
     ui: &mut egui::Ui,
-    state: &DockState<PanelId>,
+    bars: &[skin::TabBar],
     hits: &[skin::TabHit],
     modal: bool,
 ) -> Vec<PanelId> {
@@ -1315,17 +1395,13 @@ fn close_marks(
         if item.mark == kit::tabs::TabMark::None || skin::is_dragged_tab(&h.response) {
             continue;
         }
-        let shown = state
-            .find_tab(&h.id)
-            .and_then(|path| state.leaf(path.node_path()).ok())
-            .is_some_and(|leaf| {
-                let mark = kit::tabs::mark_rect(skin::tab_row(h.response.rect));
-                skin::visible_tabs(leaf.rect).contains_rect(mark)
-            });
-        if !shown {
+        let Some(mark) = bars.iter().find_map(|b| {
+            let i = b.tabs.iter().position(|&t| t == h.id)?;
+            skin::tab_mark(b, i)
+        }) else {
             continue;
-        }
-        let mark = kit::tabs::mark_rect(skin::tab_row(h.response.rect)).expand(2.0);
+        };
+        let mark = mark.expand(2.0);
         let mut layer = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt(("workspace_close", h.id.key()))
@@ -1334,13 +1410,14 @@ fn close_marks(
         );
         layer.set_clip_rect(mark);
         let label = format!("{} {}", item.close.label(), item.label);
-        let response = layer
-            .interact(
-                mark,
-                egui::Id::new(("workspace_close", h.id.key())),
-                egui::Sense::click(),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let mut response = layer.interact(
+            mark,
+            egui::Id::new(("workspace_close", h.id.key())),
+            egui::Sense::click(),
+        );
+        if !modal {
+            response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !modal, &label));
         if !modal && response.clicked() {
@@ -1350,6 +1427,258 @@ fn close_marks(
     closed
 }
 
+/// Lo que corrió la rueda este frame sobre lo que está bajo el puntero (−1: hacia atrás, 1: hacia
+/// adelante; como en `kit::tabs::tab_strip`), si la movió.
+fn tab_wheel(ctx: &egui::Context) -> Option<(egui::Pos2, i32)> {
+    let pointer = ctx.input(|i| i.pointer.hover_pos())?;
+    let scroll: f32 = ctx.input(|i| {
+        i.raw
+            .events
+            .iter()
+            .map(|e| match e {
+                egui::Event::MouseWheel { delta, .. } => delta.y + delta.x,
+                _ => 0.0,
+            })
+            .sum()
+    });
+    match scroll {
+        s if s > 0.0 => Some((pointer, -1)),
+        s if s < 0.0 => Some((pointer, 1)),
+        _ => None,
+    }
+}
+
+/// Las flechas del kit de cada barra que no cabe (ver `skin::TabBar`), en la capa de su barra: de
+/// a una pestaña hacia atrás o hacia adelante (desde el frame siguiente). Antes, entre la última
+/// que se ve y el «, un widget que se queda con el puntero: ahí egui_dock tiene lo que se pasa de
+/// la siguiente (o lo de más de la última), que no se ve y no tiene que recibir el clic. Con un
+/// diálogo modal, apagadas.
+fn tab_arrows(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    bars: &[skin::TabBar],
+    hits: &[skin::TabHit],
+    modal: bool,
+) {
+    use kit::tabs::ARROW_SIZE;
+    for bar in bars {
+        let Some(arrows) = bar.arrows else { continue };
+        let Some(layer) = bar
+            .tabs
+            .iter()
+            .find_map(|&t| hits.iter().find(|h| h.id == t))
+            .map(|h| h.response.layer_id)
+        else {
+            continue;
+        };
+        let last = bar.shown.last().map_or(bar.room.left(), |(_, r)| r.right());
+        let rest = bar.room.with_min_x(last.min(arrows.left()));
+        let mut ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("workspace_tab_arrows", bar.path.surface, bar.path.node))
+                .layer_id(layer)
+                .max_rect(rest),
+        );
+        ui.set_clip_rect(rest);
+        let _ = ui.interact(
+            rest,
+            egui::Id::new(("workspace_tab_rest", bar.path.surface, bar.path.node)),
+            egui::Sense::click_and_drag(),
+        );
+        let halves = [
+            egui::Rect::from_min_size(arrows.min, egui::Vec2::splat(ARROW_SIZE)),
+            egui::Rect::from_min_size(
+                arrows.min + egui::vec2(ARROW_SIZE - 1.0, 0.0),
+                egui::Vec2::splat(ARROW_SIZE),
+            ),
+        ];
+        let mut states = [(false, false); 2];
+        let mut offset = bar.offset;
+        for (i, (rect, label)) in halves
+            .into_iter()
+            .zip(["Previous tabs", "Next tabs"])
+            .enumerate()
+        {
+            let can = !modal
+                && if i == 0 {
+                    bar.can_prev()
+                } else {
+                    bar.can_next()
+                };
+            let response = ui.interact(
+                rect,
+                egui::Id::new(("workspace_tab_arrow", bar.path.surface, bar.path.node, i)),
+                egui::Sense::click(),
+            );
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, can, label));
+            states[i] = (can && response.hovered(), can);
+            if can && response.clicked() {
+                offset = if i == 0 {
+                    offset.saturating_sub(1)
+                } else {
+                    (offset + 1).min(bar.last_offset)
+                };
+            }
+        }
+        // Solo en la primera pasada del frame (si se descarta, la otra ve el mismo clic).
+        if offset != bar.offset && ui.ctx().current_pass_index() == 0 {
+            let memory = skin::tabs_offset_id(bar.path);
+            let front = ui.data(|d| d.get_temp::<(usize, Option<PanelId>)>(memory));
+            ui.data_mut(|d| d.insert_temp(memory, (offset, front.and_then(|f| f.1))));
+            ui.ctx().request_repaint();
+        }
+        let shapes = kit::tabs::arrows_shapes(&ui, skin, arrows, states[0], states[1]);
+        ui.painter().extend(shapes);
+    }
+}
+
+/// Con un diálogo modal, lo de las ventanas flotantes que se agarraría (ver el modal en
+/// [`show`]): egui_dock las arma con su propia `egui::Window`, que no hereda lo apagado del `Ui` del
+/// `DockArea`, así que encima de lo suyo, en su capa, va un widget que se queda con el puntero sin
+/// hacer nada (registrado después, le gana a lo de debajo). En una ventana con Color o con el
+/// Preview (que un diálogo no apaga), solo lo que la mueve, la cambia de tamaño, la parte o la
+/// acopla: su marco (y el borde de afuera del que se agarra), sus barras de pestañas, sus franjas
+/// de agarre (con Pixel UI) y sus divisores. Cualquier otra, entera: lo de adentro ya va apagado y
+/// arrastrarlo movería la ventana.
+fn modal_shields(ui: &mut egui::Ui, skin: Option<&Skin>, state: &DockState<PanelId>) {
+    let ctx = ui.ctx().clone();
+    let grab = ctx.global_style().interaction.resize_grab_radius_side;
+    for (surface, s) in state.iter_surfaces_indexed() {
+        let Some(tree) = s.node_tree().filter(|_| !surface.is_main()) else {
+            continue;
+        };
+        let Some(area) = ctx.memory(|m| m.area_rect(skin::window_area_id(surface))) else {
+            continue;
+        };
+        let outer = area.expand(grab);
+        let live = tree
+            .iter()
+            .filter_map(|n| n.tabs())
+            .flatten()
+            .any(|t| matches!(t, PanelId::Color | PanelId::Preview));
+        let mut rects = Vec::new();
+        if !live {
+            rects.push(outer);
+        } else {
+            // El marco (con el borde de afuera): de lo de afuera a lo del árbol.
+            let inner = tree
+                .root_node()
+                .and_then(|n| n.rect())
+                .filter(|r| r.is_positive())
+                .unwrap_or(area);
+            rects.extend([
+                outer.with_max_y(inner.top()),
+                outer.with_min_y(inner.bottom()),
+                egui::Rect::from_x_y_ranges(outer.left()..=inner.left(), inner.y_range()),
+                egui::Rect::from_x_y_ranges(inner.right()..=outer.right(), inner.y_range()),
+            ]);
+            for (i, node) in tree.iter().enumerate() {
+                let n = NodeIndex(i);
+                match node {
+                    egui_dock::Node::Leaf(leaf) if leaf.tab_bar_hidden => {
+                        if skin.is_some() {
+                            rects.push(egui::Rect::from_min_size(
+                                leaf.rect.min,
+                                egui::vec2(leaf.rect.width(), skin::GRAB_STRIP),
+                            ));
+                        }
+                    }
+                    egui_dock::Node::Leaf(leaf) if leaf.viewport.is_positive() => {
+                        rects.push(leaf.rect.with_max_y(leaf.viewport.top()));
+                    }
+                    egui_dock::Node::Horizontal(split) => {
+                        if let (Some(a), Some(b)) = (tree[n.left()].rect(), tree[n.right()].rect())
+                        {
+                            let gap = egui::Rect::from_x_y_ranges(
+                                a.right()..=b.left(),
+                                split.rect.y_range(),
+                            );
+                            rects.push(gap.expand2(egui::vec2(skin::SEPARATOR_EXTRA, 0.0)));
+                        }
+                    }
+                    egui_dock::Node::Vertical(split) => {
+                        if let (Some(a), Some(b)) = (tree[n.left()].rect(), tree[n.right()].rect())
+                        {
+                            let gap = egui::Rect::from_x_y_ranges(
+                                split.rect.x_range(),
+                                a.bottom()..=b.top(),
+                            );
+                            rects.push(gap.expand2(egui::vec2(0.0, skin::SEPARATOR_EXTRA)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let layer = egui::LayerId::new(egui::Order::Middle, skin::window_area_id(surface));
+        let mut shield = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("workspace_modal_shield", surface))
+                .layer_id(layer)
+                .max_rect(outer),
+        );
+        shield.set_clip_rect(outer);
+        for (k, rect) in rects.into_iter().enumerate() {
+            if rect.is_positive() {
+                let id = egui::Id::new(("workspace_modal_shield", surface, k));
+                let _ = shield.interact(rect, id, egui::Sense::click_and_drag());
+            }
+        }
+    }
+}
+
+/// Lo que el `DockArea` cambia con el puntero, el teclado o un clic de accesibilidad: la fracción
+/// de cada split, la pestaña al frente de cada grupo y el grupo con el foco. Con un diálogo modal
+/// se toma antes y se repone después (ver el modal en [`show`]): nada de eso cambia aunque algo se
+/// cuele (en una ventana flotante, un clic de accesibilidad no pasa por `modal_shields`).
+struct Frozen {
+    splits: Vec<(egui_dock::NodePath, f32)>,
+    active: Vec<(egui_dock::NodePath, egui_dock::TabIndex)>,
+    focused: Option<egui_dock::NodePath>,
+}
+
+impl Frozen {
+    fn take(state: &DockState<PanelId>) -> Frozen {
+        Frozen {
+            splits: state
+                .iter_all_nodes()
+                .filter_map(|(path, node)| match node {
+                    egui_dock::Node::Horizontal(s) | egui_dock::Node::Vertical(s) => {
+                        Some((path, s.fraction))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            active: state
+                .iter_leaves()
+                .map(|(path, leaf)| (path, leaf.active))
+                .collect(),
+            focused: state.focused_leaf(),
+        }
+    }
+
+    fn restore(self, state: &mut DockState<PanelId>) {
+        for (path, fraction) in self.splits {
+            if let Ok(egui_dock::Node::Horizontal(s) | egui_dock::Node::Vertical(s)) =
+                state.node_mut(path)
+            {
+                s.fraction = fraction;
+            }
+        }
+        for (path, active) in self.active {
+            if let Ok(leaf) = state.leaf_mut(path)
+                && active.0 < leaf.tabs.len()
+            {
+                leaf.active = active;
+            }
+        }
+        if let Some(path) = self.focused {
+            state.set_focused_node_and_surface(path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use eframe::egui;
@@ -1357,7 +1686,9 @@ mod tests {
     use egui_dock::NodePath;
 
     use super::*;
-    use crate::workspace::test_util::{button, click, frame, frames, test_app};
+    use crate::workspace::test_util::{
+        button, click, click_at, drag_to, frame, frame_in, frames, frames_in, node_rect, test_app,
+    };
     use crate::workspace::{DockTarget, Workspace};
 
     #[test]
@@ -1487,6 +1818,612 @@ mod tests {
         assert!(app.canvas_size.is_some(), "OpenCanvasSize applied");
         // Y el workspace volvió a la app.
         assert!(app.workspace.docked(PanelId::Artboards));
+    }
+
+    /// La ventana de los tests del modal.
+    const SIZE: egui::Vec2 = egui::vec2(1280.0, 800.0);
+
+    /// Lo que se ve del acomodo: cada grupo (su superficie, sus pestañas, la activa y su rect), el
+    /// rect de cada ventana flotante, las tiras, el ancho de la columna, el flyout abierto y si
+    /// hay un menú abierto.
+    fn snapshot(ctx: &egui::Context, app: &ChimpApp) -> String {
+        let w = &app.workspace;
+        let leaves: Vec<_> = w
+            .state
+            .iter_leaves()
+            .map(|(path, leaf)| (path.surface, leaf.tabs.clone(), leaf.active.0, leaf.rect))
+            .collect();
+        let windows: Vec<_> = PanelId::ALL
+            .iter()
+            .filter(|&&p| w.floating(p))
+            .map(|&p| (p, w.window_rect(ctx, p)))
+            .collect();
+        let menu = egui::Popup::is_any_open(ctx);
+        format!(
+            "{leaves:?}\n{windows:?}\n{:?}\n{:?} {:?} menu {menu}",
+            w.strips,
+            app.view.palette_width,
+            crate::dock::open_panel(ctx),
+        )
+    }
+
+    /// Lo que se prueba con un diálogo abierto: un nombre, el acomodo de antes y lo que hace el
+    /// usuario (con la salida del último frame).
+    struct ModalCase {
+        name: &'static str,
+        /// Solo con Pixel UI (sin él no hay franja de agarre).
+        pixel_only: bool,
+        setup: fn(&mut ChimpApp),
+        act: fn(&egui::Context, &mut ChimpApp, &egui::FullOutput, egui::Vec2),
+        /// La ventana.
+        size: egui::Vec2,
+    }
+
+    /// Cada caso con Pixel UI y sin él, sin diálogo y con uno abierto (`ChimpApp::is_modal`): sin
+    /// diálogo lo que hace el usuario cambia el acomodo (si no, el caso no probaría nada); con
+    /// uno, nada cambia.
+    fn assert_blocked_by_a_modal(cases: &[ModalCase]) {
+        for case in cases {
+            for pixel in [true, false] {
+                if case.pixel_only && !pixel {
+                    continue;
+                }
+                for modal in [false, true] {
+                    let mut app = test_app();
+                    app.view.pixel_ui = pixel;
+                    (case.setup)(&mut app);
+                    let ctx = egui::Context::default();
+                    ctx.enable_accesskit();
+                    let size = case.size;
+                    let mut out = frames_in(&ctx, &mut app, size);
+                    if modal {
+                        app.show_message("Test", "A modal dialog");
+                        out = frames_in(&ctx, &mut app, size);
+                        assert!(app.is_modal());
+                    }
+                    let before = snapshot(&ctx, &app);
+                    (case.act)(&ctx, &mut app, &out, size);
+                    frames_in(&ctx, &mut app, size);
+                    let after = snapshot(&ctx, &app);
+                    let what = format!("{}, pixel {pixel}, modal {modal}", case.name);
+                    if modal {
+                        assert_eq!(after, before, "{what}: nothing changes");
+                    } else {
+                        assert_ne!(after, before, "{what}: without a dialog it changes");
+                    }
+                }
+            }
+        }
+    }
+
+    fn leaf(app: &ChimpApp, id: PanelId) -> egui::Rect {
+        app.workspace
+            .leaf_rect(id)
+            .unwrap_or_else(|| panic!("{id:?} in the tree"))
+    }
+
+    /// Un clic con el botón principal en el centro del nodo `label` de `out`.
+    fn click_node(
+        ctx: &egui::Context,
+        app: &mut ChimpApp,
+        out: &egui::FullOutput,
+        size: egui::Vec2,
+        label: &str,
+    ) {
+        let rect = node_rect(out, label).unwrap_or_else(|| {
+            let all = crate::workspace::test_util::buttons(out);
+            panic!("no {label:?} in {all:?}")
+        });
+        click_at(ctx, app, rect.center(), egui::PointerButton::Primary, size);
+    }
+
+    /// El nombre del ícono de `id` en la tira: su título con Pixel UI; sin él, lo que dice el
+    /// botón de egui.
+    fn icon_label(app: &ChimpApp, id: PanelId) -> &'static str {
+        if app.pixel.skin().is_some() {
+            id.spec().title
+        } else {
+            id.spec().plain
+        }
+    }
+
+    /// Library con Slices en pestañas, flotando (Slices al frente).
+    fn library_and_slices_floating(app: &mut ChimpApp) {
+        app.workspace
+            .float(PanelId::Library, egui::pos2(320.0, 120.0));
+        let (s, n) = app.workspace.leaf_of(PanelId::Library).unwrap();
+        app.workspace.dock(PanelId::Slices, DockTarget::Leaf(s, n));
+    }
+
+    /// Lo mismo, una encima de la otra en su ventana.
+    fn library_over_slices_floating(app: &mut ChimpApp) {
+        app.workspace
+            .float(PanelId::Library, egui::pos2(320.0, 120.0));
+        let (s, n) = app.workspace.leaf_of(PanelId::Library).unwrap();
+        app.workspace.dock(
+            PanelId::Slices,
+            DockTarget::Split(s, n, egui_dock::Split::Below),
+        );
+    }
+
+    /// La × de la pestaña `id` (con Pixel UI, la del kit; sin él, la de egui_dock, al final de
+    /// su pestaña).
+    fn close_tab(
+        ctx: &egui::Context,
+        app: &mut ChimpApp,
+        out: &egui::FullOutput,
+        size: egui::Vec2,
+        id: PanelId,
+    ) {
+        let title = id.spec().title;
+        let at = if app.pixel.skin().is_some() {
+            node_rect(out, &format!("Close {title}")).unwrap().center()
+        } else {
+            let tab = node_rect(out, title).unwrap();
+            egui::pos2(tab.right() - 12.0, tab.center().y)
+        };
+        click_at(ctx, app, at, egui::PointerButton::Primary, size);
+    }
+
+    #[test]
+    fn with_a_modal_dialog_the_dividers_do_not_move() {
+        assert_blocked_by_a_modal(&[
+            ModalCase {
+                name: "the divider between Color and Library",
+                pixel_only: false,
+                setup: |app| {
+                    let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+                    let below = DockTarget::Split(s, n, egui_dock::Split::Below);
+                    app.workspace.dock(PanelId::Library, below);
+                },
+                act: |ctx, app, _, size| {
+                    let (color, below) = (leaf(app, PanelId::Color), leaf(app, PanelId::Library));
+                    let at = egui::pos2(color.center().x, (color.bottom() + below.top()) / 2.0);
+                    drag_to(ctx, app, (at, at + egui::vec2(0.0, 30.0)), size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "the divider of the right column",
+                pixel_only: false,
+                setup: |_| {},
+                act: |ctx, app, _, size| {
+                    let (canvas, color) = (leaf(app, PanelId::Canvas), leaf(app, PanelId::Color));
+                    let at = egui::pos2((canvas.right() + color.left()) / 2.0, color.center().y);
+                    drag_to(ctx, app, (at, at - egui::vec2(30.0, 0.0)), size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "a divider in a floating window",
+                pixel_only: false,
+                setup: library_over_slices_floating,
+                act: |ctx, app, _, size| {
+                    let (top, below) = (leaf(app, PanelId::Library), leaf(app, PanelId::Slices));
+                    let at = egui::pos2(top.center().x, (top.bottom() + below.top()) / 2.0);
+                    drag_to(ctx, app, (at, at + egui::vec2(0.0, 20.0)), size);
+                },
+                size: SIZE,
+            },
+        ]);
+    }
+
+    #[test]
+    fn with_a_modal_dialog_the_tabs_do_not_switch_close_or_move() {
+        assert_blocked_by_a_modal(&[
+            ModalCase {
+                name: "clicking an inactive tab",
+                pixel_only: false,
+                setup: |app| app.workspace = Workspace::demo("library-tab").unwrap(),
+                act: |ctx, app, out, size| click_node(ctx, app, out, size, "Color"),
+                size: SIZE,
+            },
+            ModalCase {
+                name: "an accessibility click on an inactive tab",
+                pixel_only: false,
+                setup: |app| app.workspace = Workspace::demo("library-tab").unwrap(),
+                act: |ctx, app, out, size| {
+                    let node = button(out, "Color").expect("the Color tab");
+                    frame_in(ctx, app, vec![click(node)], size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "the × of a tab",
+                pixel_only: false,
+                setup: |app| app.workspace = Workspace::demo("library-tab").unwrap(),
+                act: |ctx, app, out, size| close_tab(ctx, app, out, size, PanelId::Library),
+                size: SIZE,
+            },
+            ModalCase {
+                name: "dragging a tab onto the canvas",
+                pixel_only: false,
+                setup: |app| app.workspace = Workspace::demo("library-tab").unwrap(),
+                act: |ctx, app, out, size| {
+                    let tab = node_rect(out, "Library").unwrap().center();
+                    let canvas = leaf(app, PanelId::Canvas).center();
+                    drag_to(ctx, app, (tab, canvas), size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "clicking an inactive tab of a floating window",
+                pixel_only: false,
+                setup: library_and_slices_floating,
+                act: |ctx, app, out, size| click_node(ctx, app, out, size, "Library"),
+                size: SIZE,
+            },
+            ModalCase {
+                name: "an accessibility click on a tab of a floating window",
+                pixel_only: false,
+                setup: library_and_slices_floating,
+                act: |ctx, app, out, size| {
+                    let node = button(out, "Library").expect("the Library tab");
+                    frame_in(ctx, app, vec![click(node)], size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "the × of a tab of a floating window",
+                pixel_only: false,
+                setup: library_and_slices_floating,
+                act: |ctx, app, out, size| close_tab(ctx, app, out, size, PanelId::Slices),
+                size: SIZE,
+            },
+        ]);
+    }
+
+    #[test]
+    fn with_a_modal_dialog_the_strip_does_nothing() {
+        assert_blocked_by_a_modal(&[
+            ModalCase {
+                name: "clicking a strip icon",
+                pixel_only: false,
+                setup: |_| {},
+                act: |ctx, app, out, size| {
+                    let label = icon_label(app, PanelId::Lospec);
+                    click_node(ctx, app, out, size, label);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "dragging a strip icon onto the canvas",
+                pixel_only: false,
+                setup: |_| {},
+                act: |ctx, app, out, size| {
+                    let label = icon_label(app, PanelId::Lospec);
+                    let icon = node_rect(out, label).unwrap().center();
+                    let canvas = leaf(app, PanelId::Canvas).center();
+                    drag_to(ctx, app, (icon, canvas), size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "the context menu of a strip icon",
+                pixel_only: false,
+                setup: |_| {},
+                act: |ctx, app, out, size| {
+                    let label = icon_label(app, PanelId::Lospec);
+                    let icon = node_rect(out, label).unwrap().center();
+                    let out = click_at(ctx, app, icon, egui::PointerButton::Secondary, size);
+                    // Abierto (sin diálogo): Dock.
+                    if let Some(dock) = node_rect(&out, crate::dock::MENU_DOCK) {
+                        click_at(ctx, app, dock.center(), egui::PointerButton::Primary, size);
+                    }
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "More Panels",
+                pixel_only: false,
+                setup: |_| {},
+                // Baja: la tira de la derecha no tiene lugar para todos sus íconos.
+                act: |ctx, app, out, size| {
+                    let more = if app.pixel.skin().is_some() {
+                        crate::dock::MORE
+                    } else {
+                        "»"
+                    };
+                    click_node(ctx, app, out, size, more);
+                },
+                size: egui::vec2(1280.0, 240.0),
+            },
+        ]);
+    }
+
+    #[test]
+    fn with_a_modal_dialog_floating_windows_are_not_dragged_or_docked() {
+        assert_blocked_by_a_modal(&[
+            ModalCase {
+                name: "the grab strip of a lone floating toolbar",
+                pixel_only: true,
+                setup: |app| app.workspace = Workspace::demo("tools-float").unwrap(),
+                act: |ctx, app, _, size| {
+                    let tools = leaf(app, PanelId::Tools);
+                    let at = egui::pos2(tools.center().x, tools.top() + 1.0);
+                    let to = leaf(app, PanelId::Canvas).center();
+                    drag_to(ctx, app, (at, to), size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "the empty end of the tab bar of a floating window",
+                pixel_only: false,
+                setup: |app| {
+                    app.workspace
+                        .float(PanelId::Library, egui::pos2(320.0, 120.0))
+                },
+                act: |ctx, app, out, size| {
+                    let tab = node_rect(out, "Library").unwrap();
+                    let at = egui::pos2(tab.right() + 20.0, tab.center().y);
+                    drag_to(ctx, app, (at, at + egui::vec2(40.0, 30.0)), size);
+                },
+                size: SIZE,
+            },
+            ModalCase {
+                name: "the grab strip of the Preview in its window",
+                pixel_only: true,
+                setup: |app| app.view.preview = true,
+                act: |ctx, app, _, size| {
+                    let preview = leaf(app, PanelId::Preview);
+                    let at = egui::pos2(preview.center().x, preview.top() + 1.0);
+                    let to = leaf(app, PanelId::Color).center();
+                    drag_to(ctx, app, (at, to), size);
+                },
+                size: SIZE,
+            },
+        ]);
+    }
+
+    #[test]
+    fn with_a_modal_dialog_the_preview_window_still_moves_from_its_title() {
+        // Como su ventana de antes (y como sus controles): un diálogo no la apaga.
+        for pixel in [true, false] {
+            let mut app = test_app();
+            app.view.pixel_ui = pixel;
+            app.view.preview = true;
+            let ctx = egui::Context::default();
+            frames_in(&ctx, &mut app, SIZE);
+            app.show_message("Test", "A modal dialog");
+            frames_in(&ctx, &mut app, SIZE);
+            let window = app.workspace.window_rect(&ctx, PanelId::Preview).unwrap();
+            // En su barra de título (sin Pixel UI, la de la `egui::Window` de antes).
+            let title = if pixel { 9.0 } else { 17.0 };
+            let at = egui::pos2(window.left() + 40.0, window.top() + title);
+            drag_to(&ctx, &mut app, (at, at - egui::vec2(30.0, 20.0)), SIZE);
+            frames_in(&ctx, &mut app, SIZE);
+            let moved = app.workspace.window_rect(&ctx, PanelId::Preview).unwrap();
+            assert_eq!(
+                moved.min,
+                window.min - egui::vec2(30.0, 20.0),
+                "pixel {pixel}"
+            );
+            assert!(app.workspace.floating(PanelId::Preview));
+        }
+    }
+
+    /// Color con siete paneles más en su grupo, en la columna: sus pestañas no caben.
+    fn many_tabs(app: &mut ChimpApp) {
+        let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+        for id in [
+            PanelId::Library,
+            PanelId::Slices,
+            PanelId::Artboards,
+            PanelId::Lospec,
+            PanelId::Groom,
+            PanelId::Lumen,
+            PanelId::Font,
+        ] {
+            app.workspace.dock(id, DockTarget::Leaf(s, n));
+        }
+        // Color al frente (la primera): las de la punta no se ven.
+        let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+        let path = NodePath {
+            surface: s,
+            node: n,
+        };
+        app.workspace.state.leaf_mut(path).unwrap().active = egui_dock::TabIndex(0);
+    }
+
+    /// Las × de las pestañas que se ven en `out`, de izquierda a derecha.
+    fn close_marks_in(out: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        let mut marks: Vec<(String, egui::Rect)> = crate::workspace::test_util::buttons(out)
+            .into_iter()
+            .filter(|l| l.starts_with("Close "))
+            .filter_map(|l| node_rect(out, &l).map(|r| (l, r)))
+            .collect();
+        marks.sort_by(|a, b| a.1.left().total_cmp(&b.1.left()));
+        marks
+    }
+
+    #[test]
+    fn many_tabs_in_a_narrow_group_page_with_the_kit_arrows() {
+        let mut app = test_app();
+        many_tabs(&mut app);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut out = frames_in(&ctx, &mut app, SIZE);
+        let group = leaf(&app, PanelId::Color);
+        let collapse = node_rect(&out, COLLAPSE).expect("the « of the group");
+        let prev = node_rect(&out, "Previous tabs").expect("the kit arrows");
+        let next = node_rect(&out, "Next tabs").expect("the kit arrows");
+        // Las del kit (12 × 12, juntas 23), en la fila de las flechas de la barra, a la izquierda
+        // del « y sin tocarlo.
+        assert_eq!(prev.size(), egui::Vec2::splat(kit::tabs::ARROW_SIZE));
+        assert_eq!(next.left(), prev.left() + kit::tabs::ARROW_SIZE - 1.0);
+        assert_eq!(prev.top(), group.top() + kit::tabs::ARROWS_TOP);
+        assert!(next.right() < collapse.left(), "{next:?} {collapse:?}");
+        let first = close_marks_in(&out);
+        assert!(!first.is_empty(), "some tabs are seen");
+        // De ida con la de adelante hasta que se ve la última (FontForge) y de vuelta con la de
+        // atrás: cada × que se ve, entero antes de las flechas (con su aire) y nunca bajo el «.
+        let check = |out: &egui::FullOutput, step: &str| {
+            for (label, mark) in close_marks_in(out) {
+                assert!(
+                    mark.right() <= prev.left() - kit::tabs::GAP && !mark.intersects(collapse),
+                    "{step}: {label} at {mark:?}, arrows at {prev:?}"
+                );
+            }
+        };
+        check(&out, "at first");
+        let mut steps = 0;
+        while node_rect(&out, "Close FontForge").is_none() {
+            assert!(steps < 8, "the last tab comes into view");
+            click_at(
+                &ctx,
+                &mut app,
+                next.center(),
+                egui::PointerButton::Primary,
+                SIZE,
+            );
+            out = frames_in(&ctx, &mut app, SIZE);
+            check(&out, &format!("forward {steps}"));
+            steps += 1;
+        }
+        assert!(steps > 0, "it was not in view at first");
+        // La última, a la vista: un clic en ella la pone al frente.
+        let font = node_rect(&out, "Close FontForge").unwrap();
+        let tab = egui::pos2(font.left() - 12.0, font.center().y);
+        click_at(&ctx, &mut app, tab, egui::PointerButton::Primary, SIZE);
+        let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+        assert_eq!(
+            app.workspace.state_leaf_tabs(s, n).unwrap().1,
+            PanelId::Font
+        );
+        out = frames_in(&ctx, &mut app, SIZE);
+        check(&out, "with the last one in front");
+        // Y de vuelta al principio.
+        for _ in 0..steps {
+            click_at(
+                &ctx,
+                &mut app,
+                prev.center(),
+                egui::PointerButton::Primary,
+                SIZE,
+            );
+        }
+        out = frames_in(&ctx, &mut app, SIZE);
+        check(&out, "back");
+        assert_eq!(close_marks_in(&out), first, "the first ones again");
+    }
+
+    #[test]
+    fn the_wheel_over_tabs_that_do_not_fit_pages_one_tab_per_notch() {
+        let mut app = test_app();
+        many_tabs(&mut app);
+        let ctx = egui::Context::default();
+        frames_in(&ctx, &mut app, SIZE);
+        let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+        let path = NodePath { surface: s, node: n };
+        let offset = |ctx: &egui::Context| {
+            ctx.data(|d| d.get_temp::<(usize, Option<PanelId>)>(skin::tabs_offset_id(path)))
+                .map(|(o, _)| o)
+        };
+        assert_eq!(offset(&ctx), Some(0));
+        let bar = leaf(&app, PanelId::Color);
+        let at = egui::pos2(bar.left() + 20.0, bar.top() + 6.0);
+        let wheel = |dy: f32| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, dy),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        };
+        frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(at)], SIZE);
+        frame_in(&ctx, &mut app, vec![wheel(-1.0)], SIZE);
+        frames_in(&ctx, &mut app, SIZE);
+        assert_eq!(offset(&ctx), Some(1), "one tab forward");
+        frame_in(&ctx, &mut app, vec![wheel(1.0)], SIZE);
+        frames_in(&ctx, &mut app, SIZE);
+        assert_eq!(offset(&ctx), Some(0), "and back");
+    }
+
+    #[test]
+    fn a_tab_brought_to_the_front_is_paged_into_view() {
+        // Window → panel (o Lospec) pone al frente una pestaña que no se ve: las flechas la traen.
+        let mut app = test_app();
+        many_tabs(&mut app);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let out = frames_in(&ctx, &mut app, SIZE);
+        assert!(node_rect(&out, "Close FontForge").is_none(), "out of view");
+        app.workspace.bring_forward(&ctx, PanelId::Font);
+        let out = frames_in(&ctx, &mut app, SIZE);
+        let prev = node_rect(&out, "Previous tabs").unwrap();
+        let mark = node_rect(&out, "Close FontForge").expect("in view");
+        assert!(mark.right() <= prev.left() - kit::tabs::GAP, "{mark:?}");
+    }
+
+    /// Medición (no revisa nada): lo que tarda `show` por frame mientras se arrastra un divisor 60
+    /// frames (uno por punto), con Essentials y tres paneles acoplados más (Library en pestaña con
+    /// Color, Groom debajo de ellos y Lumen en una columna entre el lienzo y la de Color), con y
+    /// sin Pixel UI. Se corre a mano, en release:
+    /// `cargo test --release -p cs-ui frame_time -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, run by hand in release"]
+    fn frame_time_while_dragging_a_divider() {
+        for pixel in [true, false] {
+            let mut app = test_app();
+            app.view.pixel_ui = pixel;
+            let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+            app.workspace.dock(PanelId::Library, DockTarget::Leaf(s, n));
+            let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+            let below = DockTarget::Split(s, n, egui_dock::Split::Below);
+            app.workspace.dock(PanelId::Groom, below);
+            let (s, n) = app.workspace.leaf_of(PanelId::Canvas).unwrap();
+            let right = DockTarget::Split(s, n, egui_dock::Split::Right);
+            app.workspace.dock(PanelId::Lumen, right);
+            let ctx = egui::Context::default();
+            frames_in(&ctx, &mut app, SIZE);
+            frames_in(&ctx, &mut app, SIZE);
+            // El divisor entre el lienzo y Lumen, de a un punto a la izquierda.
+            let (canvas, lumen) = (leaf(&app, PanelId::Canvas), leaf(&app, PanelId::Lumen));
+            let from = egui::pos2((canvas.right() + lumen.left()) / 2.0, canvas.center().y);
+            let press = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(from)], SIZE);
+            frame_in(&ctx, &mut app, vec![press(from, true)], SIZE);
+            let mut times = Vec::new();
+            for k in 1..=60 {
+                let at = from - egui::vec2(k as f32, 0.0);
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
+                    events: vec![egui::Event::PointerMoved(at)],
+                    ..Default::default()
+                };
+                let mut took = std::time::Duration::ZERO;
+                let mut output = ctx.run_ui(input, |ui| {
+                    app.pixel.update(ui.ctx(), &app.view);
+                    app.begin_panel_frame();
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let start = std::time::Instant::now();
+                        show(&mut app, ui, false);
+                        took += start.elapsed();
+                    });
+                });
+                output.textures_delta.clear();
+                times.push(took.as_secs_f64() * 1000.0);
+            }
+            frame_in(&ctx, &mut app, vec![press(from, false)], SIZE);
+            assert!(
+                leaf(&app, PanelId::Canvas).right() < canvas.right(),
+                "it was dragged"
+            );
+            times.sort_by(f64::total_cmp);
+            let mean = times.iter().sum::<f64>() / times.len() as f64;
+            eprintln!(
+                "show while dragging (pixel {pixel}): mean {mean:.2} ms, median {:.2} ms, \
+                 p95 {:.2} ms, min {:.2} ms, max {:.2} ms over {} frames",
+                times[times.len() / 2],
+                times[times.len() * 95 / 100],
+                times[0],
+                times[times.len() - 1],
+                times.len()
+            );
+        }
     }
 
     #[test]

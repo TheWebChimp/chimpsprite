@@ -332,6 +332,8 @@ pub(crate) mod testing {
     pub(crate) struct Probe {
         /// Los controles con nombre (botones, casillas, campos, selects, etiquetas) y su rect.
         pub widgets: Vec<(String, Rect)>,
+        /// Qué es cada uno de `widgets` (en el mismo orden).
+        pub roles: Vec<Role>,
         /// Los textos pintados: lo que se ve (con su "…" si no cupo) y el rect de su galley.
         pub texts: Vec<(String, Rect)>,
         /// Las imágenes pintadas (las piezas del skin también): su textura y lo que se ve de
@@ -361,62 +363,74 @@ pub(crate) mod testing {
         ctx.set_fonts(crate::appearance::font_definitions(true));
         crate::appearance::apply_style(&ctx, Some(skin.colors()));
         crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
-        let mut widgets = Vec::new();
+        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
+        let mut probe = frame_at(&ctx, width, &mut draw);
+        for _ in 0..2 {
+            probe = frame_at(&ctx, width, &mut draw);
+        }
+        probe
+    }
+
+    /// Un frame de `ctx` (que ya tiene sus fuentes y su estilo: los de `run_at` o los de la app)
+    /// con `draw` en un `Ui` de `width`, y lo que quedó. Así un barrido de anchos reusa el mismo
+    /// contexto de un ancho al siguiente (como al arrastrar un divisor; ver `width_sweep_tests`).
+    pub(crate) fn frame_at(
+        ctx: &egui::Context,
+        width: f32,
+        mut draw: impl FnMut(&mut Ui),
+    ) -> Probe {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(2000.0, 2000.0))),
+            // Las texturas grandes que acepta la app (las muestras de una fuente, por ejemplo).
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(width, 1900.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.set_width(width);
+                draw(ui);
+            });
+        });
+        // Nadie sube texturas aquí: egui exige descartar lo pendiente.
+        output.textures_delta.clear();
         let mut texts = Vec::new();
         let mut images = Vec::new();
-        let mut disabled = Vec::new();
-        // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
-        for _ in 0..3 {
-            let input = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(2000.0, 2000.0))),
-                // Las texturas grandes que acepta la app (las muestras de una fuente, por ejemplo).
-                max_texture_side: Some(8192),
-                ..Default::default()
-            };
-            let mut output = ctx.run_ui(input, |ui| {
-                let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(width, 1900.0));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                    ui.set_width(width);
-                    draw(ui);
-                });
-            });
-            // Nadie sube texturas aquí: egui exige descartar lo pendiente.
-            output.textures_delta.clear();
-            texts.clear();
-            images.clear();
-            for clipped in &output.shapes {
-                collect_texts(&clipped.shape, &mut texts);
-                collect_images(&clipped.shape, clipped.clip_rect, &mut images);
-            }
-            let nodes = output
-                .platform_output
-                .accesskit_update
-                .map(|u| u.nodes)
-                .unwrap_or_default();
-            disabled.clear();
-            widgets = nodes
-                .iter()
-                .filter(|(_, n)| LEAVES.contains(&n.role()))
-                .filter_map(|(_, n)| {
-                    let b = n.bounds()?;
-                    let rect = Rect::from_min_max(
-                        Pos2::new(b.x0 as f32 - 10.0, b.y0 as f32 - 10.0),
-                        Pos2::new(b.x1 as f32 - 10.0, b.y1 as f32 - 10.0),
-                    );
-                    // Las etiquetas llevan su texto en el valor (así las nombra egui).
-                    let name = match n.label() {
-                        Some(label) => label.to_string(),
-                        None => n.value()?.to_string(),
-                    };
-                    if n.is_disabled() {
-                        disabled.push(name.clone());
-                    }
-                    Some((name, rect))
-                })
-                .collect();
+        for clipped in &output.shapes {
+            collect_texts(&clipped.shape, &mut texts);
+            collect_images(&clipped.shape, clipped.clip_rect, &mut images);
         }
+        let nodes = output
+            .platform_output
+            .accesskit_update
+            .map(|u| u.nodes)
+            .unwrap_or_default();
+        let mut disabled = Vec::new();
+        let named: Vec<(String, Rect, Role)> = nodes
+            .iter()
+            .filter(|(_, n)| LEAVES.contains(&n.role()))
+            .filter_map(|(_, n)| {
+                let b = n.bounds()?;
+                let rect = Rect::from_min_max(
+                    Pos2::new(b.x0 as f32 - 10.0, b.y0 as f32 - 10.0),
+                    Pos2::new(b.x1 as f32 - 10.0, b.y1 as f32 - 10.0),
+                );
+                // Las etiquetas llevan su texto en el valor (así las nombra egui).
+                let name = match n.label() {
+                    Some(label) => label.to_string(),
+                    None => n.value()?.to_string(),
+                };
+                if n.is_disabled() {
+                    disabled.push(name.clone());
+                }
+                Some((name, rect, n.role()))
+            })
+            .collect();
+        let roles = named.iter().map(|(_, _, r)| *r).collect();
+        let widgets = named.into_iter().map(|(n, r, _)| (n, r)).collect();
         Probe {
             widgets,
+            roles,
             texts,
             images,
             disabled,

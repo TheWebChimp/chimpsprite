@@ -115,6 +115,8 @@ mod tween_ops;
 mod undo_history;
 mod view;
 mod widgets;
+#[cfg(test)]
+mod width_sweep_tests;
 mod workspace;
 
 use cs_core::{ColorMode, Sprite};

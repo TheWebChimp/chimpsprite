@@ -286,33 +286,7 @@ pub struct Layout {
 pub fn layout(ui: &Ui, strip: &Strip, items: &[TabItem], offset: usize) -> Layout {
     let gap = GAP;
     let n = items.len();
-    let natural: Vec<f32> = items.iter().map(|t| natural_width(ui, t)).collect();
-    let room_all = (strip.right - strip.left - gap * n.saturating_sub(1) as f32)
-        .floor()
-        .max(0.0);
-    // Sin flechas, el mínimo es "..." (y si ni así entran, todas iguales); con flechas, tres
-    // letras y "...".
-    let short = if strip.scroll {
-        ink(ui, &format!("Abc{}", ellipsis()))
-    } else {
-        ink(ui, ellipsis())
-    };
-    let mins: Vec<f32> = items
-        .iter()
-        .zip(&natural)
-        .map(|(t, &w)| w.min(chrome(t) + short))
-        .collect();
-    let min = mins.iter().copied().fold(0.0, f32::max);
-    let fitted = fit_widths(&natural, room_all, min);
-    let widths: Vec<f32> = if strip.scroll {
-        fitted
-            .into_iter()
-            .zip(&mins)
-            .map(|(w, &m)| w.max(m))
-            .collect()
-    } else {
-        fitted
-    };
+    let widths = widths(ui, strip, items);
     let overflow = strip.scroll
         && widths.iter().sum::<f32>() + gap * n.saturating_sub(1) as f32 > strip.right - strip.left;
     let arrows = overflow.then(|| {
@@ -353,6 +327,42 @@ pub fn layout(ui: &Ui, strip: &Strip, items: &[TabItem], offset: usize) -> Layou
         arrows,
         offset,
         last_offset,
+    }
+}
+
+/// El ancho de cada pestaña de `items` en la tira (los que usa [`layout`], de todas, se vean o
+/// no): el justo si entran todas; si no, achicadas parejo (las más anchas primero) hasta "..." o,
+/// con flechas, hasta tres letras y "...". Con ellos un anfitrión que acomoda las pestañas por su
+/// cuenta (el workspace, con las de egui_dock) las pone donde [`layout`].
+pub fn widths(ui: &Ui, strip: &Strip, items: &[TabItem]) -> Vec<f32> {
+    let gap = GAP;
+    let n = items.len();
+    let natural: Vec<f32> = items.iter().map(|t| natural_width(ui, t)).collect();
+    let room_all = (strip.right - strip.left - gap * n.saturating_sub(1) as f32)
+        .floor()
+        .max(0.0);
+    // Sin flechas, el mínimo es "..." (y si ni así entran, todas iguales); con flechas, tres
+    // letras y "...".
+    let short = if strip.scroll {
+        ink(ui, &format!("Abc{}", ellipsis()))
+    } else {
+        ink(ui, ellipsis())
+    };
+    let mins: Vec<f32> = items
+        .iter()
+        .zip(&natural)
+        .map(|(t, &w)| w.min(chrome(t) + short))
+        .collect();
+    let min = mins.iter().copied().fold(0.0, f32::max);
+    let fitted = fit_widths(&natural, room_all, min);
+    if strip.scroll {
+        fitted
+            .into_iter()
+            .zip(&mins)
+            .map(|(w, &m)| w.max(m))
+            .collect()
+    } else {
+        fitted
     }
 }
 

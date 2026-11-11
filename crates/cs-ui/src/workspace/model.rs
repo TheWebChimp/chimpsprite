@@ -660,6 +660,21 @@ impl Workspace {
                 w.to_strip_at(PanelId::Groom, Edge::Left);
             }
             "groom-below" => w.dock(PanelId::Groom, DockTarget::Split(cs, cn, Split::Below)),
+            // Color con siete pestañas más (no caben: las flechas del kit), Color al frente.
+            "many-tabs" => {
+                for id in [
+                    PanelId::Library,
+                    PanelId::Slices,
+                    PanelId::Artboards,
+                    PanelId::Lospec,
+                    PanelId::Groom,
+                    PanelId::Lumen,
+                    PanelId::Font,
+                ] {
+                    w.dock(id, DockTarget::Leaf(surface, node));
+                }
+                let _ = w.focus(PanelId::Color);
+            }
             _ => return None,
         }
         Some(w)
