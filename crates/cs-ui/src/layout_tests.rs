@@ -11947,15 +11947,38 @@ fn an_unreadable_workspace_is_backed_up_once_and_never_overwritten_silently() {
         Some(&unreadable)
     );
     assert_eq!(storage.0.get(crate::WORKSPACE_KEY).cloned(), ours);
-    // Otro ilegible, con un respaldo distinto ya guardado: el respaldo de antes no se pisa.
+    // Otro ilegible, con un respaldo distinto ya guardado: el respaldo de antes no se pisa y el
+    // nuevo va a la siguiente llave libre.
     let other = "(version:100)garbage".to_owned();
-    storage.0.insert(crate::WORKSPACE_KEY.to_owned(), other);
+    storage
+        .0
+        .insert(crate::WORKSPACE_KEY.to_owned(), other.clone());
     let mut app = new_app();
     app.restore_workspace(&storage);
     eframe::App::save(&mut app, &mut storage);
     assert_eq!(
         storage.0.get(crate::WORKSPACE_UNREADABLE_KEY),
         Some(&unreadable)
+    );
+    let second = format!("{}.2", crate::WORKSPACE_UNREADABLE_KEY);
+    assert_eq!(storage.0.get(&second), Some(&other));
+    // Uno de una versión más nueva que sí se lee: se usa, y también se respalda (al guardar se
+    // perdería lo que esta versión no conoce).
+    let mut newer_storage = MemoryStorage::default();
+    eframe::App::save(&mut new_app(), &mut newer_storage);
+    let current = format!("version:{}", crate::workspace::SAVED_VERSION);
+    let newer = newer_storage.0[crate::WORKSPACE_KEY].replacen(&current, "version:99", 1);
+    assert_ne!(newer, newer_storage.0[crate::WORKSPACE_KEY], "{current}");
+    newer_storage
+        .0
+        .insert(crate::WORKSPACE_KEY.to_owned(), newer.clone());
+    let mut app = new_app();
+    app.restore_workspace(&newer_storage);
+    assert!(app.workspace.docked(PanelId::Color));
+    eframe::App::save(&mut app, &mut newer_storage);
+    assert_eq!(
+        newer_storage.0.get(crate::WORKSPACE_UNREADABLE_KEY),
+        Some(&newer)
     );
     // Uno que se lee no deja respaldo.
     let mut clean = MemoryStorage::default();

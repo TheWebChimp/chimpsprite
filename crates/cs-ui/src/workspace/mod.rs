@@ -57,7 +57,7 @@ use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 
 pub(crate) use drop::{drop_target, paint_drop_zone};
-pub(crate) use model::DockTarget;
+pub(crate) use model::{DockTarget, SAVED_VERSION, SavedWorkspace};
 pub(crate) use presets::{FACTORY, Shown, Workspaces};
 pub(crate) use show::show;
 #[cfg(test)]

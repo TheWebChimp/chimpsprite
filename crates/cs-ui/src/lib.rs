@@ -145,8 +145,9 @@ const MASCOT_KEY: &str = "chimpsprite.mascot";
 const GIF_KEY: &str = "chimpsprite.gif";
 /// El acomodo de los paneles (la tira, lo acoplado y lo flotante) y los workspaces con nombre.
 const WORKSPACE_KEY: &str = "chimpsprite.workspace";
-/// Lo que había en `WORKSPACE_KEY` y no se pudo leer (de una versión más nueva o roto), tal cual:
-/// lleva los workspaces con nombre del usuario, que si no se perderían al guardar.
+/// Lo que había en `WORKSPACE_KEY` y no se pudo leer (roto) o es de una versión más nueva, tal
+/// cual: lleva los workspaces con nombre del usuario, que si no se perderían al guardar. Si ya
+/// hay uno distinto, los siguientes van en `.2`, `.3`, …
 const WORKSPACE_UNREADABLE_KEY: &str = "chimpsprite.workspace.unreadable";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
@@ -470,18 +471,29 @@ impl ChimpApp {
     /// El acomodo de los paneles guardado (`WORKSPACE_KEY`) y los workspaces con nombre. Sin él
     /// (una configuración de antes) o ilegible, se queda Essentials de fábrica; de uno que se lee
     /// se descarta lo que no sirva (ver `Workspaces::from_saved`). Lo ilegible se avisa en el log y
-    /// se recuerda tal cual: `save` lo respalda antes de pisar la llave.
+    /// se recuerda tal cual: `save` lo respalda antes de pisar la llave. Lo de una versión más
+    /// nueva que sí se lee se usa, pero también se respalda: al guardar se perdería lo que esta
+    /// versión no conoce.
     fn restore_workspace(&mut self, storage: &dyn eframe::Storage) {
         let Some(text) = storage.get_string(WORKSPACE_KEY) else {
             return;
         };
-        match ron::from_str(&text) {
+        match ron::from_str::<workspace::SavedWorkspace>(&text) {
             Ok(saved) => {
+                if saved.version > workspace::SAVED_VERSION {
+                    log::warn!(
+                        "the saved workspaces come from a newer version ({}): \
+                         a copy is kept under {WORKSPACE_UNREADABLE_KEY}",
+                        saved.version
+                    );
+                    self.unreadable_workspace = Some(text);
+                }
                 (self.workspaces, self.workspace) = workspace::Workspaces::from_saved(saved);
             }
             Err(err) => {
                 log::warn!(
-                    "the saved workspaces cannot be read ({err}): using {}; they are kept                      under {WORKSPACE_UNREADABLE_KEY}",
+                    "the saved workspaces cannot be read ({err}): using {}; \
+                     they are kept under {WORKSPACE_UNREADABLE_KEY}",
                     workspace::FACTORY[0]
                 );
                 self.unreadable_workspace = Some(text);
@@ -490,18 +502,24 @@ impl ChimpApp {
     }
 
     /// Respalda (una vez) lo que no se pudo leer de `WORKSPACE_KEY` en `WORKSPACE_UNREADABLE_KEY`.
-    /// Un respaldo distinto que ya esté ahí no se pisa (el primero es el más viejo: lo del
-    /// usuario antes de que se perdiera nada); se avisa en el log.
+    /// Un respaldo distinto que ya esté ahí no se pisa: este va a la primera llave libre
+    /// `WORKSPACE_UNREADABLE_KEY.2`, `.3`, …, así no se pierde ninguno.
     fn back_up_unreadable_workspace(&mut self, storage: &mut dyn eframe::Storage) {
         let Some(text) = self.unreadable_workspace.take() else {
             return;
         };
-        match storage.get_string(WORKSPACE_UNREADABLE_KEY) {
-            None => storage.set_string(WORKSPACE_UNREADABLE_KEY, text),
-            Some(old) if old == text => {}
-            Some(_) => log::warn!(
-                "an older unreadable workspace is already kept under {WORKSPACE_UNREADABLE_KEY}:                  keeping it; this one is lost: {text}"
-            ),
+        let keys = std::iter::once(WORKSPACE_UNREADABLE_KEY.to_owned())
+            .chain((2..).map(|n| format!("{WORKSPACE_UNREADABLE_KEY}.{n}")));
+        for key in keys {
+            match storage.get_string(&key) {
+                None => {
+                    log::warn!("the unreadable workspaces are kept under {key}");
+                    storage.set_string(&key, text);
+                    return;
+                }
+                Some(old) if old == text => return,
+                Some(_) => {}
+            }
         }
     }
 
