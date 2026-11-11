@@ -267,6 +267,8 @@ pub struct ChimpApp {
     panels_drawn: Vec<panel_registry::PanelId>,
     #[cfg(test)]
     panels_drawn_prev: Vec<panel_registry::PanelId>,
+    /// Quién hospeda cada panel en este frame (ver `ChimpApp::claim_panel`).
+    panel_hosts: Vec<(panel_registry::PanelId, app_panels::PanelHost)>,
     /// Dónde está cada panel: en la tira, acoplado o flotando (lo muestra `workspace::show`).
     workspace: workspace::Workspace,
     preset_name: Option<palette_ui::NameDialog>,
@@ -438,6 +440,7 @@ impl ChimpApp {
             panels_drawn: Vec::new(),
             #[cfg(test)]
             panels_drawn_prev: Vec::new(),
+            panel_hosts: Vec::new(),
             workspace: workspace::Workspace::essentials(),
             preset_name: None,
             palette_confirm: None,
@@ -1471,9 +1474,7 @@ impl ChimpApp {
                     let target = workspace::drop_target(&self.workspace, pointer);
                     self.workspace.drop_panel(id, target);
                 }
-                dock::StripRequest::Dock(id) => {
-                    self.workspace.dock(id, workspace::DockTarget::Focused);
-                }
+                dock::StripRequest::Dock(id) => self.workspace.dock_from_strip(id),
                 dock::StripRequest::Float(id, at) => self.workspace.float(id, at),
             }
             ui.ctx().request_repaint();
@@ -1495,15 +1496,17 @@ impl ChimpApp {
     /// Lo mínimo de la hoja del lienzo este frame: el lienzo mismo (`CANVAS_MIN_*`) más lo que
     /// todavía va a su derecha (ver [`Self::canvas_area`]): la tira de íconos o, en la pestaña de
     /// un modelo, el panel 3D fijo. Ningún lado del lienzo se lo quita: sin él, la hoja
-    /// desaparecería y con ella la tira. El timeline es una hoja aparte, con su propio mínimo.
+    /// desaparecería y con ella la tira. El timeline es una hoja aparte, con su propio mínimo. A lo
+    /// alto, al menos lo de la tira más corta (`dock::strip_min_len`: "More Panels" y los botones
+    /// del timeline y del Preview): la tira va a su lado y nunca se recorta ni se encima.
     pub(crate) fn canvas_area_min(&self) -> egui::Vec2 {
         use crate::panel_registry::{CANVAS_MIN_HEIGHT, CANVAS_MIN_WIDTH};
-        let side = if self.doc.editor.model_edit_on() {
-            dock::fixed_panel_width(model_panel::REFERENCE_WIDTH)
-        } else {
-            dock::WIDTH
-        };
-        egui::vec2(CANVAS_MIN_WIDTH + side, CANVAS_MIN_HEIGHT)
+        if self.doc.editor.model_edit_on() {
+            let side = dock::fixed_panel_width(model_panel::REFERENCE_WIDTH);
+            return egui::vec2(CANVAS_MIN_WIDTH + side, CANVAS_MIN_HEIGHT);
+        }
+        let strip = dock::strip_min_len(self.pixel.skin().is_some());
+        egui::vec2(CANVAS_MIN_WIDTH + dock::WIDTH, CANVAS_MIN_HEIGHT.max(strip))
     }
 
     /// La hoja del lienzo del workspace (ver `workspace::show`): lo que en la fase C era el
@@ -1511,13 +1514,15 @@ impl ChimpApp {
     /// de antes. A su derecha, en la pestaña de un modelo, el panel 3D fijo; si no, el lugar de la
     /// tira de íconos (la dibuja el workspace encima, de alto completo con el timeline: ver
     /// [`Self::strip_area`]). Con el timeline justo debajo, su margen de abajo es `bottom_less`
-    /// más chico (el divisor ocupa ese aire). Lo que piden sus paneles va a `actions` (el
-    /// workspace lo aplica con el acomodo de vuelta). Devuelve el rect del lienzo.
+    /// más chico (el divisor ocupa ese aire). A la izquierda, con la toolbar justo al lado
+    /// (`tools_beside`), sin margen (el aire es el de la toolbar, como en el mockup); si no, el
+    /// suyo de los otros lados. Lo que piden sus paneles va a `actions` (el workspace lo aplica con
+    /// el acomodo de vuelta). Devuelve el rect del lienzo.
     pub(crate) fn canvas_area(
         &mut self,
         ui: &mut egui::Ui,
         modal: bool,
-        bottom_less: i8,
+        (bottom_less, tools_beside): (i8, bool),
         actions: &mut Vec<app_panels::PanelAction>,
     ) -> egui::Rect {
         use crate::app_panels::PanelCtx;
@@ -1564,13 +1569,13 @@ impl ChimpApp {
             return rect;
         };
         // Con Pixel UI, como en el mockup: el lienzo y sus reglas en una caja, con 5 px de fondo
-        // alrededor (a la izquierda, los de la barra de íconos; a la derecha, 3 hasta el dock;
-        // abajo, hasta el timeline, contando el divisor).
+        // alrededor (a la izquierda, los de la barra de íconos, si va justo al lado; a la derecha,
+        // 3 hasta el dock; abajo, hasta el timeline, contando el divisor).
         let margin = pixel_ui::WORKSPACE_MARGIN;
         let frame = egui::Frame::new()
             .fill(skin.colors().background)
             .inner_margin(egui::Margin {
-                left: 0,
+                left: if tools_beside { 0 } else { margin },
                 right: dock::LEFT_AIR,
                 top: margin,
                 bottom: (margin - bottom_less).max(0),
@@ -1589,35 +1594,53 @@ impl ChimpApp {
             .inner
     }
 
-    /// La tira de íconos en `rect` (a la derecha del lienzo y, si va justo debajo de él, del
-    /// timeline: ver `workspace::show`), de alto completo, con el marco de siempre (el del panel
-    /// derecho `"dock"` que iba dentro de la hoja del lienzo). Con un diálogo abierto, apagada.
+    /// La tira de íconos de la orilla `edge` en `rect`, con su marco. La de la derecha (a la derecha
+    /// del lienzo y, si va justo debajo de él, del timeline: ver `workspace::show`), de alto
+    /// completo, con el marco de siempre (el del panel derecho `"dock"` que iba dentro de la hoja
+    /// del lienzo) y los botones del timeline y del Preview; las demás, en su orilla (`"dock_left"`,
+    /// `"dock_top"`, `"dock_bottom"`), con sus flyouts dentro de `room` (el área del workspace).
+    /// Con un diálogo abierto, apagada.
     pub(crate) fn strip_area(
         &mut self,
         ui: &mut egui::Ui,
-        rect: egui::Rect,
+        (rect, room): (egui::Rect, egui::Rect),
         modal: bool,
+        edge: dock::Edge,
         strip: &[panel_registry::PanelId],
     ) -> dock::DockOutput {
         let shared_skin = self.pixel.shared_skin();
         let skin = shared_skin.as_deref();
-        let ui = &mut ui.new_child(egui::UiBuilder::new().id_salt("strip").max_rect(rect));
+        let salt = match edge {
+            dock::Edge::Right => egui::Id::new("strip"),
+            other => egui::Id::new(("strip", other.index())),
+        };
+        let ui = &mut ui.new_child(egui::UiBuilder::new().id_salt(salt).max_rect(rect));
         // Lo que se pase (la línea de egui a lo largo de su marco, si no cabe), recortado a ella.
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-        egui::Panel::right("dock")
+        let panel = match edge {
+            dock::Edge::Right => egui::Panel::right("dock"),
+            dock::Edge::Left => egui::Panel::left("dock_left"),
+            dock::Edge::Top => egui::Panel::top("dock_top"),
+            dock::Edge::Bottom => egui::Panel::bottom("dock_bottom"),
+        };
+        let toggles = (edge == dock::Edge::Right)
+            .then_some((&mut self.view.timeline, &mut self.view.preview));
+        let width = |id| app_panels::flyout_width(id, skin);
+        panel
             .resizable(false)
             .exact_size(dock::WIDTH)
-            .frame(dock::strip_frame(ui.style()))
+            .frame(dock::edge_frame(ui.style(), edge))
             .show_separator_line(skin.is_none())
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
-                    dock::show(
-                        ui,
-                        skin,
-                        strip,
-                        &mut self.view.timeline,
-                        &mut self.view.preview,
-                    )
+                    let strip = dock::StripCtx {
+                        edge,
+                        panels: strip,
+                        toggles,
+                        room,
+                        flyout_width: &width,
+                    };
+                    dock::show(ui, skin, strip)
                 })
                 .inner
             })

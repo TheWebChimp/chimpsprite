@@ -968,6 +968,29 @@ pub(crate) fn context_menu(
         .show(|ui| panel(ui, &look, None, content))
 }
 
+/// El menú que abre (y cierra) un clic en `response`, del lado `align` de él: con Pixel UI, el
+/// panel de los menús de la barra con sus filas; si no, el de egui. Elegir una fila lo cierra.
+pub(crate) fn click_menu(
+    response: &Response,
+    align: RectAlign,
+    content: impl FnOnce(&mut Ui),
+) -> Option<InnerResponse<()>> {
+    let popup = Popup::menu(response).align(align).align_alternatives(&[]);
+    let Some(skin) = pixel_ui::frame_skin(&response.ctx) else {
+        return popup.show(content);
+    };
+    let look = MenuLook::new(&skin, 0.0);
+    let config = menu::MenuConfig::new().style(pixel_menu_style);
+    popup
+        .frame(Frame::NONE.inner_margin(PANEL_MARGIN))
+        .style(pixel_menu_style)
+        .info(
+            UiStackInfo::new(UiKind::Menu)
+                .with_tag_value(menu::MenuConfig::MENU_CONFIG_TAG, config),
+        )
+        .show(|ui| panel(ui, &look, None, content))
+}
+
 /// La lista de un combo pixel (los de la barra de opciones): el mismo panel de los menús, colgado
 /// debajo de `anchor` (lo dibujado del combo) y al menos de su ancho. Se abre y se cierra con los
 /// clics en `response`, como `Popup::menu`; elegir una fila la cierra.

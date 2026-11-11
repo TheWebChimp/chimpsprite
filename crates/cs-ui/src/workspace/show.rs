@@ -20,14 +20,16 @@ use super::fit::{
     quadrant, record_sides, tidy_canvas, toolbar_width,
 };
 use super::{NodeIndex, SurfaceIndex, Workspace, dock_id, skin};
-use crate::app_panels::{PanelAction, PanelCtx};
+use crate::app_panels::{PanelAction, PanelCtx, PanelHost};
+use crate::dock::Edge;
 use crate::panel_registry::{Body, PanelId};
 use crate::skin::Skin;
 use crate::{CanvasArea, ChimpApp};
 use crate::{dock, kit, panels, pixel_ui};
 
 /// Lo que dice la pestaña del panel 3D (acoplado o flotando) en la pestaña de un modelo, donde lo
-/// hospeda su panel fijo (`"model_panel"`).
+/// hospeda su panel fijo (`"model_panel"`; ver `ChimpApp::claim_panel`).
+#[cfg(test)]
 pub(crate) const MODEL_ELSEWHERE: &str = "Shown in the 3D panel";
 
 /// Lo que egui_dock ve de los paneles: los dibuja con [`ChimpApp::draw_panel`] (el lienzo, con
@@ -65,6 +67,9 @@ struct Viewer<'a> {
     /// punto de su margen).
     canvas_bottom_less: i8,
     timeline_top_less: i8,
+    /// Si la toolbar va justo a la izquierda del lienzo (ver `Workspace::tools_beside_canvas`):
+    /// si no, el lienzo lleva su margen de ese lado.
+    tools_beside: bool,
     /// Lo que dejó la hoja del lienzo, si se dibujó.
     canvas: Option<CanvasArea>,
     /// El Preview solo en su ventana: la de antes (ver [`PreviewWindow`]).
@@ -112,7 +117,8 @@ impl TabViewer for Viewer<'_> {
         // `CentralPanel`.
         if id == PanelId::Canvas {
             let app = &mut *self.app;
-            let rect = app.canvas_area(ui, self.modal, self.canvas_bottom_less, &mut self.actions);
+            let air = (self.canvas_bottom_less, self.tools_beside);
+            let rect = app.canvas_area(ui, self.modal, air, &mut self.actions);
             self.canvas = Some(CanvasArea {
                 rect,
                 dock: Default::default(),
@@ -196,10 +202,11 @@ impl TabViewer for Viewer<'_> {
             }
             return;
         }
-        // Una instancia por panel por frame (su estado y los ids de `forms` son globales): en la
-        // pestaña de un modelo, al 3D lo hospeda su panel fijo; aquí, solo dónde está.
-        if id == PanelId::Model && self.app.doc.editor.model_edit_on() {
-            ui.add_enabled(false, egui::Label::new(MODEL_ELSEWHERE));
+        // Una instancia por panel por frame (su estado y los ids de `forms` son globales): si otro
+        // anfitrión ya lo tiene (en la pestaña de un modelo, al 3D lo hospeda su panel fijo), aquí
+        // solo dónde está.
+        if let Err(owner) = self.app.claim_panel(id, PanelHost::Workspace) {
+            ui.add_enabled(false, egui::Label::new(owner.shown_in()));
             return;
         }
         // El fondo del grupo (dentro del scroll de egui_dock el `max_rect` puede no serlo): hasta
@@ -472,6 +479,12 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     // Apagado, el Preview no sigue reproduciendo (en la pestaña de un modelo se oculta sin
     // apagarse, como su ventana de antes).
     let model_tab = app.doc.editor.model_edit_on();
+    // En la pestaña de un modelo, el 3D es de su panel fijo (en la hoja del lienzo): se lo queda
+    // antes de que se dibuje cualquier grupo (su pestaña, acoplada o flotando, dice dónde está).
+    if model_tab {
+        let _ = app.claim_panel(PanelId::Model, PanelHost::ModelPanel);
+    }
+    workspace.pixel = app.pixel.skin().is_some();
     workspace.sync_panel(
         PanelId::Timeline,
         app.view.timeline && PanelId::Timeline.available(app),
@@ -548,9 +561,31 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     workspace.sides.overlap = overlap;
     workspace.sides.strip = strip_room;
     let area = ui.available_rect_before_wrap();
-    // El `DockArea`, en puntos enteros (egui_dock solo ajusta a píxel físico), en todo el área.
+    // Las tiras de la izquierda, de arriba y de abajo van en su orilla, fuera del árbol: la de la
+    // izquierda de alto completo y las otras dos entre ella y la orilla derecha. Vacías (o en la
+    // pestaña de un modelo, donde no hay dock), no están: no ocupan nada.
+    let mut inner = area;
+    let mut edge_strips: Vec<(Edge, egui::Rect)> = Vec::new();
+    for edge in [Edge::Left, Edge::Top, Edge::Bottom] {
+        if model_tab || workspace.strip_at(edge).is_empty() {
+            continue;
+        }
+        let rect = match edge {
+            Edge::Left => inner.with_max_x(inner.left() + dock::WIDTH),
+            Edge::Top => inner.with_max_y(inner.top() + dock::WIDTH),
+            _ => inner.with_min_y(inner.bottom() - dock::WIDTH),
+        };
+        match edge {
+            Edge::Left => inner.min.x = rect.right(),
+            Edge::Top => inner.min.y = rect.bottom(),
+            _ => inner.max.y = rect.top(),
+        }
+        edge_strips.push((edge, rect));
+    }
+    // El `DockArea`, en puntos enteros (egui_dock solo ajusta a píxel físico), en todo el área
+    // (sin esas tiras).
     let dock_rect =
-        egui::Rect::from_min_max(area.min.ceil(), area.max.floor().max(area.min.ceil()));
+        egui::Rect::from_min_max(inner.min.ceil(), inner.max.floor().max(inner.min.ceil()));
     // Nada de lo que se arrastra es el lienzo; sus lados, en puntos.
     block_canvas_drag(&ctx, dock_id(), &workspace.state);
     pin_sides(&mut workspace.state, dock_rect, &mut workspace.sides);
@@ -574,6 +609,13 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .map(|r| (r, half(r, quadrant(r, p)))),
         _ => None,
     };
+    // La orilla de cada panel del árbol antes de dibujarlo: cerrar su pestaña lo manda a la tira de
+    // esa orilla (egui_dock lo saca del árbol al cerrarla con su ×).
+    let edges: Vec<(PanelId, Edge)> = workspace
+        .state
+        .iter_all_tabs()
+        .map(|(path, &id)| (id, workspace.group_edge(path.surface, path.node)))
+        .collect();
     let mut viewer = Viewer {
         app,
         modal,
@@ -592,6 +634,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         },
         canvas_bottom_less: if below { (sep - overlap) as i8 } else { 0 },
         timeline_top_less: (overlap - line).max(0.0) as i8,
+        tools_beside: workspace.tools_beside_canvas(),
         canvas: None,
         preview_window,
         actions: Vec::new(),
@@ -600,7 +643,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         extents: Vec::new(),
         style: ui.style().clone(),
     };
-    let strip = workspace.strip.clone();
+    let strip = workspace.strip_at(Edge::Right).to_vec();
     {
         let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(dock_rect));
         // El marco de las ventanas flotantes (solo lo leen los marcos).
@@ -699,7 +742,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
                     .ok()
             })
             .map_or(divider, |leaf| leaf.rect);
-        cover_tools_divider(ui, skin, (leaf, divider), first, area.bottom());
+        cover_tools_divider(ui, skin, (leaf, divider), first, inner.bottom());
     }
     // El divisor del timeline justo debajo del lienzo: en reposo no se ve.
     if workspace.timeline_below()
@@ -737,11 +780,24 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
                 egui::Sense::click_and_drag(),
             );
         }
+        // Un panel que dejó las tiras (se acopló o flota) ya no se abre desde ellas.
+        if crate::dock::open_panel(&ctx).is_some_and(|p| workspace.strip_of(p).is_none()) {
+            crate::dock::set_open(&ctx, None);
+        }
         let timeline = app.view.timeline;
-        canvas.dock = app.strip_area(ui, rect, modal, &strip);
+        canvas.dock = app.strip_area(ui, (rect, dock_rect), modal, Edge::Right, &strip);
         // Su botón del timeline: el árbol cambia en el frame siguiente.
         if app.view.timeline != timeline {
             ctx.request_repaint();
+        }
+        // Las de las otras orillas (si tienen algo).
+        for &(edge, rect) in &edge_strips {
+            let panels = workspace.strip_at(edge).to_vec();
+            let out = app.strip_area(ui, (rect, dock_rect), modal, edge, &panels);
+            let dock = &mut canvas.dock;
+            dock.app_panel = dock.app_panel.or(out.app_panel);
+            dock.request = dock.request.or(out.request);
+            dock.dragging = dock.dragging.or(out.dragging);
         }
     }
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
@@ -842,7 +898,11 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
                 workspace.sync_panel(id, false);
                 ctx.request_repaint();
             }
-            _ => workspace.to_strip(id),
+            // A la tira de la orilla de donde estaba.
+            _ => match edges.iter().find(|(p, _)| *p == id) {
+                Some(&(_, edge)) => workspace.to_strip_at(id, edge),
+                None => workspace.to_strip(id),
+            },
         }
     }
     let released = tab_drag_released(&ctx, &workspace.state, &hits);
@@ -1126,28 +1186,57 @@ fn collapse_buttons(
     let ctx = ui.ctx().clone();
     let pointer = ctx.input(|i| i.pointer.hover_pos());
     let dragging = ctx.dragged_id().is_some() && ctx.input(|i| i.pointer.is_decidedly_dragging());
-    // Sin otra capa encima (una ventana flotante, un menú).
-    let ours = |p: egui::Pos2| ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id());
     let size = egui::Vec2::splat(kit::tabs::ARROW_SIZE);
     let mut pressed = None;
+    // La toolbar sola en su ventana (con Pixel UI) también lleva el suyo (ver `Workspace::bare_tools`).
+    let tools_window = w.bare_tools();
+    let main_layer = ui.layer_id();
     for (path, leaf) in w.state.iter_leaves() {
-        if !path.surface.is_main()
+        let window = !path.surface.is_main();
+        if (window && Some(path.surface) != tools_window)
             || !leaf.rect.is_positive()
             || !w.collapsible(path.surface, path.node)
         {
             continue;
         }
+        // El de una ventana va en su capa (encima de ella).
+        let layer = if window {
+            egui::LayerId::new(egui::Order::Middle, skin::window_area_id(path.surface))
+        } else {
+            main_layer
+        };
+        // Sin otra capa encima (otra ventana flotante, un menú).
+        let ours = |p: egui::Pos2| {
+            ctx.layer_id_at(p)
+                .is_none_or(|l| l == main_layer || l == layer)
+        };
         // En la barra de pestañas, en el lugar que ella le deja a la derecha (`COLLAPSE_ROOM`);
         // sin barra, a la izquierda de la barra de scroll del panel (no encima de ella).
-        let right = if leaf.tabs == [PanelId::Tools] {
-            // La toolbar no lleva barra de scroll del kit a la derecha: en la punta.
-            leaf.rect.right() - 1.0
-        } else if leaf.tab_bar_hidden {
-            leaf.rect.right() - f32::from(dock::FLYOUT_MARGIN) - pixel_ui::SCROLL_BAR - 1.0
-        } else {
-            leaf.rect.right() - 1.0
+        let left = match skin {
+            // La toolbar con Pixel UI: justo a la derecha de su caja (la hoja es apenas más ancha
+            // que ella: en su punta la tapaba). Su caja empieza en el margen izquierdo de la hoja:
+            // el de siempre o, a la derecha del lienzo, un divisor menos (ver `tools_margin`).
+            Some(skin) if leaf.tabs == [PanelId::Tools] => {
+                let mut margin = f32::from(pixel_ui::TOOLBAR_MARGIN);
+                if !window && w.tools_side() == Some(false) {
+                    margin = (margin - w.sides.sep).max(0.0);
+                }
+                let box_width =
+                    pixel_ui::toolbar_width(skin) - 2.0 * f32::from(pixel_ui::TOOLBAR_MARGIN);
+                leaf.rect.left() + margin + box_width
+            }
+            // Sin Pixel UI, la toolbar no lleva barra de scroll del kit a la derecha: en la punta.
+            None if leaf.tabs == [PanelId::Tools] => leaf.rect.right() - 1.0 - size.x,
+            _ if leaf.tab_bar_hidden => {
+                leaf.rect.right()
+                    - f32::from(dock::FLYOUT_MARGIN)
+                    - pixel_ui::SCROLL_BAR
+                    - 1.0
+                    - size.x
+            }
+            _ => leaf.rect.right() - 1.0 - size.x,
         };
-        let at = egui::pos2(right - size.x, leaf.rect.top() + kit::tabs::ARROWS_TOP);
+        let at = egui::pos2(left, leaf.rect.top() + kit::tabs::ARROWS_TOP);
         let rect = egui::Rect::from_min_size(at.round(), size);
         if leaf.tab_bar_hidden {
             // Solo si el puntero llegó por la franja de agarre (no desde abajo, por el panel), y
@@ -1166,6 +1255,19 @@ fn collapse_buttons(
             }
         }
         let id = egui::Id::new(("workspace_collapse", path.surface, path.node));
+        let mut on_window;
+        let ui: &mut egui::Ui = if window {
+            on_window = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(id)
+                    .layer_id(layer)
+                    .max_rect(rect),
+            );
+            on_window.set_clip_rect(rect);
+            &mut on_window
+        } else {
+            &mut *ui
+        };
         let response = ui
             .interact(rect, id, egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);

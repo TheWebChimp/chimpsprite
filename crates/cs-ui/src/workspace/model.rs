@@ -7,6 +7,7 @@ use eframe::egui;
 use egui_dock::{DockState, Node, NodePath, Surface, TabIndex, Tree, WindowState};
 
 use super::{NodeIndex, Split, SurfaceIndex, Workspace};
+use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
@@ -55,12 +56,18 @@ pub(crate) struct SavedWorkspace {
     pub version: u32,
     /// El árbol de egui_dock: lo acoplado y las ventanas flotantes.
     pub state: DockState<String>,
-    /// Los paneles de la tira, en orden. Al leer no hace falta (la tira es lo del dock que no está
-    /// en el árbol), pero así el archivo se entiende solo.
+    /// Los paneles de la tira de la derecha (la de siempre), en orden. Hasta la versión 5 era la
+    /// única tira: lo de una 5 (o anterior) que no está en el árbol va a ella.
     pub strip: Vec<String>,
+    /// Los de las tiras de la izquierda, de arriba y de abajo (desde la versión 6), en orden.
+    pub left: Vec<String>,
+    pub top: Vec<String>,
+    pub bottom: Vec<String>,
 }
 
-/// La versión de lo que se guarda ahora: 5, el árbol de toda la ventana con el lienzo, la
+/// La versión de lo que se guarda ahora: 6, con una tira de íconos por orilla (fase D, tarea 6:
+/// `strip` es la de la derecha y `left`, `top` y `bottom` las demás; en una 5 o anterior solo
+/// había `strip`, la de la derecha). La 5: el árbol de toda la ventana con el lienzo, la
 /// toolbar, el timeline y el Preview (fase D, tarea 5). En la 4 el Preview no iba en el árbol (era
 /// su propia ventana): al leer una 4 (o anterior) no está y, prendido, el workspace lo pone en su
 /// esquina, como estaba; en una 5 está si no va en su esquina (ver
@@ -71,7 +78,7 @@ pub(crate) struct SavedWorkspace {
 /// izquierda; en una 3 o 4, está en la tira. La 1 (y la 0, de antes del campo) es la de la fase C:
 /// la columna derecha sola, sin lienzo; al leerla se le mete el lienzo a la izquierda
 /// ([`Workspace::from_saved`]).
-pub(crate) const SAVED_VERSION: u32 = 5;
+pub(crate) const SAVED_VERSION: u32 = 6;
 
 impl Default for SavedWorkspace {
     fn default() -> Self {
@@ -96,9 +103,12 @@ impl Workspace {
             surface: SurfaceIndex::main(),
             node: color,
         });
+        let mut strips: [Vec<PanelId>; 4] = Default::default();
+        strips[Edge::Right.index()] = PanelId::DOCK.to_vec();
         Workspace {
             state,
-            strip: PanelId::DOCK.to_vec(),
+            strips,
+            pixel: true,
             lent: false,
             placements: Vec::new(),
             placing: Vec::new(),
@@ -129,10 +139,19 @@ impl Workspace {
         {
             w.state.remove_tab(path);
         }
+        let keys = |edge: Edge| {
+            w.strip_at(edge)
+                .iter()
+                .map(|p| p.key().to_owned())
+                .collect()
+        };
         SavedWorkspace {
             version: SAVED_VERSION,
             state: w.state.map_tabs(|p| p.key().to_owned()),
-            strip: w.strip.iter().map(|p| p.key().to_owned()).collect(),
+            strip: keys(Edge::Right),
+            left: keys(Edge::Left),
+            top: keys(Edge::Top),
+            bottom: keys(Edge::Bottom),
         }
     }
 
@@ -151,9 +170,10 @@ impl Workspace {
     /// El acomodo guardado, sin confiar en él (puede ser de otra versión, de otra plataforma o
     /// estar roto): un árbol mal armado da [`Workspace::essentials`] (con un aviso en el log); de
     /// lo demás se descartan los paneles que no se conocen (en la web, dafont), los que no van en
-    /// el árbol y los repetidos. Los del dock que no quedan en el árbol van a la tira, y Color, si
-    /// no quedó en ningún lado, a la superficie principal. Sin nada en el árbol, también
-    /// Essentials.
+    /// el árbol y los repetidos. Los del dock que no quedan en el árbol van a la tira en que se
+    /// guardaron (en una 5 o anterior, la de la derecha; si no estaban en ninguna, también), y
+    /// Color, si no quedó en ningún lado, a la superficie principal. Sin nada en el árbol,
+    /// también Essentials.
     ///
     /// Lo de la fase C (versión 1, o 0 sin el campo) es la columna derecha sola: se le mete el
     /// lienzo a la izquierda (su ancho es `view.palette_width`, que no cambia). Lo de antes de la
@@ -298,11 +318,38 @@ impl Workspace {
             .filter(|(s, _)| !s.is_main())
             .filter_map(|(s, _)| w.root_rect(s).map(|r| (s, r)))
             .collect();
-        w.strip = PanelId::ALL
-            .iter()
-            .copied()
-            .filter(|&p| Workspace::goes_to_strip(p) && w.state.find_tab(&p).is_none())
-            .collect();
+        // Las tiras: cada panel que va en una y no quedó en el árbol, en la que se guardó (en una
+        // 5 o anterior, la única era la de la derecha); los que no están en ninguna, a la derecha.
+        let none = Vec::new();
+        let older = saved.version < 6;
+        let saved_strips = [
+            (Edge::Left, if older { &none } else { &saved.left }),
+            (Edge::Right, &saved.strip),
+            (Edge::Top, if older { &none } else { &saved.top }),
+            (Edge::Bottom, if older { &none } else { &saved.bottom }),
+        ];
+        w.strips = Default::default();
+        for (edge, keys) in saved_strips {
+            for id in keys.iter().filter_map(|k| PanelId::from_key(k)) {
+                if Workspace::goes_to_strip(id)
+                    && w.state.find_tab(&id).is_none()
+                    && w.strip_of(id).is_none()
+                {
+                    w.strips[edge.index()].push(id);
+                }
+            }
+        }
+        for id in PanelId::ALL.iter().copied() {
+            if Workspace::goes_to_strip(id)
+                && w.state.find_tab(&id).is_none()
+                && w.strip_of(id).is_none()
+            {
+                w.strips[Edge::Right.index()].push(id);
+            }
+        }
+        for strip in &mut w.strips {
+            strip.sort_by_key(|p| PanelId::ALL.iter().position(|q| q == p));
+        }
         w
     }
 
@@ -514,8 +561,10 @@ impl Workspace {
     /// Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`, para capturas): `library-tab`
     /// (Library en el grupo de Color), `split` (Groom debajo de Color), `float` (Lumen flotando),
     /// `tools-right` (la toolbar a la derecha del lienzo), `tools-float` (la toolbar flotando),
-    /// `timeline-right` (el timeline a la derecha del lienzo) o `preview-docked` (el Preview
-    /// acoplado debajo de Color; se ve con `view.preview`). `None` si no es ninguno de esos.
+    /// `timeline-right` (el timeline a la derecha del lienzo), `preview-docked` (el Preview
+    /// acoplado debajo de Color; se ve con `view.preview`), `left-strip` (la toolbar y Groom en la
+    /// tira de la izquierda) o `groom-below` (Groom debajo del lienzo: la tira de la derecha, solo
+    /// junto a él). `None` si no es ninguno de esos.
     pub(crate) fn demo(name: &str) -> Option<Workspace> {
         let mut w = Workspace::essentials();
         let (surface, node) = w.leaf_of(PanelId::Color)?;
@@ -534,6 +583,11 @@ impl Workspace {
                 DockTarget::Split(surface, node, Split::Below),
             ),
             "float" => w.float(PanelId::Lumen, egui::pos2(320.0, 120.0)),
+            "left-strip" => {
+                w.to_strip_at(PanelId::Tools, Edge::Left);
+                w.to_strip_at(PanelId::Groom, Edge::Left);
+            }
+            "groom-below" => w.dock(PanelId::Groom, DockTarget::Split(cs, cn, Split::Below)),
             _ => return None,
         }
         Some(w)
@@ -547,7 +601,7 @@ impl Workspace {
             return;
         }
         self.placements.clear();
-        self.strip.retain(|&p| p != id);
+        self.leave_strips(id);
         if let Some(path) = self.state.find_tab(&id) {
             self.state.remove_tab(path);
         }
@@ -582,7 +636,7 @@ impl Workspace {
         };
         match (target, into) {
             // Su propio grupo, donde ya está solo: nada que hacer.
-            (Some(None), _) => self.strip.retain(|&p| p != id),
+            (Some(None), _) => self.leave_strips(id),
             (Some(Some(anchor)), DockTarget::Leaf(..)) => {
                 self.take(id);
                 if let Some(path) = self.state.find_tab(&anchor)
@@ -659,19 +713,132 @@ impl Workspace {
             .push((id, at.round(), super::fit::NEW_WINDOW_FRAMES));
     }
 
-    /// Regresa `id` a la tira, en su lugar (el orden de `PanelId::ALL`).
+    /// Saca `id` de todas las tiras.
+    pub(super) fn leave_strips(&mut self, id: PanelId) {
+        for strip in &mut self.strips {
+            strip.retain(|&p| p != id);
+        }
+    }
+
+    /// Regresa `id` a la tira de la orilla más cercana a donde está (ver [`Workspace::edge_of`]),
+    /// en su lugar (el orden de `PanelId::ALL`).
     #[allow(
         clippy::wrong_self_convention,
         reason = "no es una conversión: manda el panel a la tira"
     )]
     pub(crate) fn to_strip(&mut self, id: PanelId) {
+        let edge = self.edge_of(id).unwrap_or(Edge::Right);
+        self.to_strip_at(id, edge);
+    }
+
+    /// Manda `id` a la tira de la orilla `edge`, en su lugar (el orden de `PanelId::ALL`).
+    #[allow(
+        clippy::wrong_self_convention,
+        reason = "no es una conversión: manda el panel a la tira"
+    )]
+    pub(crate) fn to_strip_at(&mut self, id: PanelId, edge: Edge) {
         if id == PanelId::Canvas {
             return;
         }
         self.take(id);
         let rank = |p: &PanelId| PanelId::ALL.iter().position(|q| q == p);
-        let at = self.strip.partition_point(|p| rank(p) < rank(&id));
-        self.strip.insert(at, id);
+        let strip = &mut self.strips[edge.index()];
+        let at = strip.partition_point(|p| rank(p) < rank(&id));
+        strip.insert(at, id);
+    }
+
+    /// La orilla de `id`: la de su tira, si está en una; la de su grupo, si está en el árbol (ver
+    /// [`Workspace::group_edge`]).
+    pub(crate) fn edge_of(&self, id: PanelId) -> Option<Edge> {
+        if let Some(edge) = self.strip_of(id) {
+            return Some(edge);
+        }
+        let path = self.state.find_tab(&id)?;
+        Some(self.group_edge(path.surface, path.node))
+    }
+
+    /// La orilla de la ventana del grupo `(surface, node)`: la que toca (bajando de la raíz, cada
+    /// split a lo ancho o a lo alto de su lado), primero a los lados (izquierda o derecha) y después
+    /// arriba o abajo; si toca las dos de un eje (o ninguna), cuenta el otro. Un grupo que no toca
+    /// ninguna (entre otros) o una ventana flotante, la más cercana a él en el último frame (en
+    /// empate, también los lados primero). Sin rects (antes de dibujarse), la derecha.
+    pub(crate) fn group_edge(&self, surface: SurfaceIndex, node: NodeIndex) -> Edge {
+        if surface.is_main() {
+            let tree = self.state.main_surface();
+            let (mut left, mut right, mut top, mut bottom) = (true, true, true, true);
+            let mut n = node;
+            while let Some(parent) = n.parent() {
+                match &tree[parent] {
+                    Node::Horizontal(_) if n.is_left() => right = false,
+                    Node::Horizontal(_) => left = false,
+                    Node::Vertical(_) if n.is_left() => bottom = false,
+                    Node::Vertical(_) => top = false,
+                    _ => {}
+                }
+                n = parent;
+            }
+            match (left, right, top, bottom) {
+                (true, false, ..) => return Edge::Left,
+                (false, true, ..) => return Edge::Right,
+                (_, _, true, false) => return Edge::Top,
+                (_, _, false, true) => return Edge::Bottom,
+                (true, true, ..) => return Edge::Right,
+                _ => {}
+            }
+        }
+        let Some(area) = self.root_rect(SurfaceIndex::main()) else {
+            return Edge::Right;
+        };
+        let rect = self
+            .state
+            .leaf(NodePath { surface, node })
+            .ok()
+            .map(|leaf| leaf.rect)
+            .filter(|r| r.is_finite() && r.is_positive());
+        let Some(rect) = rect else {
+            return Edge::Right;
+        };
+        // Acoplado, lo que hay de su borde a cada orilla; una ventana (puede pasarse del área),
+        // desde su centro.
+        let (lo, hi) = if surface.is_main() {
+            (rect.min, rect.max)
+        } else {
+            (rect.center(), rect.center())
+        };
+        let gaps = [
+            (lo.x - area.left(), Edge::Left),
+            (area.right() - hi.x, Edge::Right),
+            (lo.y - area.top(), Edge::Top),
+            (area.bottom() - hi.y, Edge::Bottom),
+        ];
+        gaps.into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or(Edge::Right, |(_, edge)| edge)
+    }
+
+    /// "Dock" del menú de un ícono de su tira: la toolbar vuelve a un lado del lienzo, el de su
+    /// tira (a su derecha, desde la de la derecha) o, desde las demás, a su lugar de fábrica (a la
+    /// izquierda de todo); los demás, al grupo con el foco (ver [`DockTarget::Focused`]).
+    pub(crate) fn dock_from_strip(&mut self, id: PanelId) {
+        if id != PanelId::Tools {
+            self.dock(id, DockTarget::Focused);
+            return;
+        }
+        if self.strip_of(id) == Some(Edge::Right)
+            && let Some((s, n)) = self.leaf_of(PanelId::Canvas)
+        {
+            self.dock(id, DockTarget::Split(s, n, Split::Right));
+            return;
+        }
+        let focus = self.focused_panel();
+        self.take(id);
+        let main = self.state.main_surface_mut();
+        if main.num_tabs() == 0 {
+            *main = Tree::new(vec![id]);
+        } else {
+            main.split_left(NodeIndex::root(), 0.5, vec![id]);
+        }
+        self.refocus(focus);
     }
 
     /// Los paneles del grupo `(surface, node)` (ninguno si no existe).
@@ -683,8 +850,7 @@ impl Workspace {
     }
 
     /// Si `id` puede ir a la tira: los del dock y la toolbar, que tienen un flyout que su botón
-    /// abre. Color no (su botón no abriría nada): se queda acoplado o flotando. La toolbar va a la
-    /// tira de la derecha hasta que haya una por orilla (tarea 6).
+    /// abre. Color no (su botón no abriría nada): se queda acoplado o flotando.
     pub(crate) fn goes_to_strip(id: PanelId) -> bool {
         id == PanelId::Tools || PanelId::DOCK.contains(&id)
     }
@@ -696,12 +862,14 @@ impl Workspace {
             .any(Workspace::goes_to_strip)
     }
 
-    /// El botón « ("Collapse to Icons") del grupo `(surface, node)`: sus paneles a la tira, salvo
-    /// los que no van ahí (Color, que se queda en el grupo).
+    /// El botón « ("Collapse to Icons") del grupo `(surface, node)`: sus paneles a la tira de su
+    /// orilla (ver [`Workspace::group_edge`]), salvo los que no van ahí (Color, que se queda en el
+    /// grupo).
     pub(crate) fn collapse_to_icons(&mut self, surface: SurfaceIndex, node: NodeIndex) {
+        let edge = self.group_edge(surface, node);
         for id in self.tabs_of(surface, node) {
             if Workspace::goes_to_strip(id) {
-                self.to_strip(id);
+                self.to_strip_at(id, edge);
             }
         }
     }
@@ -722,24 +890,26 @@ impl Workspace {
     /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
     /// o más. Las ventanas flotantes la llevan (es su título y de ahí se arrastran), salvo la del
     /// Preview solo (su ventana es la de antes, con su barra de título: ver
-    /// [`Workspace::bare_preview`]). Devuelve si alguna cambió.
+    /// [`Workspace::bare_preview`]) y, con Pixel UI, la de la toolbar sola: va del ancho de su caja,
+    /// con la franja de agarre de un grupo solo (ver [`Workspace::bare_tools`]). Devuelve si alguna
+    /// cambió.
     pub(crate) fn refresh_tab_bars(&mut self) -> bool {
         let bare = self.bare_preview();
+        let tools = self.bare_tools();
         let mut changed = false;
         for (path, leaf) in self.state.iter_leaves_mut() {
-            let hidden =
-                (path.surface.is_main() && leaf.tabs.len() <= 1) || Some(path.surface) == bare;
+            let hidden = (path.surface.is_main() && leaf.tabs.len() <= 1)
+                || Some(path.surface) == bare
+                || Some(path.surface) == tools;
             changed |= leaf.tab_bar_hidden != hidden;
             leaf.tab_bar_hidden = hidden;
         }
         changed
     }
 
-    /// La ventana del Preview solo (un solo grupo, con él solo): su ventana es la de antes (con
-    /// Pixel UI la del diseño, sin él la `egui::Window`: su marco y su barra de título, sin
-    /// pestañas; ver `show::PreviewWindow`).
-    pub(crate) fn bare_preview(&self) -> Option<SurfaceIndex> {
-        let path = self.state.find_tab(&PanelId::Preview)?;
+    /// La ventana donde va `id` solo (un solo grupo, con él solo), si flota así.
+    fn lone_window(&self, id: PanelId) -> Option<SurfaceIndex> {
+        let path = self.state.find_tab(&id)?;
         if path.surface.is_main() {
             return None;
         }
@@ -748,16 +918,33 @@ impl Workspace {
         (leaves == 1 && tree.num_tabs() == 1).then_some(path.surface)
     }
 
-    /// Cada panel en un solo lugar: lo que está en el árbol sale de la tira (y la tira sin
-    /// repetidos).
+    /// La ventana del Preview solo (un solo grupo, con él solo): su ventana es la de antes (con
+    /// Pixel UI la del diseño, sin él la `egui::Window`: su marco y su barra de título, sin
+    /// pestañas; ver `show::PreviewWindow`).
+    pub(crate) fn bare_preview(&self) -> Option<SurfaceIndex> {
+        self.lone_window(PanelId::Preview)
+    }
+
+    /// Con Pixel UI, la ventana de la toolbar sola: sin barra de pestañas (su pestaña "Tools" con
+    /// su × la hacía casi tres veces más ancha que su caja), como un grupo acoplado solo: se lleva
+    /// a acoplar de su franja de agarre, se mueve de lo que no es un botón y su « (con el puntero
+    /// en la franja) la manda a una tira. Sin Pixel UI no hay franja: lleva su pestaña.
+    pub(crate) fn bare_tools(&self) -> Option<SurfaceIndex> {
+        self.lone_window(PanelId::Tools).filter(|_| self.pixel)
+    }
+
+    /// Cada panel en un solo lugar: lo que está en el árbol sale de las tiras (y las tiras sin
+    /// repetidos, ni dentro de una ni entre ellas).
     pub(super) fn tidy(&mut self) {
         let state = &self.state;
         let mut seen = Vec::new();
-        self.strip.retain(|&p| {
-            let keep = state.find_tab(&p).is_none() && !seen.contains(&p);
-            seen.push(p);
-            keep
-        });
+        for strip in &mut self.strips {
+            strip.retain(|&p| {
+                let keep = state.find_tab(&p).is_none() && !seen.contains(&p);
+                seen.push(p);
+                keep
+            });
+        }
     }
 }
 
@@ -909,13 +1096,15 @@ mod tests {
         let mut w = Workspace::essentials();
         w.to_strip(PanelId::Tools);
         assert!(!w.docked(PanelId::Tools) && !w.floating(PanelId::Tools));
-        assert_eq!(w.strip().first(), Some(&PanelId::Tools));
+        // Tarea 6: a la tira de su orilla (la izquierda).
+        let left = |w: &Workspace| w.strip_at(Edge::Left).first().copied();
+        assert_eq!(left(&w), Some(PanelId::Tools));
         assert_eq!(w.places(PanelId::Tools), 1);
         assert_eq!(w.tools_side(), None);
-        // Guardado (versión 3) y leído: sigue en la tira (no se vuelve a meter a la izquierda).
+        // Guardado y leído: sigue en la tira (no se vuelve a meter a la izquierda).
         let back = Workspace::from_saved(w.to_saved());
         assert!(!back.docked(PanelId::Tools));
-        assert_eq!(back.strip().first(), Some(&PanelId::Tools));
+        assert_eq!(left(&back), Some(PanelId::Tools));
         assert_eq!(back.places(PanelId::Tools), 1);
         // De la tira, a la derecha del lienzo: ahí es su lado (de su ancho), no la columna.
         let mut w = back;
@@ -946,6 +1135,9 @@ mod tests {
             version: 2,
             state,
             strip: Vec::new(),
+            left: Vec::new(),
+            top: Vec::new(),
+            bottom: Vec::new(),
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
@@ -977,6 +1169,9 @@ mod tests {
             version: 2,
             state: DockState::new(vec!["color".to_string()]),
             strip: Vec::new(),
+            left: Vec::new(),
+            top: Vec::new(),
+            bottom: Vec::new(),
         };
         let w = Workspace::from_saved(saved);
         let root = NodeIndex::root();
@@ -1042,6 +1237,9 @@ mod tests {
             version: 3,
             state,
             strip: Vec::new(),
+            left: Vec::new(),
+            top: Vec::new(),
+            bottom: Vec::new(),
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
@@ -1052,11 +1250,11 @@ mod tests {
         assert_eq!(w.places(PanelId::Timeline), 1);
         assert_eq!(w.column_panels(), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
-        // Lo que se guarda ahora es la 5 (tarea 5: con el Preview), y se lee igual (sin otro
+        // Lo que se guarda ahora es la 6 (tarea 6: con las tiras por orilla), y se lee igual (sin otro
         // timeline).
         let again = w.to_saved();
         assert_eq!(again.version, SAVED_VERSION);
-        assert_eq!(SAVED_VERSION, 5);
+        assert_eq!(SAVED_VERSION, 6);
         let back = Workspace::from_saved(again);
         assert_eq!(back.state_tabs(), w.state_tabs());
         assert_eq!(back.places(PanelId::Timeline), 1);
@@ -1351,6 +1549,9 @@ mod tests {
             version: 1,
             state,
             strip: Vec::new(),
+            left: Vec::new(),
+            top: Vec::new(),
+            bottom: Vec::new(),
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
@@ -1482,6 +1683,9 @@ mod tests {
             version: SAVED_VERSION,
             state: DockState::new(vec!["nope".to_string()]),
             strip: Vec::new(),
+            left: Vec::new(),
+            top: Vec::new(),
+            bottom: Vec::new(),
         };
         assert!(is_essentials(&Workspace::from_saved(saved)));
         // Sin campos: el de fábrica.
@@ -1605,7 +1809,7 @@ mod tests {
         w.sync_panel(PanelId::Preview, true);
         let saved = w.to_saved();
         assert_eq!(saved.version, SAVED_VERSION);
-        assert_eq!(SAVED_VERSION, 5);
+        assert_eq!(SAVED_VERSION, 6);
         let back = Workspace::from_saved(saved);
         assert_eq!(back.places(PanelId::Preview), 0);
         // Acoplada (y oculta), sí: en su lugar.
@@ -1633,5 +1837,120 @@ mod tests {
         let back = Workspace::from_saved(saved);
         assert_eq!(back.places(PanelId::Preview), 0);
         assert_eq!(back.state_tabs(), Workspace::essentials().state_tabs());
+    }
+
+    // --- Fase D, tarea 6: tiras por orilla ---
+
+    #[test]
+    fn a_group_against_an_edge_collapses_to_that_edges_strip() {
+        let mut w = Workspace::essentials();
+        let edge = |w: &Workspace, id| {
+            let (s, n) = w.leaf_of(id).unwrap();
+            w.group_edge(s, n)
+        };
+        // La toolbar, pegada a la izquierda; Color a la derecha (y arriba y abajo: los lados van
+        // primero).
+        assert_eq!(edge(&w, PanelId::Tools), Edge::Left);
+        assert_eq!(edge(&w, PanelId::Color), Edge::Right);
+        // Groom a la izquierda de la toolbar: « lo manda a la tira de la izquierda.
+        let (s, n) = w.leaf_of(PanelId::Tools).unwrap();
+        w.dock(PanelId::Groom, DockTarget::Split(s, n, Split::Left));
+        assert_eq!(edge(&w, PanelId::Groom), Edge::Left);
+        let (s, n) = w.leaf_of(PanelId::Groom).unwrap();
+        w.collapse_to_icons(s, n);
+        assert_eq!(w.strip_at(Edge::Left), [PanelId::Groom]);
+        assert!(!w.strip().contains(&PanelId::Groom));
+        // Un grupo a lo ancho arriba de todo (toca la izquierda, la derecha y arriba): arriba.
+        w.state
+            .main_surface_mut()
+            .split_above(NodeIndex::root(), 0.2, vec![PanelId::Lumen]);
+        w.tidy();
+        assert_eq!(edge(&w, PanelId::Lumen), Edge::Top);
+        let (s, n) = w.leaf_of(PanelId::Lumen).unwrap();
+        w.collapse_to_icons(s, n);
+        assert_eq!(w.strip_at(Edge::Top), [PanelId::Lumen]);
+        // Y abajo de todo: abajo.
+        w.state
+            .main_surface_mut()
+            .split_below(NodeIndex::root(), 0.8, vec![PanelId::Slices]);
+        w.tidy();
+        assert_eq!(edge(&w, PanelId::Slices), Edge::Bottom);
+        let (s, n) = w.leaf_of(PanelId::Slices).unwrap();
+        w.collapse_to_icons(s, n);
+        assert_eq!(w.strip_at(Edge::Bottom), [PanelId::Slices]);
+        // La toolbar, a la de la izquierda (en el orden de siempre: antes que Groom).
+        let (s, n) = w.leaf_of(PanelId::Tools).unwrap();
+        w.collapse_to_icons(s, n);
+        assert_eq!(w.strip_at(Edge::Left), [PanelId::Tools, PanelId::Groom]);
+        // Sin rects (nada dibujado), lo que no toca ninguna orilla va a la derecha.
+        let mut w = Workspace::essentials();
+        let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
+        w.dock(PanelId::Font, DockTarget::Split(s, n, Split::Below));
+        assert_eq!(edge(&w, PanelId::Font), Edge::Right);
+        // Cada panel, una vez.
+        for &id in PanelId::ALL.iter().filter(|&&p| p != PanelId::Preview) {
+            assert_eq!(w.places(id), 1, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn each_strip_is_saved_and_the_strip_of_an_older_version_is_the_right_one() {
+        let mut w = Workspace::essentials();
+        w.to_strip_at(PanelId::Tools, Edge::Left);
+        w.to_strip_at(PanelId::Groom, Edge::Bottom);
+        w.to_strip_at(PanelId::Lumen, Edge::Top);
+        let saved = w.to_saved();
+        assert_eq!(saved.version, SAVED_VERSION);
+        assert_eq!(SAVED_VERSION, 6);
+        let ron = ron::to_string(&saved).unwrap();
+        let back = Workspace::from_saved(ron::from_str(&ron).unwrap());
+        for edge in Edge::ALL {
+            assert_eq!(back.strip_at(edge), w.strip_at(edge), "{edge:?}");
+        }
+        assert_eq!(back.state_tabs(), w.state_tabs());
+        // Una 5 (o anterior): su tira es la de la derecha (las otras no existían).
+        let mut old = w.to_saved();
+        old.version = 5;
+        let back = Workspace::from_saved(old);
+        for edge in [Edge::Left, Edge::Top, Edge::Bottom] {
+            assert!(back.strip_at(edge).is_empty(), "{edge:?}");
+        }
+        for id in [PanelId::Tools, PanelId::Groom, PanelId::Lumen] {
+            assert!(back.strip().contains(&id), "{id:?}");
+        }
+        // Lo que viene en dos tiras queda en una (la primera); lo que no viene en ninguna, a la
+        // derecha.
+        let mut twice = w.to_saved();
+        twice.left.push("groom".into());
+        twice.top.retain(|k| k != "lumen");
+        let back = Workspace::from_saved(twice);
+        assert_eq!(back.places(PanelId::Groom), 1);
+        assert_eq!(back.strip_at(Edge::Left), [PanelId::Tools, PanelId::Groom]);
+        assert!(back.strip().contains(&PanelId::Lumen));
+        for &id in PanelId::ALL.iter().filter(|&&p| p != PanelId::Preview) {
+            assert_eq!(back.places(id), 1, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn dock_from_a_strip_puts_the_toolbar_back_at_its_edge() {
+        let mut w = Workspace::essentials();
+        let essentials = w.state_tabs();
+        // De la tira de la izquierda: a su lugar de fábrica (a la izquierda de todo).
+        w.to_strip_at(PanelId::Tools, Edge::Left);
+        w.dock_from_strip(PanelId::Tools);
+        assert_eq!(leaf_tabs(&w, NodeIndex::root().left()), [PanelId::Tools]);
+        assert_eq!(w.tools_side(), Some(true));
+        assert_eq!(w.state_tabs(), essentials);
+        // De la de la derecha: a la derecha del lienzo.
+        w.to_strip_at(PanelId::Tools, Edge::Right);
+        w.dock_from_strip(PanelId::Tools);
+        assert_eq!(w.tools_side(), Some(false));
+        // Los demás, con el foco (al grupo de Color).
+        w.dock_from_strip(PanelId::Library);
+        assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+        for &id in PanelId::ALL.iter().filter(|&&p| p != PanelId::Preview) {
+            assert_eq!(w.places(id), 1, "{id:?}");
+        }
     }
 }

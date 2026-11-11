@@ -13,8 +13,12 @@
 //! timeline son hojas del árbol (tareas 3 y 4), y el Preview también (tarea 5: de fábrica flota
 //! en la esquina de abajo a la derecha, como su ventana de antes, y su ventana es la de antes: con
 //! Pixel UI la del diseño, sin él la `egui::Window`). Ocultos (el timeline y el Preview se prenden y se apagan), salen del árbol y
-//! vuelven a su lugar ([`Workspace::sync_panel`]). La tira de íconos todavía va a la derecha del
-//! lienzo (y del timeline, si va justo debajo de él): la dibuja `show` encima (ver `show::show`).
+//! vuelven a su lugar ([`Workspace::sync_panel`]). Hay una tira de íconos por orilla (tarea 6,
+//! [`Workspace::strip_at`]): la de la derecha va a la derecha del lienzo (y del timeline, si va justo
+//! debajo de él), encima de su hoja; las otras tres, en su orilla, fuera del árbol (vacías no
+//! ocupan nada). La dibuja `show` (ver `show::show`); « de un grupo manda sus paneles a la de su
+//! orilla y cerrar una pestaña, a la de la orilla más cercana ([`Workspace::group_edge`]). Cada
+//! panel se dibuja en un solo anfitrión por frame (ver `ChimpApp::claim_panel`).
 //!
 //! Decisión del usuario (2026-11-10): un grupo acoplado con **un solo panel no lleva barra de
 //! pestañas** (se ve como hoy); al pasar el puntero por su borde de arriba se resalta una franja
@@ -46,6 +50,7 @@ use eframe::egui;
 use egui_dock::DockState;
 pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 
+use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 
 pub(crate) use drop::{drop_target, paint_drop_zone};
@@ -58,8 +63,13 @@ pub(crate) use show::{COLLAPSE, MODEL_ELSEWHERE, has_marker};
 #[derive(Clone, Debug)]
 pub(crate) struct Workspace {
     state: DockState<PanelId>,
-    /// Los paneles en la tira, en el orden de `PanelId::ALL`.
-    strip: Vec<PanelId>,
+    /// Los paneles de la tira de íconos de cada orilla (por `Edge::index`; la de la derecha es la de
+    /// siempre), cada una en el orden de `PanelId::ALL`.
+    strips: [Vec<PanelId>; 4],
+    /// Con Pixel UI (lo pone `show` cada frame): la toolbar sola en su ventana va sin barra de
+    /// pestañas, con la franja de agarre (ver [`Workspace::refresh_tab_bars`]). Sin él no hay
+    /// franja, así que lleva su pestaña.
+    pixel: bool,
     /// Es el que queda en `app.workspace` mientras [`show`] tiene prestado el de verdad (los
     /// paneles se dibujan con la app entera): cambiarlo no serviría de nada.
     lent: bool,
@@ -88,10 +98,10 @@ impl Default for Workspace {
 }
 
 impl Workspace {
-    /// Cuántas veces está `id` en el acomodo: en la tira y en el árbol (para los tests: una).
+    /// Cuántas veces está `id` en el acomodo: en las tiras y en el árbol (para los tests: una).
     #[cfg(test)]
     pub(crate) fn places(&self, id: PanelId) -> usize {
-        let in_strip = self.strip.iter().filter(|&&p| p == id).count();
+        let in_strip = self.strips.iter().flatten().filter(|&&p| p == id).count();
         let in_tree = self
             .state
             .iter_all_tabs()
@@ -106,13 +116,22 @@ impl Workspace {
         self.state.iter_all_tabs().map(|(_, p)| *p).collect()
     }
 
-    /// Los paneles de la tira, en orden.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "solo los tests; la tira la toma `show`")
-    )]
+    /// Los paneles de la tira de la derecha (la de siempre), en orden.
+    #[cfg(test)]
     pub(crate) fn strip(&self) -> &[PanelId] {
-        &self.strip
+        self.strip_at(Edge::Right)
+    }
+
+    /// Los paneles de la tira de la orilla `edge`, en orden.
+    pub(crate) fn strip_at(&self, edge: Edge) -> &[PanelId] {
+        &self.strips[edge.index()]
+    }
+
+    /// En qué tira está `id`, si está en una.
+    pub(crate) fn strip_of(&self, id: PanelId) -> Option<Edge> {
+        Edge::ALL
+            .into_iter()
+            .find(|e| self.strips[e.index()].contains(&id))
     }
 
     /// Si `id` está acoplado (en la superficie principal: en cualquier lado del lienzo).

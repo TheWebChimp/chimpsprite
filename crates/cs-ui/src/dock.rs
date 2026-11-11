@@ -2,6 +2,13 @@
 //! un botón por panel (Artboards, Slices, Library…) que lo abre flotando a su izquierda. Así esas secciones
 //! no le quitan lugar a la paleta y al editor de color. Hasta abajo, el que prende y apaga el
 //! timeline y arriba de él, el de la ventanita de preview.
+//!
+//! Fase D, tarea 6: hay una tira por orilla de la ventana ([`Edge`]). La de la derecha es la de
+//! siempre (a la derecha del lienzo, con los botones del timeline y del Preview); las otras tres
+//! van en su orilla, fuera del árbol del workspace, y solo se ven si tienen algo (ver
+//! `workspace::show`). Sus flyouts salen hacia adentro: a la derecha de la tira de la izquierda,
+//! debajo de la de arriba y encima de la de abajo. Si los botones no caben, los del final se van a
+//! un botón "More Panels" que los lista (nunca se recortan ni se enciman).
 
 use eframe::egui::{self, Rect, Sense, Shape, Ui, Vec2, vec2};
 
@@ -34,12 +41,54 @@ pub const FLYOUT_MARGIN: i8 = 8;
 /// Entre el botón y su panel flotante (la pestaña los une).
 const FLYOUT_GAP: f32 = 4.0;
 
+/// La orilla de la ventana de una tira de íconos (ver `Workspace::strip_at`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    /// Las cuatro, en el orden de su lugar en `Workspace::strips` (ver [`Edge::index`]).
+    pub(crate) const ALL: [Edge; 4] = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom];
+
+    /// Su lugar en [`Edge::ALL`].
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Edge::Left => 0,
+            Edge::Right => 1,
+            Edge::Top => 2,
+            Edge::Bottom => 3,
+        }
+    }
+
+    /// Si su tira va a lo alto (la de la izquierda y la de la derecha) o a lo ancho.
+    pub(crate) fn vertical(self) -> bool {
+        matches!(self, Edge::Left | Edge::Right)
+    }
+}
+
 /// Dónde va un panel flotante: junto a su botón y dentro de la columna del dock (de la altura de
-/// las reglas del lienzo al botón del timeline).
+/// las reglas del lienzo al botón del timeline). En las tiras de arriba y de abajo, `column` es el
+/// área del workspace (el flyout sale hacia adentro y no pasa de ella).
 #[derive(Clone, Copy, Debug)]
 pub struct Anchor {
     pub button: Rect,
     pub column: Rect,
+    pub(crate) edge: Edge,
+}
+
+impl Anchor {
+    /// Hasta dónde llega abajo el flyout (con su marco): el fondo de la columna o, en la tira de
+    /// abajo, su botón.
+    pub(crate) fn bottom(&self) -> f32 {
+        match self.edge {
+            Edge::Bottom => self.button.top() - FLYOUT_GAP,
+            _ => self.column.bottom(),
+        }
+    }
 }
 
 /// Los paneles del dock: son los del registro (ver [`crate::panel_registry`]).
@@ -71,6 +120,11 @@ pub enum StripRequest {
 /// El nombre de las opciones del menú contextual de un ícono de la tira.
 pub(crate) const MENU_DOCK: &str = "Dock";
 pub(crate) const MENU_FLOAT: &str = "Float";
+/// El botón de los paneles que no caben en la tira (su tooltip y su etiqueta accesible): un clic
+/// los lista y elegir uno abre su flyout junto a él.
+pub(crate) const MORE: &str = "More Panels";
+/// Su ícono: la flecha de "siguiente" de las pestañas del kit (sin el skin, `»`).
+const MORE_ICON: &str = crate::kit::tabs::ARROW_NEXT;
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (prendido, `on`, con el
 /// marco rosa de la herramienta elegida) y el ícono `icon` centrado (o `plain`, si el skin no lo
@@ -122,6 +176,28 @@ pub(crate) fn strip_frame(style: &egui::Style) -> egui::Frame {
     frame
 }
 
+/// El marco de la tira de la orilla `edge`: el de la derecha es [`strip_frame`]; los demás, el mismo
+/// girado (el aire de [`RIGHT_MARGIN`] del lado de la orilla, nada del lado de adentro y, a lo
+/// largo, el margen de los paneles de egui).
+pub(crate) fn edge_frame(style: &egui::Style, edge: Edge) -> egui::Frame {
+    let mut frame = egui::Frame::side_top_panel(style);
+    let along = frame.inner_margin.top;
+    let m = &mut frame.inner_margin;
+    match edge {
+        Edge::Right => return strip_frame(style),
+        Edge::Left => (m.left, m.right) = (RIGHT_MARGIN, 0),
+        Edge::Top => {
+            (m.top, m.bottom) = (RIGHT_MARGIN, 0);
+            (m.left, m.right) = (along, along);
+        }
+        Edge::Bottom => {
+            (m.top, m.bottom) = (0, RIGHT_MARGIN);
+            (m.left, m.right) = (along, along);
+        }
+    }
+    frame
+}
+
 /// Lo que la tira le quita a lo que va a su izquierda (el lienzo y el timeline de debajo): su
 /// ancho; sin Pixel UI, menos su línea de la izquierda (`egui::Panel` la pone en su margen de
 /// afuera y lo de al lado empieza ahí: así estaba cuando la tira era un panel de la hoja del
@@ -132,6 +208,18 @@ pub(crate) fn strip_room(style: &egui::Style, pixel_ui: bool) -> f32 {
     } else {
         WIDTH - style.visuals.widgets.noninteractive.bg_stroke.width.round()
     }
+}
+
+/// Lo más corta que puede quedar la tira de la derecha sin encimar nada: su marco, el aire de
+/// arriba y de abajo (con Pixel UI), el botón "More Panels" y los dos del timeline y del Preview.
+/// Es el mínimo a lo alto de la hoja del lienzo (la tira va a su lado; ver
+/// `ChimpApp::canvas_area_min`): con menos lugar los paneles se van a "More Panels" (ver
+/// [`show`]), pero esos tres botones caben siempre.
+pub(crate) fn strip_min_len(pixel_ui: bool) -> f32 {
+    // El margen del marco de los paneles de egui no depende del estilo.
+    let frame = egui::Frame::side_top_panel(&egui::Style::default()).inner_margin;
+    let air = if pixel_ui { TOP_AIR + BOTTOM_AIR } else { 0.0 };
+    frame.sum().y + air + 3.0 * BUTTON_SIZE.y + 2.0 * BUTTON_GAP
 }
 
 /// El botón del timeline: lo muestra o lo esconde.
@@ -171,94 +259,180 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }
 
+/// Lo que la app le da a una tira de íconos para dibujarla (ver [`show`]).
+pub(crate) struct StripCtx<'a> {
+    /// Su orilla.
+    pub edge: Edge,
+    /// Sus paneles, en orden (los que no están acoplados ni flotando).
+    pub panels: &'a [DockPanel],
+    /// Los botones del timeline y del Preview, hasta abajo (solo los lleva la de la derecha).
+    pub toggles: Option<(&'a mut bool, &'a mut bool)>,
+    /// El área del workspace: ahí caben los flyouts de las tiras de arriba y de abajo.
+    pub room: Rect,
+    /// El ancho del contenido del flyout de cada panel: "Float" lo pone a flotar donde quedaría
+    /// su flyout (la toolbar, del ancho de su caja).
+    pub flyout_width: &'a dyn Fn(DockPanel) -> f32,
+}
+
+/// Cuántos botones de `len` de largo (más [`BUTTON_GAP`] entre ellos) caben en `room`.
+fn buttons_in(room: f32, len: f32) -> usize {
+    ((room + BUTTON_GAP) / (len + BUTTON_GAP)).floor().max(0.0) as usize
+}
+
 /// El dock: un botón por panel de la tira (`strip`, los que no están acoplados ni flotando) y el
-/// panel abierto, flotando a la izquierda de su botón. Un clic en un botón abre (o cierra) su
-/// panel; arrastrarlo más de lo que egui todavía cuenta como clic (6 puntos) lo levanta (con un
-/// fantasma bajo el puntero) y soltarlo fuera de la tira pide sacarlo ([`StripRequest::Drop`]);
-/// su menú contextual tiene "Dock" y "Float".
-pub fn show(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    strip: &[DockPanel],
-    timeline: &mut bool,
-    preview: &mut bool,
-) -> DockOutput {
+/// panel abierto, flotando junto a su botón (hacia adentro de la ventana). Un clic en un botón abre
+/// (o cierra) su panel; arrastrarlo más de lo que egui todavía cuenta como clic (6 puntos) lo
+/// levanta (con un fantasma bajo el puntero) y soltarlo fuera de la tira pide sacarlo
+/// ([`StripRequest::Drop`]); su menú contextual tiene "Dock" y "Float". Si no caben todos, los del
+/// final se van a "More Panels" ([`MORE`]), que los lista: elegir uno abre su flyout junto a él.
+pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> DockOutput {
+    let StripCtx {
+        edge,
+        panels,
+        toggles,
+        room,
+        flyout_width,
+    } = strip;
     let mut out = DockOutput::default();
-    // Un panel que dejó la tira (se acopló o flota) ya no se abre desde ella.
-    if open_panel(ui.ctx()).is_some_and(|p| !strip.contains(&p)) {
-        set_open(ui.ctx(), None);
-    }
-    let open = open_panel(ui.ctx());
+    let open = open_panel(ui.ctx()).filter(|p| panels.contains(p));
     let mut anchors = Vec::new();
-    ui.spacing_mut().item_spacing.y = BUTTON_GAP;
+    let vertical = edge.vertical();
+    if vertical {
+        ui.spacing_mut().item_spacing.y = BUTTON_GAP;
+    } else {
+        ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+    }
     // Soltar un ícono sobre la tira no lo saca.
     let strip_rect = ui.max_rect();
     let mut column = ui.max_rect();
-    if skin.is_some() {
-        ui.add_space(TOP_AIR);
-        column.min.y += TOP_AIR;
-        column.max.y -= BOTTOM_AIR;
-    }
-    for &panel in strip {
-        let is_open = open == Some(panel);
-        let response = match skin {
-            Some(skin) => pixel_button(
-                ui,
-                skin,
-                panel.label(),
-                (panel.spec().icon, panel.spec().plain),
-                is_open,
-            ),
-            None => ui
-                .add(
-                    egui::Button::new(panel.spec().plain)
-                        .selected(is_open)
-                        .min_size(BUTTON_SIZE),
-                )
-                .tip(panel.label()),
-        };
-        // También se arrastra (egui lo cuenta como clic mientras no se mueva más de 6 puntos).
-        let response = response.interact(Sense::click_and_drag());
-        if response.clicked() {
-            set_open(ui.ctx(), (!is_open).then_some(panel));
-        }
-        let pointer = ui.input(|i| i.pointer.latest_pos());
-        let outside = pointer.filter(|p| !strip_rect.contains(*p));
-        if response.dragged() {
-            let delta = response.total_drag_delta().unwrap_or_default();
-            ghost(ui, skin, panel, response.rect.translate(delta.round()));
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            out.dragging = outside.map(|p| (panel, p));
-        }
-        if response.drag_stopped()
-            && let Some(p) = outside
-        {
-            out.request = Some(StripRequest::Drop(panel, p));
-        }
-        crate::menus::context_menu(&response, |ui| {
-            if ui.add(crate::menus::plain(MENU_DOCK)).clicked() {
-                out.request = Some(StripRequest::Dock(panel));
-                ui.close();
-            }
-            if ui.add(crate::menus::plain(MENU_FLOAT)).clicked() {
-                let at = response.rect.left_top()
-                    - vec2(flyout_reach(panel.spec().reference_width), 0.0);
-                out.request = Some(StripRequest::Float(panel, at.round()));
-                ui.close();
-            }
-        });
-        anchors.push((panel, response.rect));
-    }
-    // Hasta abajo del dock, el del timeline y arriba de él, el del preview.
-    let bottom = egui::Layout::bottom_up(egui::Align::Min);
-    ui.with_layout(bottom, |ui| {
+    // A lo largo de la tira: lo que hay para los botones de los paneles (sin el aire de las
+    // puntas ni los del timeline y el Preview, con un aire entre los dos grupos).
+    let along = if vertical {
+        strip_rect.height()
+    } else {
+        strip_rect.width()
+    };
+    let air = if skin.is_some() {
+        TOP_AIR + BOTTOM_AIR
+    } else {
+        0.0
+    };
+    let tail = match toggles {
+        Some(_) => 2.0 * BUTTON_SIZE.y + 2.0 * BUTTON_GAP,
+        None => 0.0,
+    };
+    let fit = buttons_in(along - air - tail, BUTTON_SIZE.y);
+    let (shown, hidden) = if panels.len() <= fit {
+        (panels, &[][..])
+    } else {
+        panels.split_at(fit.saturating_sub(1))
+    };
+    let inner = |ui: &mut Ui| {
         if skin.is_some() {
-            ui.add_space(BOTTOM_AIR);
+            ui.add_space(TOP_AIR);
+            if vertical {
+                column.min.y += TOP_AIR;
+                column.max.y -= BOTTOM_AIR;
+            }
         }
-        toggle(ui, skin, TIMELINE, TIMELINE_ICON, "🎞", timeline);
-        toggle(ui, skin, PREVIEW, PREVIEW_ICON, "▣", preview);
-    });
-    let Some(panel) = open_panel(ui.ctx()) else {
+        for &panel in shown {
+            let is_open = open == Some(panel);
+            let response = match skin {
+                Some(skin) => pixel_button(
+                    ui,
+                    skin,
+                    panel.label(),
+                    (panel.spec().icon, panel.spec().plain),
+                    is_open,
+                ),
+                None => ui
+                    .add(
+                        egui::Button::new(panel.spec().plain)
+                            .selected(is_open)
+                            .min_size(BUTTON_SIZE),
+                    )
+                    .tip(panel.label()),
+            };
+            // También se arrastra (egui lo cuenta como clic mientras no se mueva más de 6 puntos).
+            let response = response.interact(Sense::click_and_drag());
+            if response.clicked() {
+                set_open(ui.ctx(), (!is_open).then_some(panel));
+            }
+            let pointer = ui.input(|i| i.pointer.latest_pos());
+            let outside = pointer.filter(|p| !strip_rect.contains(*p));
+            if response.dragged() {
+                let delta = response.total_drag_delta().unwrap_or_default();
+                ghost(ui, skin, panel, response.rect.translate(delta.round()));
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                out.dragging = outside.map(|p| (panel, p));
+            }
+            if response.drag_stopped()
+                && let Some(p) = outside
+            {
+                out.request = Some(StripRequest::Drop(panel, p));
+            }
+            crate::menus::context_menu(&response, |ui| {
+                if ui.add(crate::menus::plain(MENU_DOCK)).clicked() {
+                    out.request = Some(StripRequest::Dock(panel));
+                    ui.close();
+                }
+                if ui.add(crate::menus::plain(MENU_FLOAT)).clicked() {
+                    let at = float_corner(edge, panel, response.rect, flyout_width(panel));
+                    out.request = Some(StripRequest::Float(panel, at.round()));
+                    ui.close();
+                }
+            });
+            anchors.push((panel, response.rect));
+        }
+        // Los que no caben, en "More Panels": prendido si el abierto es uno de ellos.
+        if !hidden.is_empty() {
+            let is_open = open.is_some_and(|p| hidden.contains(&p));
+            let response = match skin {
+                Some(skin) => pixel_button(ui, skin, MORE, (MORE_ICON, "»"), is_open),
+                None => ui
+                    .add(
+                        egui::Button::new("»")
+                            .selected(is_open)
+                            .min_size(BUTTON_SIZE),
+                    )
+                    .tip(MORE),
+            };
+            let align = match edge {
+                Edge::Right => egui::RectAlign::LEFT_START,
+                Edge::Left => egui::RectAlign::RIGHT_START,
+                Edge::Top => egui::RectAlign::BOTTOM_START,
+                Edge::Bottom => egui::RectAlign::TOP_START,
+            };
+            crate::menus::click_menu(&response, align, |ui| {
+                for &panel in hidden {
+                    if ui.add(crate::menus::plain(panel.label())).clicked() {
+                        set_open(ui.ctx(), Some(panel));
+                        ui.close();
+                    }
+                }
+            });
+            anchors.extend(hidden.iter().map(|&p| (p, response.rect)));
+        }
+        // Hasta abajo del dock, el del timeline y arriba de él, el del preview.
+        if let Some((timeline, preview)) = toggles {
+            let bottom = egui::Layout::bottom_up(egui::Align::Min);
+            ui.with_layout(bottom, |ui| {
+                if skin.is_some() {
+                    ui.add_space(BOTTOM_AIR);
+                }
+                toggle(ui, skin, TIMELINE, TIMELINE_ICON, "🎞", timeline);
+                toggle(ui, skin, PREVIEW, PREVIEW_ICON, "▣", preview);
+            });
+        }
+    };
+    if vertical {
+        inner(ui);
+    } else {
+        let row = egui::Layout::left_to_right(egui::Align::Min);
+        ui.with_layout(row, inner);
+        column = room;
+    }
+    let Some(panel) = open_panel(ui.ctx()).filter(|p| panels.contains(p)) else {
         return out;
     };
     let button = anchors
@@ -266,7 +440,11 @@ pub fn show(
         .find(|(p, _)| *p == panel)
         .map(|(_, r)| *r)
         .unwrap_or(Rect::NOTHING);
-    let anchor = Anchor { button, column };
+    let anchor = Anchor {
+        button,
+        column,
+        edge,
+    };
     // Todos los paneles abiertos los dibuja la app (`ChimpApp::panel_flyout`).
     match panel {
         DockPanel::Artboards
@@ -277,7 +455,7 @@ pub fn show(
         | DockPanel::Library
         | DockPanel::Font
         | DockPanel::Model
-        // La toolbar cerrada (hasta que haya tiras por orilla, va en esta).
+        // La toolbar cerrada (en la tira de la orilla de donde estaba).
         | DockPanel::Tools => out.app_panel = Some((panel, anchor)),
         #[cfg(not(target_arch = "wasm32"))]
         DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
@@ -289,6 +467,17 @@ pub fn show(
         | DockPanel::Preview => {}
     }
     out
+}
+
+/// Dónde pone "Float" la esquina de la ventana de `panel` desde su botón `button` de la tira de
+/// `edge`: donde quedaría su flyout (de `width` de contenido), hacia adentro de la ventana.
+fn float_corner(edge: Edge, panel: DockPanel, button: Rect, width: f32) -> egui::Pos2 {
+    match edge {
+        Edge::Right => button.left_top() - vec2(flyout_reach(width), 0.0),
+        Edge::Left => button.right_top() + vec2(FLYOUT_GAP, 0.0),
+        Edge::Top => button.left_bottom() + vec2(0.0, FLYOUT_GAP),
+        Edge::Bottom => button.left_top() - vec2(0.0, flyout_reach(panel.spec().default_size.y)),
+    }
 }
 
 /// El fantasma del ícono de `panel` que se arrastra, con el botón en `button` (donde quedó el
@@ -393,21 +582,54 @@ fn flyout_with(
 ) {
     let tall = body != Body::Fit;
     let id = egui::Id::new(("dock_flyout", panel.label()));
-    let Anchor { button, column } = anchor;
+    let Anchor {
+        button,
+        column,
+        edge,
+    } = anchor;
     // El alto de la vez pasada, para saber si cabe.
     let height = ctx.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
-    let top = if tall {
-        column.top().round()
-    } else {
-        flyout_top(button.top(), height, column)
+    let frame_len = 2.0 * FLYOUT_MARGIN as f32;
+    // Dónde va (junto a su botón, hacia adentro de la ventana) y lo que cabe a lo alto, sin el
+    // marco (el de egui mide más o menos lo mismo).
+    let (pos, pivot, max_height) = match edge {
+        Edge::Right | Edge::Left => {
+            let top = if tall {
+                column.top().round()
+            } else {
+                flyout_top(button.top(), height, column)
+            };
+            let max_height = (column.height() - frame_len).max(BUTTON_SIZE.y);
+            if edge == Edge::Right {
+                let pos = egui::pos2(button.left() - FLYOUT_GAP, top);
+                (pos, egui::Align2::RIGHT_TOP, max_height)
+            } else {
+                let pos = egui::pos2(button.right() + FLYOUT_GAP, top);
+                (pos, egui::Align2::LEFT_TOP, max_height)
+            }
+        }
+        Edge::Top | Edge::Bottom => {
+            // A lo ancho, alineado con su botón si cabe en el área (si no, más a la izquierda).
+            let x = button
+                .left()
+                .min(column.right() - (width + frame_len))
+                .max(column.left())
+                .round();
+            if edge == Edge::Top {
+                let top = button.bottom() + FLYOUT_GAP;
+                let max_height = (column.bottom() - top - frame_len).max(BUTTON_SIZE.y);
+                (egui::pos2(x, top), egui::Align2::LEFT_TOP, max_height)
+            } else {
+                let bottom = button.top() - FLYOUT_GAP;
+                let max_height = (bottom - column.top() - frame_len).max(BUTTON_SIZE.y);
+                (egui::pos2(x, bottom), egui::Align2::LEFT_BOTTOM, max_height)
+            }
+        }
     };
-    let pos = egui::pos2(button.left() - FLYOUT_GAP, top);
-    // Lo que cabe en la columna, sin el marco (el de egui mide más o menos lo mismo).
-    let max_height = (column.height() - 2.0 * FLYOUT_MARGIN as f32).max(BUTTON_SIZE.y);
     egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
-        .pivot(egui::Align2::RIGHT_TOP)
+        .pivot(pivot)
         .show(ctx, |ui| {
             let frame = match skin {
                 Some(_) => egui::Frame::NONE.inner_margin(FLYOUT_MARGIN),
@@ -448,14 +670,11 @@ fn flyout_with(
                 let ppp = ui.ctx().pixels_per_point();
                 let rect = Rect::from_min_size(rect.min.round(), rect.size().round());
                 let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
-                shapes.extend(tab_shapes(
-                    skin,
-                    piece,
-                    panel.spec().icon,
-                    rect,
-                    button,
-                    ppp,
-                ));
+                let icon = panel.spec().icon;
+                shapes.extend(match edge {
+                    Edge::Right => tab_shapes(skin, piece, icon, rect, button, ppp),
+                    _ => edge_tab_shapes(skin, piece, icon, (rect, button), edge, ppp),
+                });
                 ui.painter().set(background, Shape::Vec(shapes));
                 plain_icon(ui, skin, panel.spec().icon, panel.spec().plain, button);
             }
@@ -572,6 +791,97 @@ fn tab_shapes(
     shapes
 }
 
+/// Como [`tab_shapes`] (el de la tira de la derecha) para las otras orillas: el botón del panel
+/// abierto como pestaña de su caja (`panel_rect`), del lado de la caja que da a la tira (`edge`:
+/// la de la izquierda, la de arriba o la de abajo), sin la línea que los separa y con los bordes
+/// de los lados siguiendo derecho de la pestaña a la caja.
+fn edge_tab_shapes(
+    skin: &Skin,
+    piece: &crate::skin::Piece,
+    icon: &str,
+    (panel_rect, button): (Rect, Rect),
+    edge: Edge,
+    ppp: f32,
+) -> Vec<Shape> {
+    let Some(center) = piece.center else {
+        return Vec::new();
+    };
+    let pos = egui::pos2;
+    // Los bordes de la caja (lo que queda fuera del centro del 9-slice).
+    let left = center.x as f32;
+    let right = (piece.size[0] - center.x - center.w) as f32;
+    let top = center.y as f32;
+    let bottom = (piece.size[1] - center.y - center.h) as f32;
+    let fill = piece.pixel(center.x, center.y);
+    let solid = |r: Rect, color: egui::Color32| Shape::rect_filled(r, 0.0, color);
+    let tab = match edge {
+        Edge::Left => Rect::from_min_max(
+            button.min.round(),
+            pos(panel_rect.left() + 1.0, button.bottom()).round(),
+        ),
+        Edge::Top => Rect::from_min_max(
+            button.min.round(),
+            pos(button.right(), panel_rect.top() + 1.0).round(),
+        ),
+        Edge::Bottom => Rect::from_min_max(
+            pos(button.left(), panel_rect.bottom() - 1.0).round(),
+            button.max.round(),
+        ),
+        Edge::Right => return tab_shapes(skin, piece, icon, panel_rect, button, ppp),
+    };
+    let mut shapes = pixel_ui::piece_shapes(piece, tab, ppp);
+    if edge == Edge::Left {
+        // Sin la línea entre la pestaña y la caja; los bordes de arriba y de abajo, de una a la
+        // otra (desde la línea oscura de la caja, si empiezan o terminan a la misma altura).
+        let (x0, inner) = (tab.right() - right, panel_rect.left() + left);
+        let seam = Rect::from_min_max(pos(x0, tab.top() + top), pos(inner, tab.bottom() - bottom));
+        shapes.push(solid(seam, fill));
+        let to = |aligned: bool| if aligned { inner } else { tab.right() };
+        let x1 = to((tab.top() - panel_rect.top()).abs() < 0.5);
+        for k in 0..center.y {
+            let y = tab.top() + k as f32;
+            let r = Rect::from_min_max(pos(x0, y), pos(x1, y + 1.0));
+            shapes.push(solid(r, piece.pixel(center.x, k)));
+        }
+        let x1 = to((tab.bottom() - panel_rect.bottom()).abs() < 0.5);
+        for k in center.y + center.h..piece.size[1] {
+            let y = tab.bottom() - (piece.size[1] - k) as f32;
+            let r = Rect::from_min_max(pos(x0, y), pos(x1, y + 1.0));
+            shapes.push(solid(r, piece.pixel(center.x, k)));
+        }
+    } else {
+        // Arriba o abajo: lo mismo de lado, con los bordes de la izquierda y de la derecha.
+        let (y0, y1) = if edge == Edge::Top {
+            (tab.bottom() - bottom, panel_rect.top() + top)
+        } else {
+            (panel_rect.bottom() - bottom, tab.top() + top)
+        };
+        let seam = Rect::from_min_max(pos(tab.left() + left, y0), pos(tab.right() - right, y1));
+        shapes.push(solid(seam, fill));
+        // Hasta dentro de la caja si su borde de ese lado va a la misma altura; si no, solo la
+        // pestaña.
+        let span = |aligned: bool| match (edge, aligned) {
+            (Edge::Top, true) | (Edge::Bottom, true) => (y0, y1),
+            (Edge::Top, false) => (y0, tab.bottom()),
+            _ => (tab.top(), y1),
+        };
+        let (a, b) = span((tab.left() - panel_rect.left()).abs() < 0.5);
+        for k in 0..center.x {
+            let x = tab.left() + k as f32;
+            let r = Rect::from_min_max(pos(x, a), pos(x + 1.0, b));
+            shapes.push(solid(r, piece.pixel(k, center.y)));
+        }
+        let (a, b) = span((tab.right() - panel_rect.right()).abs() < 0.5);
+        for k in center.x + center.w..piece.size[0] {
+            let x = tab.right() - (piece.size[0] - k) as f32;
+            let r = Rect::from_min_max(pos(x, a), pos(x + 1.0, b));
+            shapes.push(solid(r, piece.pixel(k, center.y)));
+        }
+    }
+    shapes.extend(pixel_draw::piece_centered(skin, icon, button, ppp));
+    shapes
+}
+
 /// Un panel flotante abierto dibujado en `panel_rect` con la pestaña que envuelve al botón
 /// `button` (con el ícono `icon`): el UI Catalog lo muestra así, sin el contenido.
 pub(crate) fn open_preview_shapes(
@@ -599,6 +909,7 @@ mod tests {
         let anchor = Anchor {
             button: Rect::from_min_size(egui::pos2(403.0, 20.0), BUTTON_SIZE),
             column,
+            edge: Edge::Right,
         };
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0))),

@@ -51,6 +51,29 @@ pub(crate) struct PanelCtx {
     pub window: Option<egui::Rect>,
 }
 
+/// Quién hospeda un panel en un frame (ver [`ChimpApp::claim_panel`]): cada panel se dibuja en uno
+/// solo (su estado y los ids de `forms` son globales); los demás dicen dónde está.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PanelHost {
+    /// Su lugar en el workspace: acoplado o flotando.
+    Workspace,
+    /// El flyout de su botón de una tira de íconos.
+    Flyout,
+    /// El panel 3D fijo de la pestaña de un modelo (en lugar de la tira).
+    ModelPanel,
+}
+
+impl PanelHost {
+    /// Lo que muestra otro anfitrión del panel mientras lo tiene este.
+    pub(crate) fn shown_in(self) -> &'static str {
+        match self {
+            PanelHost::Workspace => "Shown in the workspace",
+            PanelHost::Flyout => "Shown in its flyout",
+            PanelHost::ModelPanel => "Shown in the 3D panel",
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// Cada panel que dibujó [`ChimpApp::draw_panel`], con repetidos (para los tests: una
@@ -87,6 +110,22 @@ impl ChimpApp {
             self.panels_drawn_prev = self.panels_drawn.clone();
         }
         self.panels_drawn.clear();
+        self.panel_hosts.clear();
+    }
+
+    /// Pide hospedar `id` en `host` este frame: el primero que lo pide se queda con él (vuelve a
+    /// pedirlo y le dice que sí); a cualquier otro le devuelve quién lo tiene, para que muestre
+    /// dónde está ([`PanelHost::shown_in`]) en lugar de dibujarlo otra vez. Generaliza lo del
+    /// panel 3D en la pestaña de un modelo (lo pide su panel fijo antes del workspace).
+    pub(crate) fn claim_panel(&mut self, id: PanelId, host: PanelHost) -> Result<(), PanelHost> {
+        match self.panel_hosts.iter().find(|(p, _)| *p == id) {
+            Some(&(_, owner)) if owner != host => Err(owner),
+            Some(_) => Ok(()),
+            None => {
+                self.panel_hosts.push((id, host));
+                Ok(())
+            }
+        }
     }
 
     /// El panel `id` se dibujó en este frame (hasta ahora).
@@ -471,27 +510,24 @@ impl ChimpApp {
         // El fondo del panel (la lista de Lospec llega ahí): abajo de la columna del dock.
         let panel = PanelCtx {
             modal,
-            bottom: Some(anchor.column.bottom() - dock::FLYOUT_MARGIN as f32),
+            bottom: Some(anchor.bottom() - dock::FLYOUT_MARGIN as f32),
             window: None,
         };
+        // Si otro anfitrión ya lo tiene este frame, dice dónde está (no se dibuja dos veces).
+        let elsewhere = self.claim_panel(id, PanelHost::Flyout).err();
         let mut action = None;
         let contents = |ui: &mut egui::Ui| {
-            // La toolbar, con su scroll (como acoplada): con la UI a 2× o 3× en una ventana baja
-            // no cabe en la columna.
-            if id == PanelId::Tools {
+            if let Some(owner) = elsewhere {
+                ui.add_enabled(false, egui::Label::new(owner.shown_in()));
+            } else if id == PanelId::Tools {
+                // La toolbar, con su scroll (como acoplada): con la UI a 2× o 3× en una ventana
+                // baja no cabe en la columna.
                 panels::tools_scroll_area().show(ui, |ui| action = self.draw_panel(ui, id, &panel));
             } else {
                 action = self.draw_panel(ui, id, &panel);
             }
         };
-        let width = match (id, skin) {
-            // La caja de la toolbar (sin su margen: el flyout pone el suyo).
-            (PanelId::Tools, Some(skin)) => {
-                crate::pixel_ui::toolbar_width(skin)
-                    - 2.0 * f32::from(crate::pixel_ui::TOOLBAR_MARGIN)
-            }
-            _ => spec.reference_width,
-        };
+        let width = flyout_width(id, skin);
         match body {
             Body::Fixed => dock::flyout_fixed(ctx, id, anchor, skin, width, contents),
             Body::Fit | Body::Tall => {
@@ -501,6 +537,17 @@ impl ChimpApp {
         if let Some(action) = action {
             self.apply_panel_action(ctx, action);
         }
+    }
+}
+
+/// El ancho del contenido del flyout de `id` (el de su ficha; la toolbar, el de su caja, sin su
+/// margen: el flyout pone el suyo). "Float" de su tira la pone a flotar ahí (ver `dock::show`).
+pub(crate) fn flyout_width(id: PanelId, skin: Option<&crate::skin::Skin>) -> f32 {
+    match (id, skin) {
+        (PanelId::Tools, Some(skin)) => {
+            crate::pixel_ui::toolbar_width(skin) - 2.0 * f32::from(crate::pixel_ui::TOOLBAR_MARGIN)
+        }
+        _ => id.spec().reference_width,
     }
 }
 
@@ -963,5 +1010,39 @@ mod tests {
         assert!(app.canvas_size.is_none());
         app.apply_panel_action(&ctx, super::PanelAction::OpenCanvasSize);
         assert!(app.canvas_size.is_some());
+    }
+
+    #[test]
+    fn a_panel_has_one_host_per_frame_and_the_others_say_where_it_is() {
+        use super::PanelHost;
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        app.begin_panel_frame();
+        assert_eq!(
+            app.claim_panel(PanelId::Library, PanelHost::Workspace),
+            Ok(())
+        );
+        // El mismo anfitrión otra vez (otra pasada del frame): sigue siendo suyo.
+        assert_eq!(
+            app.claim_panel(PanelId::Library, PanelHost::Workspace),
+            Ok(())
+        );
+        assert_eq!(
+            app.claim_panel(PanelId::Library, PanelHost::Flyout),
+            Err(PanelHost::Workspace)
+        );
+        assert_eq!(PanelHost::Workspace.shown_in(), "Shown in the workspace");
+        // El 3D en la pestaña de un modelo: lo de la fase C, igual.
+        assert_eq!(
+            app.claim_panel(PanelId::Model, PanelHost::ModelPanel),
+            Ok(())
+        );
+        let owner = app
+            .claim_panel(PanelId::Model, PanelHost::Workspace)
+            .unwrap_err();
+        assert_eq!(owner.shown_in(), crate::workspace::MODEL_ELSEWHERE);
+        // Un frame nuevo empieza de cero.
+        app.begin_panel_frame();
+        assert_eq!(app.claim_panel(PanelId::Library, PanelHost::Flyout), Ok(()));
     }
 }

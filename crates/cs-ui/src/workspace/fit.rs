@@ -54,12 +54,24 @@ impl Workspace {
     /// [`tools_level`]): `Some(true)` a su izquierda, `Some(false)` a su derecha. Así va del ancho
     /// de su caja (`SidePoints::toolbar`), su divisor no se arrastra ni se ve, y su margen de ese
     /// lado cuenta desde el divisor (ver `show`).
-    pub(super) fn tools_side(&self) -> Option<bool> {
+    pub(crate) fn tools_side(&self) -> Option<bool> {
         let tree = self.state.main_surface();
         chain(tree)
             .into_iter()
             .find(|level| tools_level(tree, level))
             .map(|level| level.first)
+    }
+
+    /// Si la toolbar sola va justo a la izquierda del lienzo: lo primero a su izquierda, subiendo
+    /// del lienzo, es ella (y no otro grupo entre los dos). Ahí el lienzo no lleva margen a la
+    /// izquierda: su aire es el de la toolbar (ver `ChimpApp::canvas_area`).
+    pub(super) fn tools_beside_canvas(&self) -> bool {
+        let tree = self.state.main_surface();
+        chain(tree)
+            .into_iter()
+            .rev()
+            .find(|level| level.horizontal && level.first)
+            .is_some_and(|level| tools_level(tree, &level))
     }
 
     /// El divisor entre la toolbar y el lado del lienzo (ver [`Workspace::tools_side`]) en el
@@ -547,12 +559,18 @@ pub(super) fn fit_windows(ctx: &egui::Context, w: &mut Workspace, m: &Minima, se
             continue;
         };
         let need = node_min(&w.state[s], NodeIndex::root(), m, sep, bar);
-        let grow = (need - inner.size()).max(egui::Vec2::ZERO);
-        if grow.x < 0.5 && grow.y < 0.5 {
+        let mut grow = (need - inner.size()).max(egui::Vec2::ZERO);
+        // La toolbar sola en su ventana va siempre del ancho de su caja: se le pide cada frame
+        // (como al Preview), porque una ventana de egui sin un tamaño pedido vuelve a su mínimo de
+        // fábrica (96 de ancho, casi tres veces la caja). A lo alto, lo que tenga.
+        let tools = Some(s) == w.bare_tools();
+        if tools {
+            grow.x = need.x - inner.width();
+        } else if grow.x < 0.5 && grow.y < 0.5 {
             continue;
         }
         let size = (area.size() + grow).ceil().min(screen.floor());
-        if size != area.size()
+        if (tools || size != area.size())
             && let Some(window) = w.state.get_window_state_mut(s)
         {
             window.set_size(size);
@@ -1188,7 +1206,7 @@ mod tests {
             laid_out(&mut w, area);
             // Lo que hace egui_dock al soltar Library en el centro del lienzo: su pestaña.
             let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
-            w.strip.retain(|&p| p != PanelId::Library);
+            w.leave_strips(PanelId::Library);
             w.state
                 .leaf_mut(egui_dock::NodePath {
                     surface: s,

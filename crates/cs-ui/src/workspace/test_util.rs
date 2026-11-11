@@ -43,6 +43,8 @@ pub(super) fn frame_in(
     };
     let mut output = ctx.run_ui(input, |ui| {
         app.pixel.update(ui.ctx(), &app.view);
+        // Como `editor_panels`: el frame de los paneles empieza de cero.
+        app.begin_panel_frame();
         egui::CentralPanel::default().show(ui, |ui| show(app, ui, false));
     });
     output.textures_delta.clear();
