@@ -2,8 +2,8 @@
 //! Library, Dafont, Lospec; y las regiones fijas: Tools, Color, Timeline, el contenido de
 //! Preview): se dibujan con `draw_panel`, que solo toma prestados los campos que cada uno usa, y
 //! lo que piden se aplica después con `apply_panel_action`, con la app entera. `panel_flyout`
-//! hospeda los del dock flotando junto a su botón, con lo que dice su ficha del registro; las
-//! regiones fijas siguen en sus paneles de `editor_panels`.
+//! hospeda los del dock flotando junto a su botón, con lo que dice su ficha del registro; Tools,
+//! Color y Timeline son hojas del workspace (fase D), el contenido de Preview sigue en su ventana.
 
 use eframe::egui;
 

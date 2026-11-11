@@ -101,6 +101,50 @@ impl Workspace {
         })
     }
 
+    /// Si el timeline va solo justo debajo del lienzo (`V[Canvas / Timeline]`, como en
+    /// Essentials): ahí se ve como el panel de abajo de antes (ver `show`): la tira de íconos baja
+    /// a su lado, el divisor no se ve en reposo y su alto es la preferencia del usuario.
+    pub(crate) fn timeline_below(&self) -> bool {
+        stack(self.state.main_surface()).is_some()
+    }
+
+    /// Lo que va con la tira de íconos a su derecha (ver `show`): el lienzo y, si va justo debajo
+    /// de él, el timeline (el split de los dos). Su rect en el último frame.
+    pub(super) fn stack_rect(&self) -> Option<egui::Rect> {
+        let tree = self.state.main_surface();
+        let (canvas, _) = tree.find_tab(&PanelId::Canvas)?;
+        let node = stack(tree).unwrap_or(canvas);
+        tree[node]
+            .rect()
+            .filter(|r| r.is_positive() && r.is_finite())
+    }
+
+    /// El divisor entre el lienzo y el timeline de debajo (ver [`Workspace::timeline_below`]) en
+    /// el último frame: donde lo pinta egui_dock (`show_separator`, a puntos enteros).
+    pub(super) fn timeline_divider(&self, sep: f32) -> Option<egui::Rect> {
+        let tree = self.state.main_surface();
+        let (rect, f) = split_of(tree, stack(tree)?)?;
+        let mid = rect.top() + rect.height() * f;
+        let divider =
+            egui::Rect::from_x_y_ranges(rect.x_range(), mid - sep / 2.0..=mid + sep / 2.0);
+        (divider.is_positive() && divider.is_finite()).then_some(divider)
+    }
+
+    /// El rect del timeline en el último frame: el de su grupo y, si va debajo del lienzo, el que
+    /// tenía el panel de abajo de antes (`"timeline"`): sin la punta que tapa la tira y, sin Pixel
+    /// UI, con lo del divisor que era suyo (`SidePoints::overlap`: su línea y un punto de margen).
+    #[cfg(test)]
+    pub(crate) fn timeline_rect(&self) -> Option<egui::Rect> {
+        let leaf = self.leaf_rect(PanelId::Timeline)?;
+        if !self.timeline_below() {
+            return Some(leaf);
+        }
+        Some(
+            leaf.with_max_x(leaf.right() - self.sides.strip)
+                .with_min_y(leaf.top() - self.sides.overlap),
+        )
+    }
+
     /// Los paneles de la columna derecha (ver [`Workspace::column`]).
     pub(crate) fn column_panels(&self) -> Vec<PanelId> {
         let tree = self.state.main_surface();
@@ -200,8 +244,8 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 /// Lo mínimo de cada panel en un grupo del workspace, con el margen de su cuerpo. Color, lo que
 /// pide su panel con Pixel UI (el ancho de su fila más ancha y el alto del editor entero con la
 /// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). La toolbar, su ancho (el de
-/// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo, el `min_width`
-/// de su ficha (sin margen: su hoja va de borde a borde). Los demás, el `min_width`
+/// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo y el
+/// timeline, el mínimo de su ficha (sin margen: su hoja va de borde a borde). Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
 /// scroll, la barra (así los acomoda [`Viewer`]).
 pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
@@ -218,8 +262,11 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                 // La toolbar lleva su margen en su ancho (ver `toolbar_width`).
                 (PanelId::Tools, _) => egui::vec2(toolbar_width(skin), 0.0),
                 // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
-                // que lleva su hoja, ver `ChimpApp::canvas_area_min`).
-                (PanelId::Canvas, _) => egui::vec2(id.spec().min_width, id.spec().min_height),
+                // que lleva su hoja, ver `ChimpApp::canvas_area_min`). El timeline tampoco (su
+                // margen es el de su marco; debajo del lienzo el workspace le suma la tira).
+                (PanelId::Canvas | PanelId::Timeline, _) => {
+                    egui::vec2(id.spec().min_width, id.spec().min_height)
+                }
                 _ => {
                     let spec = id.spec();
                     let bar = match spec.body {
@@ -277,6 +324,45 @@ fn node_min(tree: &Tree<PanelId>, node: NodeIndex, m: &Minima, sep: f32, bar: f3
                 .fold(egui::Vec2::ZERO, egui::Vec2::max);
             if !leaf.tab_bar_hidden && !leaf.tabs.is_empty() {
                 min.y += bar;
+            }
+            min
+        }
+        Node::Horizontal(_) => {
+            let (a, b) = sides();
+            egui::vec2(a.x + b.x + sep, a.y.max(b.y))
+        }
+        Node::Vertical(_) => {
+            let (a, b) = sides();
+            egui::vec2(a.x.max(b.x), a.y + b.y + sep)
+        }
+    }
+}
+
+/// Como [`node_min`], pero a lo alto sin lo de los grupos que se desplazan (ver
+/// [`node_scrolls`]): lo que de verdad no puede ceder. Un lado del lienzo que no cabe entero se
+/// queda con esto (el lienzo y lo que no se desplaza, como el timeline) y lo demás, con scroll.
+fn node_min_fixed(
+    tree: &Tree<PanelId>,
+    node: NodeIndex,
+    m: &Minima,
+    sep: f32,
+    bar: f32,
+) -> egui::Vec2 {
+    if node.0 >= tree.len() {
+        return egui::Vec2::ZERO;
+    }
+    let sides = || {
+        (
+            node_min_fixed(tree, node.left(), m, sep, bar),
+            node_min_fixed(tree, node.right(), m, sep, bar),
+        )
+    };
+    match &tree[node] {
+        Node::Empty => egui::Vec2::ZERO,
+        Node::Leaf(_) => {
+            let mut min = node_min(tree, node, m, sep, bar);
+            if node_scrolls(tree, node) {
+                min.y = 0.0;
             }
             min
         }
@@ -353,7 +439,7 @@ pub(super) fn fit_splits(state: &mut DockState<PanelId>, m: &Minima, sep: f32, b
                 };
                 let a = node_min(tree, node.left(), m, sep, bar);
                 let b = node_min(tree, node.right(), m, sep, bar);
-                let (len, a, b) = if horizontal {
+                let (len, mut a, mut b) = if horizontal {
                     (split.rect.width(), a.x, b.x)
                 } else {
                     (split.rect.height(), a.y, b.y)
@@ -376,6 +462,15 @@ pub(super) fn fit_splits(state: &mut DockState<PanelId>, m: &Minima, sep: f32, b
                         _ => None,
                     }
                 };
+                // A lo alto, si el lado del lienzo no cabe entero con el otro, se queda con lo que no
+                // se desplaza (lo de un panel con scroll cede antes que el timeline de al lado).
+                if !horizontal && a + b + sep > len {
+                    if has_canvas(tree, node.left()) {
+                        a = node_min_fixed(tree, node.left(), m, sep, bar).y;
+                    } else if has_canvas(tree, node.right()) {
+                        b = node_min_fixed(tree, node.right(), m, sep, bar).y;
+                    }
+                }
                 let f = fit_fraction(len, split.fraction, a, b, sep, keep);
                 (f != split.fraction).then_some((node, f))
             })
@@ -577,6 +672,16 @@ pub(crate) struct SidePoints {
     /// (ver [`Workspace::tools_side`]) mide eso hasta el borde de su divisor, siempre (no se
     /// arrastra); sin él, como los demás lados.
     pub toolbar: Option<f32>,
+    /// Lo que mide el lado del timeline (ver [`timeline_level`]) hasta el centro de su divisor:
+    /// lo da el anfitrión (de `view.timeline_height`); sin él, como los demás lados.
+    pub timeline: Option<f32>,
+    /// Cuánto del divisor del timeline de debajo del lienzo era del panel de abajo de antes: sin
+    /// Pixel UI, su línea y un punto de su margen (el divisor entero); con él, nada (es el aire
+    /// de abajo del lienzo). Lo da el anfitrión; de ahí sale el rect equivalente del panel.
+    pub overlap: f32,
+    /// Lo que la tira le quita al timeline de debajo del lienzo (ver `dock::strip_room`): lo da
+    /// el anfitrión; de ahí sale el rect equivalente del panel.
+    pub strip: f32,
     /// El ancho de los divisores (el lado del lienzo de cada split empieza medio divisor después
     /// de su centro).
     pub sep: f32,
@@ -585,9 +690,19 @@ pub(crate) struct SidePoints {
     /// ellos, nada se limita).
     pub mins: Minima,
     pub bar: f32,
-    /// Con qué se acomodaron por última vez: el área, la forma del árbol, la columna y la
-    /// toolbar.
-    last: Option<(egui::Rect, Shape, Option<f32>, Option<f32>)>,
+    /// Con qué se acomodaron por última vez.
+    last: Option<Pinned>,
+}
+
+/// Con qué se acomodaron los lados del lienzo (ver [`pin_sides`]): el área, la forma del árbol y
+/// lo que pidió el anfitrión (la columna, la toolbar y el timeline).
+#[derive(Clone, Debug)]
+struct Pinned {
+    area: egui::Rect,
+    shape: Shape,
+    column: Option<f32>,
+    toolbar: Option<f32>,
+    timeline: Option<f32>,
 }
 
 impl SidePoints {
@@ -596,15 +711,20 @@ impl SidePoints {
     }
 
     /// Lo más que puede medir el lado `level` en un split de `len` (a su eje): lo que deja el
-    /// lado del lienzo en su mínimo (el lienzo gana; el lado se aprieta o se desplaza).
+    /// lado del lienzo en su mínimo (el lienzo gana; el lado se aprieta o se desplaza). A lo alto,
+    /// el mínimo de lo que no se desplaza del lado del lienzo (ver `node_min_fixed`).
     fn room(&self, tree: &Tree<PanelId>, level: &Level, len: f32) -> f32 {
         let canvas_side = if level.first {
             level.parent.right()
         } else {
             level.parent.left()
         };
-        let min = node_min(tree, canvas_side, &self.mins, self.sep, self.bar);
-        let min = if level.horizontal { min.x } else { min.y };
+        // A lo alto, solo lo que no se desplaza (ver `node_min_fixed`).
+        let min = if level.horizontal {
+            node_min(tree, canvas_side, &self.mins, self.sep, self.bar).x
+        } else {
+            node_min_fixed(tree, canvas_side, &self.mins, self.sep, self.bar).y
+        };
         (len - min - self.sep / 2.0).max(0.0)
     }
 
@@ -663,6 +783,26 @@ fn tools_level(tree: &Tree<PanelId>, level: &Level) -> bool {
         && matches!(&tree[level.other], Node::Leaf(leaf) if leaf.tabs == [PanelId::Tools])
 }
 
+/// Si el lado `level` del lienzo es el timeline solo, a lo alto (debajo o encima del lienzo): ese
+/// lado mide lo que pide el anfitrión (`SidePoints::timeline`, su alto elegido) y lo que el usuario
+/// arrastra de su divisor se le reporta ([`record_sides`]).
+fn timeline_level(tree: &Tree<PanelId>, level: &Level) -> bool {
+    !level.horizontal
+        && level.other.0 < tree.len()
+        && matches!(&tree[level.other], Node::Leaf(leaf) if leaf.tabs == [PanelId::Timeline])
+}
+
+/// El split del lienzo con el timeline solo justo debajo (`V[Canvas / Timeline]`), si lo hay (ver
+/// [`Workspace::timeline_below`]).
+fn stack(tree: &Tree<PanelId>) -> Option<NodeIndex> {
+    let (canvas, _) = tree.find_tab(&PanelId::Canvas)?;
+    let parent = canvas.parent()?;
+    let below = matches!(&tree[parent], Node::Vertical(_))
+        && canvas.is_left()
+        && matches!(&tree[parent.right()], Node::Leaf(leaf) if leaf.tabs == [PanelId::Timeline]);
+    below.then_some(parent)
+}
+
 /// Los splits del camino de la raíz al lienzo de `tree`, de arriba abajo. La columna derecha es
 /// el primer lado derecho a lo ancho que no es la toolbar sola.
 fn chain(tree: &Tree<PanelId>) -> Vec<Level> {
@@ -700,7 +840,7 @@ fn chain(tree: &Tree<PanelId>) -> Vec<Level> {
 }
 
 /// Los paneles del nodo `node` de `tree` y de lo que cuelga de él.
-fn panels_of(tree: &Tree<PanelId>, node: NodeIndex) -> Vec<PanelId> {
+pub(super) fn panels_of(tree: &Tree<PanelId>, node: NodeIndex) -> Vec<PanelId> {
     if node.0 >= tree.len() {
         return Vec::new();
     }
@@ -725,7 +865,7 @@ fn reference(tree: &Tree<PanelId>, node: NodeIndex, horizontal: bool) -> f32 {
     let of = |id: PanelId| {
         let spec = id.spec();
         if !horizontal {
-            return spec.min_height.max(super::model::FLOAT_HEIGHT);
+            return spec.default_size.y;
         }
         match id {
             PanelId::Color => crate::color_panel::DEFAULT_WIDTH,
@@ -787,16 +927,23 @@ fn measured(tree: &Tree<PanelId>, level: &Level) -> Option<f32> {
 /// comería el arrastre de un divisor y lo que `fit_splits` ajusta.
 pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides: &mut SidePoints) {
     let tree = state.main_surface_mut();
-    let now = (area, shape(tree), sides.column, sides.toolbar);
+    let now = Pinned {
+        area,
+        shape: shape(tree),
+        column: sides.column,
+        toolbar: sides.toolbar,
+        timeline: sides.timeline,
+    };
     let same = |a: Option<f32>, b: Option<f32>| match (a, b) {
         (Some(a), Some(b)) => (a - b).abs() < 0.01,
         (a, b) => a == b,
     };
-    if let Some((area, shape, column, toolbar)) = &sides.last
-        && *area == now.0
-        && *shape == now.1
-        && same(*column, now.2)
-        && same(*toolbar, now.3)
+    if let Some(last) = &sides.last
+        && last.area == now.area
+        && last.shape == now.shape
+        && same(last.column, now.column)
+        && same(last.toolbar, now.toolbar)
+        && same(last.timeline, now.timeline)
     {
         return;
     }
@@ -821,7 +968,9 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             .toolbar
             .filter(|_| tools_level(tree, &level))
             .map(|width| width - sides.sep / 2.0);
-        let points = match (level.column, sides.column, toolbar) {
+        // El del timeline lo da el anfitrión ya hasta el centro del divisor.
+        let host = toolbar.or(sides.timeline.filter(|_| timeline_level(tree, &level)));
+        let points = match (level.column, sides.column, host) {
             (_, _, Some(points)) => points,
             (true, Some(points), _) => points,
             _ => match sides.get(&side) {
@@ -879,10 +1028,18 @@ pub(super) fn fractions(state: &DockState<PanelId>) -> Fractions {
     }
 }
 
+/// Lo que el usuario arrastró de los lados que pide el anfitrión (ver [`record_sides`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Dragged {
+    pub column: Option<f32>,
+    pub timeline: Option<f32>,
+}
+
 /// Lo que el usuario cambió arrastrando (o con el teclado) un divisor del camino al lienzo en el
 /// `DockArea` de este frame (egui_dock es el único que mueve las fracciones mientras se dibuja):
 /// es lo que ese lado mide de ahí en adelante, sin quitarle al lienzo su mínimo. Devuelve lo nuevo
-/// de la columna derecha, si fue la suya (el anfitrión lo guarda como su preferencia).
+/// de la columna derecha y del timeline, si fue el suyo (el anfitrión lo guarda como su
+/// preferencia).
 ///
 /// El doble clic en un divisor (egui_dock lo pone a la mitad) no es una elección: se deshace. El
 /// divisor de la toolbar (ver [`Workspace::tools_side`]) no se arrastra (el anfitrión lo tapa):
@@ -891,12 +1048,12 @@ pub(super) fn record_sides(
     state: &mut DockState<PanelId>,
     before: &Fractions,
     sides: &mut SidePoints,
-) -> Option<f32> {
+) -> Dragged {
     let tree = state.main_surface_mut();
     if shape(tree) != before.shape {
-        return None;
+        return Dragged::default();
     }
-    let mut column = None;
+    let mut dragged = Dragged::default();
     for level in chain(tree) {
         let Some((rect, f)) = split_of(tree, level.parent) else {
             continue;
@@ -928,16 +1085,21 @@ pub(super) fn record_sides(
             panels: panels_of(tree, level.other),
         };
         sides.set(side, points);
+        // El anfitrión los va a pedir así: no hay que volver a acomodarlos (de una fracción a
+        // puntos y de vuelta, un arrastre lento se correría medio punto por frame).
         if level.column {
-            column = Some(points);
-            // El anfitrión la va a pedir así: no hay que volver a acomodarla (de una fracción a
-            // puntos y de vuelta, un arrastre lento se correría medio punto por frame).
+            dragged.column = Some(points);
             if let Some(last) = &mut sides.last {
-                last.2 = Some(points);
+                last.column = Some(points);
+            }
+        } else if timeline_level(tree, &level) {
+            dragged.timeline = Some(points);
+            if let Some(last) = &mut sides.last {
+                last.timeline = Some(points);
             }
         }
     }
-    column
+    dragged
 }
 
 #[cfg(test)]
@@ -1070,12 +1232,14 @@ mod tests {
         leaf.parent().unwrap()
     }
 
-    /// Essentials sin la toolbar (en la tira): `H[Canvas | Color]`, lo de la tarea 2. Estos tests
-    /// miden los lados que no son la toolbar (la suya va aparte: ver
-    /// `the_toolbar_side_is_the_toolbars_width_and_its_divider_does_not_move`).
+    /// Essentials sin la toolbar (en la tira) ni el timeline (oculto): `H[Canvas | Color]`, lo de
+    /// la tarea 2. Estos tests miden los lados que no son la toolbar ni el timeline (los suyos van
+    /// aparte: ver `the_toolbar_side_is_the_toolbars_width_and_its_divider_does_not_move` y
+    /// `the_timeline_side_is_the_hosts_height_and_its_dragged_divider_is_reported`).
     fn without_the_toolbar() -> Workspace {
         let mut w = Workspace::essentials();
         w.to_strip(PanelId::Tools);
+        w.sync_timeline(false);
         w
     }
 
@@ -1147,7 +1311,7 @@ mod tests {
             s.fraction += 30.0 / s.rect.width();
         }
         assert_eq!(
-            record_sides(&mut w.state, &before, &mut sides),
+            record_sides(&mut w.state, &before, &mut sides).column,
             None,
             "not the column"
         );
@@ -1165,7 +1329,9 @@ mod tests {
         if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[inner] {
             s.fraction -= 40.0 / s.rect.width();
         }
-        let column = record_sides(&mut w.state, &before, &mut sides).expect("the column moved");
+        let column = record_sides(&mut w.state, &before, &mut sides)
+            .column
+            .expect("the column moved");
         assert!((column - 340.0).abs() < 1e-3, "{column}");
     }
 
@@ -1221,7 +1387,10 @@ mod tests {
         if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
             s.fraction = 0.5;
         }
-        assert_eq!(record_sides(&mut w.state, &before, &mut sides), None);
+        assert_eq!(
+            record_sides(&mut w.state, &before, &mut sides),
+            Dragged::default()
+        );
         match &w.state.main_surface()[root] {
             Node::Horizontal(s) => assert_eq!(s.fraction, was),
             other => panic!("{other:?}"),
@@ -1258,7 +1427,10 @@ mod tests {
         if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
             s.fraction += 0.1;
         }
-        assert_eq!(record_sides(&mut w.state, &before, &mut sides), None);
+        assert_eq!(
+            record_sides(&mut w.state, &before, &mut sides),
+            Dragged::default()
+        );
         match &w.state.main_surface()[root] {
             Node::Horizontal(s) => assert_eq!(s.fraction, was),
             other => panic!("{other:?}"),
@@ -1267,6 +1439,64 @@ mod tests {
         let (s, n) = w.leaf_of(PanelId::Tools).unwrap();
         w.dock(PanelId::Library, DockTarget::Leaf(s, n));
         assert_eq!(w.tools_side(), None);
+    }
+
+    #[test]
+    fn the_timeline_side_is_the_hosts_height_and_its_dragged_divider_is_reported() {
+        // Essentials: `H[Tools | H[V[Canvas / Timeline] | Color]]`. El lado del timeline mide lo
+        // que pide el anfitrión (de abajo al centro del divisor) en cualquier ventana; el lienzo,
+        // lo demás.
+        let mut w = Workspace::essentials();
+        let mut sides = SidePoints {
+            toolbar: Some(37.0),
+            timeline: Some(191.0),
+            sep: 2.0,
+            ..Default::default()
+        };
+        let stack = split_of_panel(&w, PanelId::Timeline);
+        let below = |w: &Workspace| match &w.state.main_surface()[stack] {
+            Node::Vertical(s) => s.rect.height() * (1.0 - s.fraction),
+            other => panic!("{other:?}"),
+        };
+        let tall = |h: f32| egui::Rect::from_min_size(egui::pos2(0.0, 63.0), egui::vec2(1200.0, h));
+        for height in [717.0, 500.0, 900.0] {
+            pin_sides(&mut w.state, tall(height), &mut sides);
+            laid_out(&mut w, tall(height));
+            assert!((below(&w) - 191.0).abs() < 1e-3, "{height}: {}", below(&w));
+        }
+        // Otro alto (el anfitrión lo cambió): ese.
+        sides.timeline = Some(241.0);
+        pin_sides(&mut w.state, tall(900.0), &mut sides);
+        laid_out(&mut w, tall(900.0));
+        assert!((below(&w) - 241.0).abs() < 1e-3);
+        // Arrastrado 50 hacia arriba: se le reporta al anfitrión (no es la columna).
+        let before = fractions(&w.state);
+        if let Node::Vertical(s) = &mut w.state.main_surface_mut()[stack] {
+            s.fraction -= 50.0 / s.rect.height();
+        }
+        let dragged = record_sides(&mut w.state, &before, &mut sides);
+        assert_eq!(dragged.column, None);
+        let timeline = dragged.timeline.expect("the timeline's divider moved");
+        assert!((timeline - 291.0).abs() < 1e-3, "{timeline}");
+        // El doble clic (egui_dock lo pone a la mitad) no cuenta.
+        let before = fractions(&w.state);
+        if let Node::Vertical(s) = &mut w.state.main_surface_mut()[stack] {
+            s.fraction = 0.5;
+        }
+        assert_eq!(
+            record_sides(&mut w.state, &before, &mut sides),
+            Dragged::default()
+        );
+        // Nunca le quita al lienzo su mínimo: en una ventana baja se aprieta y luego regresa.
+        sides.timeline = Some(191.0);
+        sides.mins.insert(PanelId::Canvas, egui::vec2(90.0, 64.0));
+        pin_sides(&mut w.state, tall(200.0), &mut sides);
+        laid_out(&mut w, tall(200.0));
+        let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+        assert!(canvas.height() >= 64.0 - 1e-3, "{canvas:?}");
+        pin_sides(&mut w.state, tall(900.0), &mut sides);
+        laid_out(&mut w, tall(900.0));
+        assert!((below(&w) - 191.0).abs() < 1e-3);
     }
 
     #[test]

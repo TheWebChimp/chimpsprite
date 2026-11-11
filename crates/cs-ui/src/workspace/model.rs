@@ -10,7 +10,23 @@ use super::{NodeIndex, Split, SurfaceIndex, Workspace};
 use crate::panel_registry::PanelId;
 
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
-pub(super) const FLOAT_HEIGHT: f32 = 300.0;
+pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
+
+/// Dónde estaba el timeline cuando se ocultó (ver [`Workspace::sync_timeline`]): ahí vuelve.
+#[derive(Clone, Debug)]
+pub(super) enum Spot {
+    /// En el grupo de este panel, como una pestaña más.
+    Tab(PanelId),
+    /// Solo en su grupo, junto al nodo que tenía exactamente estos paneles (en la superficie
+    /// principal o en una ventana): de ese lado y con la fracción de su split.
+    Beside {
+        of: Vec<PanelId>,
+        side: Split,
+        fraction: f32,
+    },
+    /// Solo en una ventana: lo de adentro, en este rect.
+    Window(egui::Rect),
+}
 
 /// Dónde acoplar un panel.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -43,12 +59,15 @@ pub(crate) struct SavedWorkspace {
     pub strip: Vec<String>,
 }
 
-/// La versión de lo que se guarda ahora: 3, el árbol de toda la ventana con el lienzo y la
-/// toolbar (fase D, tarea 3). En la 2 la toolbar no iba en el árbol (era el panel fijo de la
-/// izquierda): una toolbar que no está en el árbol de una 2 va a su izquierda; en una 3, está en
-/// la tira. La 1 (y la 0, de antes del campo) es la de la fase C: la columna derecha sola, sin
-/// lienzo; al leerla se le mete el lienzo a la izquierda ([`Workspace::from_saved`]).
-pub(crate) const SAVED_VERSION: u32 = 3;
+/// La versión de lo que se guarda ahora: 4, el árbol de toda la ventana con el lienzo, la toolbar
+/// y el timeline (fase D, tarea 4). En la 3 el timeline no iba en el árbol (era el panel fijo de
+/// abajo): al leer una 3 (o anterior) va debajo del lienzo, como estaba; en una 4 siempre está
+/// (oculto, se guarda en su lugar) y si falta, también va ahí. En la 2 la toolbar no iba en el
+/// árbol (era el panel fijo de la izquierda): una toolbar que no está en el árbol de una 2 va a su
+/// izquierda; en una 3 o 4, está en la tira. La 1 (y la 0, de antes del campo) es la de la fase C:
+/// la columna derecha sola, sin lienzo; al leerla se le mete el lienzo a la izquierda
+/// ([`Workspace::from_saved`]).
+pub(crate) const SAVED_VERSION: u32 = 4;
 
 impl Default for SavedWorkspace {
     fn default() -> Self {
@@ -57,15 +76,18 @@ impl Default for SavedWorkspace {
 }
 
 impl Workspace {
-    /// El acomodo de fábrica: la toolbar a la izquierda del lienzo (del ancho de su caja) y, a su
-    /// derecha, Color acoplado solo (`H[Tools | H[Canvas | Color]]`, la columna derecha con el
-    /// ancho de `view.palette_width`), y los paneles del dock en la tira, en su orden. El foco, en
-    /// el grupo de Color (ahí se acopla lo de la tira).
+    /// El acomodo de fábrica: la toolbar a la izquierda del lienzo (del ancho de su caja), el
+    /// timeline debajo del lienzo (de su alto elegido) y, a la derecha de los dos, Color acoplado
+    /// solo (`H[Tools | H[V[Canvas / Timeline] | Color]]`, la columna derecha con el ancho de
+    /// `view.palette_width`): la toolbar y Color de alto completo, como los paneles fijos de antes.
+    /// Los paneles del dock, en la tira, en su orden. El foco, en el grupo de Color (ahí se acopla
+    /// lo de la tira).
     pub(crate) fn essentials() -> Workspace {
         let mut state = DockState::new(vec![PanelId::Canvas]);
         let tree = state.main_surface_mut();
         let [canvas, _] = tree.split_left(NodeIndex::root(), 0.5, vec![PanelId::Tools]);
-        let [_, color] = tree.split_right(canvas, 0.5, vec![PanelId::Color]);
+        let [canvas, color] = tree.split_right(canvas, 0.5, vec![PanelId::Color]);
+        tree.split_below(canvas, 0.7, vec![PanelId::Timeline]);
         state.set_focused_node_and_surface(NodePath {
             surface: SurfaceIndex::main(),
             node: color,
@@ -77,17 +99,27 @@ impl Workspace {
             placements: Vec::new(),
             placing: Vec::new(),
             sides: Default::default(),
+            timeline_spot: None,
         }
     }
 
     /// Lo que se guarda del acomodo. Las ventanas flotantes llevan en su árbol el rect de lo de
     /// adentro (el de su grupo de arriba): de ahí sale dónde reabrirlas (ver
     /// [`Workspace::place_restored_windows`]).
+    /// El timeline oculto se guarda en su lugar (al leerlo, si sigue apagado, se vuelve a ocultar).
     pub(crate) fn to_saved(&self) -> SavedWorkspace {
+        let mut whole;
+        let w = if self.state.find_tab(&PanelId::Timeline).is_none() {
+            whole = self.clone();
+            whole.show_timeline();
+            &whole
+        } else {
+            self
+        };
         SavedWorkspace {
             version: SAVED_VERSION,
-            state: self.state.map_tabs(|p| p.key().to_owned()),
-            strip: self.strip.iter().map(|p| p.key().to_owned()).collect(),
+            state: w.state.map_tabs(|p| p.key().to_owned()),
+            strip: w.strip.iter().map(|p| p.key().to_owned()).collect(),
         }
     }
 
@@ -113,6 +145,8 @@ impl Workspace {
     /// Lo de la fase C (versión 1, o 0 sin el campo) es la columna derecha sola: se le mete el
     /// lienzo a la izquierda (su ancho es `view.palette_width`, que no cambia). Lo de antes de la
     /// versión 3 no tiene la toolbar (era un panel fijo): va a la izquierda de todo, como estaba.
+    /// Lo de antes de la 4 no tiene el timeline (era el panel fijo de abajo): va debajo del
+    /// lienzo, como estaba (su alto es `view.timeline_height`); en una 4 sin él, también.
     /// Y el lienzo queda una vez, solo y en la superficie principal (ver `fit::tidy_canvas`).
     pub(crate) fn from_saved(saved: SavedWorkspace) -> Workspace {
         let essentials = |why: &str| {
@@ -122,10 +156,13 @@ impl Workspace {
         if !sound(&saved.state) {
             return essentials("its dock tree is malformed");
         }
-        // La toolbar de antes de la versión 3 no puede venir en el árbol (no era de él).
+        // La toolbar de antes de la versión 3 ni el timeline de antes de la 4 pueden venir en el
+        // árbol (no eran de él).
         let in_tree = |id: PanelId| {
-            (matches!(id, PanelId::Canvas | PanelId::Color) || Workspace::goes_to_strip(id))
-                && (saved.version >= 3 || id != PanelId::Tools)
+            let ours = (matches!(id, PanelId::Canvas | PanelId::Color)
+                || Workspace::goes_to_strip(id))
+                && (saved.version >= 3 || id != PanelId::Tools);
+            ours || (id == PanelId::Timeline && saved.version >= 4)
         };
         let mut state: DockState<Option<PanelId>> = saved
             .state
@@ -172,6 +209,10 @@ impl Workspace {
             } else {
                 main.split_left(NodeIndex::root(), 0.5, vec![PanelId::Tools]);
             }
+        }
+        // El timeline, debajo del lienzo (su alto lo pone `pin_sides`).
+        if state.find_tab(&PanelId::Timeline).is_none() {
+            put_below_canvas(&mut state);
         }
         // Lo que egui_dock da por bueno al dibujar: la pestaña activa y el grupo con el foco de
         // cada árbol, existentes, y números finitos (RON lee `NaN` e `inf`: con una fracción así
@@ -250,6 +291,139 @@ impl Workspace {
         w
     }
 
+    /// El timeline a la vista (`show`) o fuera del árbol. Oculto (`view.timeline` apagado o no
+    /// disponible: un artboard de fuente o de modelo, la pestaña de un modelo) no ocupa lugar (el
+    /// lienzo y lo demás crecen), pero se recuerda dónde estaba ([`Spot`]) y ahí vuelve. Devuelve
+    /// si cambió algo.
+    pub(crate) fn sync_timeline(&mut self, show: bool) -> bool {
+        let shown = self.state.find_tab(&PanelId::Timeline).is_some();
+        match (show, shown) {
+            (false, true) => self.hide_timeline(),
+            (true, false) => self.show_timeline(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Saca el timeline del árbol y recuerda dónde estaba.
+    fn hide_timeline(&mut self) {
+        let Some(path) = self.state.find_tab(&PanelId::Timeline) else {
+            return;
+        };
+        let spot = self.timeline_spot_of(path.node_path());
+        let focus = self.focused_panel();
+        self.placements.clear();
+        self.placing.retain(|(p, _, _)| *p != PanelId::Timeline);
+        self.state.remove_tab(path);
+        self.timeline_spot = spot;
+        self.refocus(focus);
+    }
+
+    /// Dónde está el timeline del grupo `path`, para volver ahí (ver [`Spot`]).
+    fn timeline_spot_of(&self, path: NodePath) -> Option<Spot> {
+        let leaf = self.state.leaf(path).ok()?;
+        if let Some(&with) = leaf.tabs.iter().find(|&&t| t != PanelId::Timeline) {
+            return Some(Spot::Tab(with));
+        }
+        let tree = &self.state[path.surface];
+        let Some(parent) = path.node.parent() else {
+            // Solo en una ventana: donde estaba lo de adentro (o donde se pidió, si todavía no se
+            // dibujó).
+            let rect = self.root_rect(path.surface).or_else(|| {
+                let (_, at, _) = self
+                    .placing
+                    .iter()
+                    .find(|(p, _, _)| *p == PanelId::Timeline)?;
+                Some(egui::Rect::from_min_size(
+                    *at,
+                    PanelId::Timeline.spec().default_size,
+                ))
+            })?;
+            return Some(Spot::Window(rect));
+        };
+        let (horizontal, fraction) = match &tree[parent] {
+            Node::Horizontal(s) => (true, s.fraction),
+            Node::Vertical(s) => (false, s.fraction),
+            _ => return None,
+        };
+        let first = path.node.is_left();
+        let other = if first { parent.right() } else { parent.left() };
+        let side = match (horizontal, first) {
+            (true, true) => Split::Left,
+            (true, false) => Split::Right,
+            (false, true) => Split::Above,
+            (false, false) => Split::Below,
+        };
+        Some(Spot::Beside {
+            of: super::fit::panels_of(tree, other),
+            side,
+            fraction,
+        })
+    }
+
+    /// Vuelve a meter el timeline donde estaba (ver [`Spot`]); si ese lugar ya no existe (o no se
+    /// conoce), debajo del lienzo.
+    pub(super) fn show_timeline(&mut self) {
+        if self.state.find_tab(&PanelId::Timeline).is_some() {
+            return;
+        }
+        let focus = self.focused_panel();
+        self.placements.clear();
+        let placed = match self.timeline_spot.take() {
+            Some(Spot::Tab(with)) => match self.state.find_tab(&with) {
+                Some(path) => match self.state.leaf_mut(path.node_path()) {
+                    Ok(leaf) => {
+                        leaf.append_tab(PanelId::Timeline);
+                        true
+                    }
+                    Err(_) => false,
+                },
+                None => false,
+            },
+            Some(Spot::Beside { of, side, fraction }) => match node_with(&self.state, &of) {
+                Some(path) => {
+                    self.state
+                        .split(path, side, fraction, Node::leaf(PanelId::Timeline));
+                    true
+                }
+                None => false,
+            },
+            Some(Spot::Window(rect)) => {
+                let surface = self.state.add_window(vec![PanelId::Timeline]);
+                if let Some(window) = self.state.get_window_state_mut(surface) {
+                    window.set_position(rect.min.round());
+                    window.set_size(rect.size().round());
+                }
+                // Lo de adentro donde estaba (con el marco medido, como un acomodo leído).
+                self.placements.push((surface, rect));
+                true
+            }
+            None => false,
+        };
+        if !placed {
+            put_below_canvas(&mut self.state);
+        }
+        self.refocus(focus);
+    }
+
+    /// El panel activo del grupo con el foco, si hay uno.
+    fn focused_panel(&self) -> Option<PanelId> {
+        let path = self.state.focused_leaf()?;
+        let leaf = self.state.leaf(path).ok()?;
+        leaf.tabs.get(leaf.active.0).copied()
+    }
+
+    /// El foco de vuelta en el grupo de `id` (egui_dock se lo da a lo que parte o quita); si ya no
+    /// está, en el de Color.
+    fn refocus(&mut self, id: Option<PanelId>) {
+        let path = id
+            .and_then(|id| self.state.find_tab(&id))
+            .or_else(|| self.state.find_tab(&PanelId::Color));
+        if let Some(path) = path {
+            self.state.set_focused_node_and_surface(path.node_path());
+        }
+    }
+
     /// Lo que queda en `app.workspace` mientras [`show`] dibuja los paneles.
     pub(super) fn placeholder() -> Workspace {
         Workspace {
@@ -268,8 +442,8 @@ impl Workspace {
 
     /// Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`, para capturas): `library-tab`
     /// (Library en el grupo de Color), `split` (Groom debajo de Color), `float` (Lumen flotando),
-    /// `tools-right` (la toolbar a la derecha del lienzo) o `tools-float` (la toolbar flotando).
-    /// `None` si no es ninguno de esos.
+    /// `tools-right` (la toolbar a la derecha del lienzo), `tools-float` (la toolbar flotando) o
+    /// `timeline-right` (el timeline a la derecha del lienzo). `None` si no es ninguno de esos.
     pub(crate) fn demo(name: &str) -> Option<Workspace> {
         let mut w = Workspace::essentials();
         let (surface, node) = w.leaf_of(PanelId::Color)?;
@@ -277,6 +451,7 @@ impl Workspace {
         match name {
             "tools-right" => w.dock(PanelId::Tools, DockTarget::Split(cs, cn, Split::Right)),
             "tools-float" => w.float(PanelId::Tools, egui::pos2(320.0, 120.0)),
+            "timeline-right" => w.dock(PanelId::Timeline, DockTarget::Split(cs, cn, Split::Right)),
             "library-tab" => w.dock(PanelId::Library, DockTarget::Leaf(surface, node)),
             "split" => w.dock(
                 PanelId::Groom,
@@ -391,9 +566,9 @@ impl Workspace {
             (PanelId::Tools, None) => {
                 crate::pixel_ui::toolbar_width(&crate::skin::Skin::fallback())
             }
-            _ => spec.reference_width,
+            _ => spec.default_size.x,
         };
-        let size = egui::vec2(width, spec.min_height.max(FLOAT_HEIGHT));
+        let size = egui::vec2(width, spec.default_size.y);
         let surface = self.state.add_window(vec![id]);
         if let Some(window) = self.state.get_window_state_mut(surface) {
             window.set_position(at.round());
@@ -522,12 +697,53 @@ fn first_leaf<T>(tree: &Tree<T>) -> Option<NodeIndex> {
 }
 
 /// Si a un grupo con `tabs` va lo que se acopla "con el foco": no al del lienzo (no recibe
-/// pestañas) ni al de la toolbar sola (con otra pestaña dejaría de verse como hoy).
+/// pestañas) ni al de la toolbar o el timeline solos (con otra pestaña dejarían de verse como hoy).
 fn takes_focused(tabs: &[PanelId]) -> bool {
-    !tabs.contains(&PanelId::Canvas) && tabs != [PanelId::Tools]
+    !tabs.contains(&PanelId::Canvas) && tabs != [PanelId::Tools] && tabs != [PanelId::Timeline]
 }
 
-/// El primer grupo de `tree` (por índice) que no es el del lienzo ni el de la toolbar sola.
+/// El nodo (de cualquier superficie) con exactamente los paneles `of` (en cualquier orden).
+fn node_with(state: &DockState<PanelId>, of: &[PanelId]) -> Option<NodePath> {
+    let same = |mut panels: Vec<PanelId>| {
+        let mut of = of.to_vec();
+        panels.sort_by_key(|p| p.key());
+        of.sort_by_key(|p| p.key());
+        !of.is_empty() && panels == of
+    };
+    state.iter_surfaces_indexed().find_map(|(surface, s)| {
+        let tree = s.node_tree()?;
+        (0..tree.len())
+            .map(NodeIndex)
+            .find(|&n| !tree[n].is_empty() && same(super::fit::panels_of(tree, n)))
+            .map(|node| NodePath { surface, node })
+    })
+}
+
+/// El timeline solo en un grupo nuevo debajo del lienzo (donde iba el panel de abajo de antes; su
+/// alto lo pone `pin_sides`). Sin lienzo (no debería pasar), en la superficie principal.
+fn put_below_canvas(state: &mut DockState<PanelId>) {
+    match state.find_tab(&PanelId::Canvas) {
+        Some(path) => {
+            state.split(
+                path.node_path(),
+                Split::Below,
+                0.7,
+                Node::leaf(PanelId::Timeline),
+            );
+        }
+        None => {
+            let main = state.main_surface_mut();
+            if main.num_tabs() == 0 {
+                *main = Tree::new(vec![PanelId::Timeline]);
+            } else {
+                main.push_to_focused_leaf(PanelId::Timeline);
+            }
+        }
+    }
+}
+
+/// El primer grupo de `tree` (por índice) que no es el del lienzo ni el de la toolbar o el
+/// timeline solos.
 fn first_panel_leaf(tree: &Tree<PanelId>) -> Option<NodeIndex> {
     (0..tree.len()).map(NodeIndex).find(|&n| match &tree[n] {
         Node::Leaf(leaf) => takes_focused(&leaf.tabs),
@@ -580,11 +796,12 @@ mod tests {
 
     #[test]
     fn essentials_has_the_toolbar_left_of_the_canvas() {
-        // `H[Tools | H[Canvas | Color]]`: la toolbar es un lado del lienzo; la columna, Color.
+        // `H[Tools | H[V[Canvas / Timeline] | Color]]`: la toolbar es un lado del lienzo; la
+        // columna, Color (tarea 4: el lienzo, con el timeline debajo).
         let w = Workspace::essentials();
         let root = NodeIndex::root();
         assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
-        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Canvas]);
+        assert_eq!(leaf_tabs(&w, root.right().left().left()), [PanelId::Canvas]);
         assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
         assert_eq!(w.column_panels(), [PanelId::Color]);
@@ -638,7 +855,12 @@ mod tests {
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
         let root = NodeIndex::root();
         assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
-        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Canvas]);
+        // Tarea 4: el lienzo, con el timeline debajo.
+        assert_eq!(leaf_tabs(&w, root.right().left().left()), [PanelId::Canvas]);
+        assert_eq!(
+            leaf_tabs(&w, root.right().left().right()),
+            [PanelId::Timeline]
+        );
         assert_eq!(w.tools_side(), Some(true));
         assert_eq!(w.column_panels(), [PanelId::Color, PanelId::Groom]);
         assert_eq!(w.places(PanelId::Tools), 1);
@@ -663,7 +885,8 @@ mod tests {
         let w = Workspace::from_saved(saved);
         let root = NodeIndex::root();
         assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
-        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Canvas]);
+        // Tarea 4: el lienzo, con el timeline debajo.
+        assert_eq!(leaf_tabs(&w, root.right().left().left()), [PanelId::Canvas]);
         assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
     }
@@ -678,6 +901,153 @@ mod tests {
         assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
         let (_, tools) = w.leaf_of(PanelId::Tools).unwrap();
         assert_eq!(leaf_tabs(&w, tools), [PanelId::Tools]);
+    }
+
+    // --- Fase D, tarea 4: el timeline en el árbol ---
+
+    /// El grupo del lienzo y el split del que cuelga (falla si no hay).
+    fn canvas_parent(w: &Workspace) -> (NodeIndex, NodeIndex) {
+        let (_, canvas) = w.leaf_of(PanelId::Canvas).unwrap();
+        (canvas, canvas.parent().unwrap())
+    }
+
+    #[test]
+    fn essentials_has_the_timeline_below_the_canvas() {
+        // `H[Tools | H[V[Canvas / Timeline] | Color]]`: la toolbar y Color de alto completo, el
+        // timeline entre ellos, debajo del lienzo.
+        let w = Workspace::essentials();
+        let root = NodeIndex::root();
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
+        let stack = root.right().left();
+        assert!(matches!(w.state.main_surface()[stack], Node::Vertical(_)));
+        assert_eq!(leaf_tabs(&w, stack.left()), [PanelId::Canvas]);
+        assert_eq!(leaf_tabs(&w, stack.right()), [PanelId::Timeline]);
+        assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
+        assert_eq!(w.places(PanelId::Timeline), 1);
+        assert!(!w.strip().contains(&PanelId::Timeline));
+        assert!(w.timeline_below());
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert_eq!(w.tools_side(), Some(true));
+    }
+
+    #[test]
+    fn a_version_3_workspace_gets_the_timeline_below_the_canvas() {
+        // Lo que guardaba la tarea 3: `H[Tools | H[Canvas | Color]]`, sin el timeline (era el
+        // panel fijo de abajo).
+        let mut state = DockState::new(vec!["canvas".to_string()]);
+        let [canvas, _] =
+            state
+                .main_surface_mut()
+                .split_left(NodeIndex::root(), 0.03, vec!["tools".to_string()]);
+        state
+            .main_surface_mut()
+            .split_right(canvas, 0.7, vec!["color".to_string()]);
+        let saved = SavedWorkspace {
+            version: 3,
+            state,
+            strip: Vec::new(),
+        };
+        let ron = ron::to_string(&saved).unwrap();
+        let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
+        assert!(w.timeline_below());
+        let (canvas, parent) = canvas_parent(&w);
+        assert_eq!(leaf_tabs(&w, parent.right()), [PanelId::Timeline]);
+        assert_eq!(canvas, parent.left());
+        assert_eq!(w.places(PanelId::Timeline), 1);
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert_eq!(w.tools_side(), Some(true));
+        // Lo que se guarda ahora es la 4, y se lee igual (sin otro timeline).
+        let again = w.to_saved();
+        assert_eq!(again.version, SAVED_VERSION);
+        assert_eq!(SAVED_VERSION, 4);
+        let back = Workspace::from_saved(again);
+        assert_eq!(back.state_tabs(), w.state_tabs());
+        assert_eq!(back.places(PanelId::Timeline), 1);
+        // Una 4 sin el timeline (no debería pasar: se guarda en su lugar aunque esté oculto) lo
+        // recupera debajo del lienzo.
+        let mut saved = Workspace::essentials().to_saved();
+        saved.state.retain_tabs(|k| k != "timeline");
+        let w = Workspace::from_saved(saved);
+        assert!(w.timeline_below());
+    }
+
+    #[test]
+    fn hiding_the_timeline_takes_it_out_and_showing_it_puts_it_back_where_it_was() {
+        // Debajo del lienzo (Essentials): sin él, el lienzo llega abajo; de vuelta, igual que antes.
+        let mut w = Workspace::essentials();
+        let before = w.state_tabs();
+        w.sync_timeline(false);
+        assert_eq!(w.places(PanelId::Timeline), 0);
+        assert!(!w.timeline_below());
+        let (_, parent) = canvas_parent(&w);
+        assert!(matches!(
+            w.state.main_surface()[parent],
+            Node::Horizontal(_)
+        ));
+        // Ocultarlo dos veces no cambia nada.
+        w.sync_timeline(false);
+        assert_eq!(w.places(PanelId::Timeline), 0);
+        w.sync_timeline(true);
+        assert_eq!(w.places(PanelId::Timeline), 1);
+        assert!(w.timeline_below());
+        assert_eq!(w.state_tabs(), before);
+        w.sync_timeline(true);
+        assert_eq!(w.places(PanelId::Timeline), 1);
+        // A la derecha del lienzo: vuelve a la derecha del lienzo.
+        let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
+        w.dock(PanelId::Timeline, DockTarget::Split(s, n, Split::Right));
+        w.sync_timeline(false);
+        w.sync_timeline(true);
+        let (canvas, parent) = canvas_parent(&w);
+        assert!(matches!(
+            w.state.main_surface()[parent],
+            Node::Horizontal(_)
+        ));
+        assert_eq!(canvas, parent.left());
+        assert_eq!(leaf_tabs(&w, parent.right()), [PanelId::Timeline]);
+        // En pestaña con Color: vuelve a su grupo.
+        let (s, n) = w.leaf_of(PanelId::Color).unwrap();
+        w.dock(PanelId::Timeline, DockTarget::Leaf(s, n));
+        w.sync_timeline(false);
+        assert_eq!(
+            leaf_tabs(&w, w.leaf_of(PanelId::Color).unwrap().1),
+            [PanelId::Color]
+        );
+        w.sync_timeline(true);
+        assert_eq!(w.leaf_of(PanelId::Timeline), w.leaf_of(PanelId::Color));
+        // Flotando: vuelve a flotar.
+        w.float(PanelId::Timeline, egui::pos2(300.0, 200.0));
+        w.sync_timeline(false);
+        assert_eq!(w.places(PanelId::Timeline), 0);
+        w.sync_timeline(true);
+        assert!(w.floating(PanelId::Timeline));
+        // Cada panel del workspace, una vez (Preview todavía no es de él: tarea 5).
+        for &id in PanelId::ALL.iter().filter(|&&p| p != PanelId::Preview) {
+            assert_eq!(w.places(id), 1, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn a_hidden_timeline_is_saved_in_its_place() {
+        let mut w = Workspace::essentials();
+        let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
+        w.dock(PanelId::Timeline, DockTarget::Split(s, n, Split::Right));
+        w.sync_timeline(false);
+        let back = Workspace::from_saved(w.to_saved());
+        let (canvas, parent) = canvas_parent(&back);
+        assert_eq!(canvas, parent.left());
+        assert_eq!(leaf_tabs(&back, parent.right()), [PanelId::Timeline]);
+        assert_eq!(back.places(PanelId::Timeline), 1);
+    }
+
+    #[test]
+    fn what_docks_with_the_focus_never_joins_the_lone_timeline() {
+        let mut w = Workspace::essentials();
+        assert!(w.focus(PanelId::Timeline));
+        w.dock(PanelId::Library, DockTarget::Focused);
+        assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+        let (_, timeline) = w.leaf_of(PanelId::Timeline).unwrap();
+        assert_eq!(leaf_tabs(&w, timeline), [PanelId::Timeline]);
     }
 
     #[test]
@@ -725,8 +1095,8 @@ mod tests {
         let (s, n) = w.leaf_of(PanelId::Groom).unwrap();
         w.collapse_to_icons(s, n);
         assert_eq!(w.strip(), PanelId::DOCK);
-        // Quedan la toolbar, el lienzo y Color (fase D: son hojas del árbol).
-        assert_eq!(w.state.iter_leaves().count(), 3);
+        // Quedan la toolbar, el lienzo, el timeline y Color (fase D: son hojas del árbol).
+        assert_eq!(w.state.iter_leaves().count(), 4);
     }
 
     #[test]
@@ -784,7 +1154,10 @@ mod tests {
         for &id in PanelId::ALL {
             let expected = usize::from(
                 PanelId::DOCK.contains(&id)
-                    || matches!(id, PanelId::Color | PanelId::Canvas | PanelId::Tools),
+                    || matches!(
+                        id,
+                        PanelId::Color | PanelId::Canvas | PanelId::Tools | PanelId::Timeline
+                    ),
             );
             assert_eq!(places(&w, id), expected, "{id:?}");
         }
@@ -855,7 +1228,9 @@ mod tests {
         assert_eq!(leaf(NodeIndex::root().left()), [PanelId::Tools]);
         let canvas_side = NodeIndex::root().right();
         assert!(matches!(main[canvas_side], Node::Horizontal(_)));
-        assert_eq!(leaf(canvas_side.left()), [PanelId::Canvas]);
+        // Tarea 4: el lienzo, con el timeline debajo.
+        assert_eq!(leaf(canvas_side.left().left()), [PanelId::Canvas]);
+        assert_eq!(leaf(canvas_side.left().right()), [PanelId::Timeline]);
         let column = canvas_side.right();
         match &main[column] {
             Node::Vertical(split) => assert_eq!(split.fraction, 0.4),
@@ -913,6 +1288,7 @@ mod tests {
             vec![
                 PanelId::Tools,
                 PanelId::Canvas,
+                PanelId::Timeline,
                 PanelId::Color,
                 PanelId::Groom
             ]
@@ -925,13 +1301,15 @@ mod tests {
         w.dock(PanelId::Library, DockTarget::Focused);
         assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
         w.to_strip(PanelId::Groom);
+        // (En el orden de los nodos del árbol que queda.)
         assert_eq!(
             w.state_tabs(),
             vec![
                 PanelId::Tools,
-                PanelId::Canvas,
                 PanelId::Color,
-                PanelId::Library
+                PanelId::Library,
+                PanelId::Canvas,
+                PanelId::Timeline
             ]
         );
     }
@@ -954,7 +1332,7 @@ mod tests {
     #[test]
     fn a_malformed_or_empty_saved_workspace_gives_essentials() {
         let is_essentials = |w: &Workspace| {
-            w.state_tabs() == vec![PanelId::Tools, PanelId::Canvas, PanelId::Color]
+            w.state_tabs() == Workspace::essentials().state_tabs()
                 && w.docked(PanelId::Color)
                 && w.strip() == PanelId::DOCK
         };

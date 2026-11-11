@@ -112,6 +112,28 @@ fn plain_icon(ui: &Ui, skin: &Skin, icon: &str, plain: &str, rect: Rect) {
     }
 }
 
+/// El marco de la tira de íconos (y del panel 3D fijo que va en su lugar en la pestaña de un
+/// modelo): el de los paneles de egui, sin margen a la izquierda (el aire es el del lienzo) y con
+/// [`RIGHT_MARGIN`] a la derecha.
+pub(crate) fn strip_frame(style: &egui::Style) -> egui::Frame {
+    let mut frame = egui::Frame::side_top_panel(style);
+    frame.inner_margin.left = 0;
+    frame.inner_margin.right = RIGHT_MARGIN;
+    frame
+}
+
+/// Lo que la tira le quita a lo que va a su izquierda (el lienzo y el timeline de debajo): su
+/// ancho; sin Pixel UI, menos su línea de la izquierda (`egui::Panel` la pone en su margen de
+/// afuera y lo de al lado empieza ahí: así estaba cuando la tira era un panel de la hoja del
+/// lienzo).
+pub(crate) fn strip_room(style: &egui::Style, pixel_ui: bool) -> f32 {
+    if pixel_ui {
+        WIDTH
+    } else {
+        WIDTH - style.visuals.widgets.noninteractive.bg_stroke.width.round()
+    }
+}
+
 /// El botón del timeline: lo muestra o lo esconde.
 pub(crate) const TIMELINE: &str = "Timeline";
 pub(crate) const TIMELINE_ICON: &str = "icon.timeline";

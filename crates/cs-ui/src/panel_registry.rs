@@ -2,6 +2,8 @@
 //! Es la única fuente de esos datos: el dock, la ventana de paneles y los diálogos leen de aquí en
 //! lugar de repetirlos cada uno por su lado.
 
+use eframe::egui;
+
 use crate::dock;
 
 /// Cómo va el contenido de un panel flotante.
@@ -18,13 +20,11 @@ pub(crate) enum Body {
 /// Dónde vive un panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Host {
-    /// Un panel del árbol del workspace que no es del dock (la toolbar): acoplado, flotando o en
-    /// la tira (ahí su botón abre su flyout, como los del dock).
+    /// Un panel del árbol del workspace que no es del dock (la toolbar, el timeline): acoplado o
+    /// flotando; la toolbar también en la tira (ahí su botón abre su flyout, como los del dock).
     Tree,
     /// La columna fija de la derecha (el color).
     Right,
-    /// La franja de abajo (el timeline).
-    Bottom,
     /// Una ventanita flotante (el preview).
     Window,
     /// El centro del workspace: la hoja protegida del árbol (el lienzo).
@@ -35,10 +35,9 @@ pub(crate) enum Host {
 
 /// Lo más angosto que el workspace deja el lienzo mismo cuando reparte un split que no alcanza
 /// (ver `workspace::fit`); su hoja suma la tira de íconos o el panel 3D fijo, que en la fase D
-/// todavía van dentro de ella (ver `ChimpApp::canvas_area_min`).
+/// todavía van a su derecha (ver `ChimpApp::canvas_area_min`).
 pub(crate) const CANVAS_MIN_WIDTH: f32 = 64.0;
-/// Lo más bajo que el workspace deja el lienzo mismo (su caja y sus reglas); su hoja suma el
-/// timeline cuando va dentro de ella (ver `ChimpApp::canvas_area_min`).
+/// Lo más bajo que el workspace deja el lienzo mismo (su caja y sus reglas).
 pub(crate) const CANVAS_MIN_HEIGHT: f32 = 64.0;
 
 /// Los paneles de la app.
@@ -52,7 +51,7 @@ pub enum PanelId {
     Tools,
     /// El editor de color y la paleta.
     Color,
-    /// La línea de tiempo.
+    /// La línea de tiempo: un panel del árbol (fase D), debajo del lienzo en Essentials.
     Timeline,
     /// La ventanita de preview.
     Preview,
@@ -98,7 +97,21 @@ pub(crate) struct PanelSpec {
     pub body: Body,
     /// Lo más bajo en que se ve bien (0.0: sin mínimo propio).
     pub min_height: f32,
+    /// Lo que pide de fábrica en un lugar nuevo: el tamaño de su ventana al ponerlo a flotar y, a
+    /// lo alto, lo que mide de entrada como un lado nuevo del lienzo (el timeline, su alto de
+    /// fábrica debajo del lienzo).
+    pub default_size: egui::Vec2,
 }
+
+/// El alto de fábrica de un panel que se pone a flotar o que llega como un lado nuevo del lienzo
+/// (si su ficha no pide más).
+pub(crate) const DEFAULT_HEIGHT: f32 = 300.0;
+
+/// Lo más angosto y lo más bajo del timeline (lo de `egui::Panel::bottom` de antes: 20 de alto;
+/// a lo ancho, lo del lienzo, que lo tenía debajo).
+pub(crate) const TIMELINE_MIN: egui::Vec2 = egui::vec2(CANVAS_MIN_WIDTH, 20.0);
+/// El ancho de fábrica del timeline fuera de su lugar debajo del lienzo (flotando o a un lado).
+pub(crate) const TIMELINE_DEFAULT_WIDTH: f32 = 400.0;
 
 impl PanelId {
     /// Todos los paneles.
@@ -176,6 +189,7 @@ impl PanelId {
             host: Host::Flyout,
             body,
             min_height: 0.0,
+            default_size: egui::vec2(reference_width, DEFAULT_HEIGHT),
         };
         match self {
             PanelId::Canvas => PanelSpec {
@@ -189,6 +203,7 @@ impl PanelId {
                 host: Host::Center,
                 body: Body::Fixed,
                 min_height: CANVAS_MIN_HEIGHT,
+                default_size: egui::vec2(CANVAS_MIN_WIDTH, DEFAULT_HEIGHT),
             },
             PanelId::Tools => PanelSpec {
                 key: "tools",
@@ -203,6 +218,7 @@ impl PanelId {
                 host: Host::Tree,
                 body: Body::Fixed,
                 min_height: 0.0,
+                default_size: egui::vec2(crate::pixel_ui::TOOLBAR_WIDTH_PLAIN, DEFAULT_HEIGHT),
             },
             PanelId::Color => PanelSpec {
                 key: "color",
@@ -216,19 +232,22 @@ impl PanelId {
                 host: Host::Right,
                 body: Body::Fixed,
                 min_height: 0.0,
+                default_size: egui::vec2(crate::color_panel::DEFAULT_WIDTH, DEFAULT_HEIGHT),
             },
             PanelId::Timeline => PanelSpec {
                 key: "timeline",
                 title: dock::TIMELINE,
                 icon: dock::TIMELINE_ICON,
                 plain: "🎞",
-                // Abajo, el "ancho" es el alto de fábrica.
-                reference_width: dock::TIMELINE_DEFAULT_HEIGHT,
-                min_width: dock::TIMELINE_DEFAULT_HEIGHT,
+                reference_width: TIMELINE_DEFAULT_WIDTH,
+                min_width: TIMELINE_MIN.x,
+                // Cerrarlo es apagarlo (`view.timeline`): no va a la tira (su botón de abajo de la
+                // tira lo prende y lo apaga).
                 closable: true,
-                host: Host::Bottom,
+                host: Host::Tree,
                 body: Body::Fixed,
-                min_height: 0.0,
+                min_height: TIMELINE_MIN.y,
+                default_size: egui::vec2(TIMELINE_DEFAULT_WIDTH, dock::TIMELINE_DEFAULT_HEIGHT),
             },
             PanelId::Preview => PanelSpec {
                 key: "preview",
@@ -241,6 +260,7 @@ impl PanelId {
                 host: Host::Window,
                 body: Body::Fixed,
                 min_height: 0.0,
+                default_size: egui::vec2(crate::preview::VIEW.x, DEFAULT_HEIGHT),
             },
             PanelId::Artboards => flyout(
                 "artboards",
@@ -281,6 +301,10 @@ impl PanelId {
             ),
             PanelId::Groom => PanelSpec {
                 min_height: crate::groom::MIN_HEIGHT,
+                default_size: egui::vec2(
+                    crate::groom::REFERENCE_WIDTH,
+                    crate::groom::MIN_HEIGHT.max(DEFAULT_HEIGHT),
+                ),
                 ..flyout(
                     "groom",
                     "Groom",
@@ -293,6 +317,10 @@ impl PanelId {
             },
             PanelId::Lumen => PanelSpec {
                 min_height: crate::lumen::MIN_HEIGHT,
+                default_size: egui::vec2(
+                    crate::lumen::REFERENCE_WIDTH,
+                    crate::lumen::MIN_HEIGHT.max(DEFAULT_HEIGHT),
+                ),
                 ..flyout(
                     "lumen",
                     "Lumen",
@@ -469,6 +497,25 @@ mod tests {
     }
 
     #[test]
+    fn the_default_size_is_in_the_spec() {
+        // El timeline, 190 de alto (el de fábrica del panel de abajo de antes).
+        let timeline = PanelId::Timeline.spec();
+        assert_eq!(timeline.default_size.y, dock::TIMELINE_DEFAULT_HEIGHT);
+        assert_eq!(timeline.default_size.y, 190.0);
+        assert_eq!(timeline.min_height, 20.0);
+        // Los demás, lo de siempre al flotar: su ancho de referencia y 300 (o su mínimo, si es más).
+        for &p in PanelId::ALL {
+            let s = p.spec();
+            if p != PanelId::Timeline {
+                assert_eq!(s.default_size.y, s.min_height.max(DEFAULT_HEIGHT), "{p:?}");
+            }
+            if !matches!(p, PanelId::Canvas | PanelId::Tools | PanelId::Color) {
+                assert_eq!(s.default_size.x, s.reference_width, "{p:?}");
+            }
+        }
+    }
+
+    #[test]
     fn every_panel_has_one_host_and_the_fixed_ones_are_where_they_are_today() {
         assert!(matches!(PanelId::Canvas.spec().host, Host::Center));
         assert!(!PanelId::Canvas.spec().closable);
@@ -476,7 +523,8 @@ mod tests {
         assert!(matches!(PanelId::Tools.spec().host, Host::Tree));
         assert!(PanelId::Tools.spec().closable);
         assert!(matches!(PanelId::Color.spec().host, Host::Right));
-        assert!(matches!(PanelId::Timeline.spec().host, Host::Bottom));
+        // Fase D, tarea 4: el timeline es un panel del árbol (ya no la franja fija de abajo).
+        assert!(matches!(PanelId::Timeline.spec().host, Host::Tree));
         assert!(matches!(PanelId::Preview.spec().host, Host::Window));
         // `Host::Flyout` ya no lleva el cuerpo: está en `spec.body`.
         for (id, body) in [

@@ -9,8 +9,10 @@
 //! pestañas y está siempre una vez, en la superficie principal; ver `fit::tidy_canvas`). Lo que lo
 //! rodea va en puntos (`fit::pin_sides`): al cambiar la ventana, el lienzo absorbe la diferencia.
 //! La columna derecha de la fase C es ahora el lado derecho del lienzo ([`Workspace::column`]);
-//! su ancho sigue siendo la preferencia del usuario (`view.palette_width`). En esta tarea la tira
-//! de íconos y el timeline todavía van dentro de la hoja del lienzo (`ChimpApp::canvas_area`).
+//! su ancho sigue siendo la preferencia del usuario (`view.palette_width`). La toolbar y el
+//! timeline son hojas del árbol (tareas 3 y 4); el timeline oculto sale del árbol y vuelve a su
+//! lugar ([`Workspace::sync_timeline`]). La tira de íconos todavía va a la derecha del lienzo (y
+//! del timeline, si va justo debajo de él): la dibuja `show` encima (ver `show::show`).
 //!
 //! Decisión del usuario (2026-11-10): un grupo acoplado con **un solo panel no lleva barra de
 //! pestañas** (se ve como hoy); al pasar el puntero por su borde de arriba se resalta una franja
@@ -66,6 +68,8 @@ pub(crate) struct Workspace {
     placing: Vec<(PanelId, egui::Pos2, u8)>,
     /// Lo que mide en puntos cada lado del lienzo (ver `fit::pin_sides`).
     sides: fit::SidePoints,
+    /// Dónde estaba el timeline oculto (ver [`Workspace::sync_timeline`]).
+    timeline_spot: Option<model::Spot>,
 }
 
 impl Default for Workspace {

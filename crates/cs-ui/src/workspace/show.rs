@@ -1,9 +1,12 @@
 //! El workspace en pantalla: [`show`] arma el `DockArea` con la piel en toda el área central,
 //! hospeda cada panel ([`Viewer`]; el lienzo, con `ChimpApp::canvas_area`; la toolbar, con su
-//! scroll y sus márgenes de siempre) y pega lo que va encima de egui_dock (las pestañas y la × del
-//! kit, la franja de agarre y el botón « de cada grupo, y el divisor de la toolbar tapado: ver
-//! [`cover_tools_divider`]). También lleva el ancho de la columna derecha: la preferencia del
-//! usuario (`view.palette_width`), el que tomó sola ([`host_width`]) y el arrastre de su divisor.
+//! scroll y sus márgenes de siempre; el timeline debajo del lienzo, con el marco del panel de abajo
+//! de antes) y pega lo que va encima de egui_dock (las pestañas y la × del kit, la franja de agarre
+//! y el botón « de cada grupo, los divisores de la toolbar y del timeline tapados: ver
+//! [`cover_tools_divider`] y [`cover_timeline_divider`], y la tira de íconos:
+//! `ChimpApp::strip_area`). También lleva el ancho de la columna derecha (la preferencia del
+//! usuario, `view.palette_width`, el que tomó sola, [`host_width`], y el arrastre de su divisor) y
+//! el alto del timeline (`view.timeline_height`, ver [`timeline_height`]).
 
 use std::collections::HashMap;
 
@@ -49,8 +52,18 @@ struct Viewer<'a> {
     /// borde, por dentro del panel).
     beside: Vec<PanelId>,
     sep: f32,
-    /// La tira de íconos (va dentro de la hoja del lienzo; ver `ChimpApp::canvas_area`).
-    strip: Vec<PanelId>,
+    /// Si el timeline va justo debajo del lienzo (ver `Workspace::timeline_below`): ahí va sin
+    /// margen en su hoja y con el marco del panel de abajo de antes ([`timeline_frame`]), sin lo
+    /// que ocupa la tira (`strip_room`, ver `dock::strip_room`), que baja a su derecha.
+    timeline_below: bool,
+    strip_room: f32,
+    /// El margen del timeline en cualquier otro lugar.
+    timeline_margin: egui::Margin,
+    /// Cuánto menos margen lleva el lienzo abajo con el timeline justo debajo (el divisor ocupa
+    /// ese aire) y cuánto menos el timeline arriba (sin Pixel UI, el divisor es su línea y un
+    /// punto de su margen).
+    canvas_bottom_less: i8,
+    timeline_top_less: i8,
     /// Lo que dejó la hoja del lienzo, si se dibujó.
     canvas: Option<CanvasArea>,
     actions: Vec<PanelAction>,
@@ -92,11 +105,43 @@ impl TabViewer for Viewer<'_> {
         let spacing = ui.spacing().item_spacing;
         ui.set_style(self.style.clone());
         ui.spacing_mut().item_spacing = spacing;
-        // El lienzo (y lo que todavía va en su hoja): lo de antes del `CentralPanel`.
+        // El lienzo (y el panel 3D fijo de la pestaña de un modelo): lo de antes del
+        // `CentralPanel`.
         if id == PanelId::Canvas {
             let app = &mut *self.app;
-            let area = app.canvas_area(ui, self.modal, &self.strip, &mut self.actions);
-            self.canvas = Some(area);
+            let rect = app.canvas_area(ui, self.modal, self.canvas_bottom_less, &mut self.actions);
+            self.canvas = Some(CanvasArea {
+                rect,
+                dock: Default::default(),
+            });
+            return;
+        }
+        // El timeline justo debajo del lienzo: lo de adentro del panel de abajo de antes (su
+        // marco, sin la punta de la tira, recortado a eso). En otro lugar, como los demás.
+        if id == PanelId::Timeline && self.timeline_below {
+            let app = &mut *self.app;
+            let panel = PanelCtx {
+                modal: self.modal,
+                bottom: None,
+            };
+            let shared_skin = app.pixel.shared_skin();
+            let frame = timeline_frame(ui.style(), shared_skin.as_deref(), self.timeline_top_less);
+            let body = ui.max_rect();
+            let rect = body.with_max_x(body.right() - self.strip_room);
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("timeline")
+                    .max_rect(rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+            let inner = frame.show(&mut child, |ui| {
+                // Como `egui::Panel::bottom`: lo de adentro, a lo ancho del panel.
+                ui.set_min_width(ui.max_rect().width());
+                app.draw_panel(ui, id, &panel)
+            });
+            // New Tilemap Layer: su diálogo (después, con la app entera).
+            self.actions.extend(inner.inner);
             return;
         }
         // La toolbar: lo de adentro del panel izquierdo de antes (su scroll; el margen se lo pone
@@ -169,7 +214,12 @@ impl TabViewer for Viewer<'_> {
 
     fn on_close(&mut self, tab: &mut PanelId) -> egui_dock::tab_viewer::OnCloseResponse {
         self.closed.push(*tab);
-        egui_dock::tab_viewer::OnCloseResponse::Close
+        // El timeline lo saca `Workspace::sync_timeline`, que recuerda dónde estaba.
+        if *tab == PanelId::Timeline {
+            egui_dock::tab_viewer::OnCloseResponse::Ignore
+        } else {
+            egui_dock::tab_viewer::OnCloseResponse::Close
+        }
     }
 
     fn is_closeable(&self, tab: &PanelId) -> bool {
@@ -195,6 +245,9 @@ impl TabViewer for Viewer<'_> {
             PanelId::Canvas => egui::Margin::ZERO,
             PanelId::Color => self.color_margin,
             PanelId::Tools => self.tools_margin,
+            // Debajo del lienzo, el marco lo pone el timeline (el del panel de abajo de antes).
+            PanelId::Timeline if self.timeline_below => egui::Margin::ZERO,
+            PanelId::Timeline => self.timeline_margin,
             _ => egui::Margin::same(dock::FLYOUT_MARGIN),
         };
         if self.beside.contains(tab) {
@@ -208,6 +261,34 @@ impl TabViewer for Viewer<'_> {
         // El scroll es de cada panel (el del kit, o el suyo propio).
         [false, false]
     }
+}
+
+/// El marco del timeline justo debajo del lienzo: el del panel de abajo de antes. Con Pixel UI, el
+/// del diseño (`timeline::pixel_panel_frame`); sin él, el de los paneles de egui con `top_less`
+/// menos de margen arriba (el divisor ocupa su línea y ese punto: ver [`cover_timeline_divider`]).
+fn timeline_frame(style: &egui::Style, skin: Option<&Skin>, top_less: i8) -> egui::Frame {
+    match skin {
+        Some(skin) => crate::timeline::pixel_panel_frame(skin),
+        None => {
+            let mut frame = egui::Frame::side_top_panel(style);
+            frame.inner_margin.top = (frame.inner_margin.top - top_less).max(0);
+            frame
+        }
+    }
+}
+
+/// El alto del timeline (el del panel de abajo de antes, con su borde): el elegido
+/// (`view.timeline_height`) o, si todavía no hay uno, el que egui recordaba del panel de antes
+/// (su `PanelState`, guardado con la memoria de egui: así no cambia al actualizar) o el de fábrica.
+fn timeline_height(app: &ChimpApp, ctx: &egui::Context) -> f32 {
+    app.view
+        .timeline_height
+        .or_else(|| {
+            egui::containers::panel::PanelState::load(ctx, egui::Id::new("timeline"))
+                .map(|state| state.outer_rect.height())
+                .filter(|h| h.is_finite() && *h > 0.0)
+        })
+        .unwrap_or(dock::TIMELINE_DEFAULT_HEIGHT)
 }
 
 /// El contenido de un panel con scroll, justo al ancho que le queda en `ui` (el del grupo sin la
@@ -263,6 +344,10 @@ fn host_width(width: f32, whole: bool, docked: impl Iterator<Item = Extent>) -> 
 pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option<CanvasArea> {
     let ctx = ui.ctx().clone();
     let mut workspace = std::mem::replace(&mut app.workspace, Workspace::placeholder());
+    // El timeline, en el árbol si se quiere ver y tiene sentido (si no, fuera, recordando dónde
+    // estaba): lo que hacen View → Timeline, su botón de la tira y su atajo.
+    let model_tab = app.doc.editor.model_edit_on();
+    workspace.sync_timeline(app.view.timeline && PanelId::Timeline.available(app));
     workspace.tidy();
     tidy_canvas(&mut workspace.state, None);
     workspace.place_restored_windows(&ctx);
@@ -282,10 +367,18 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         None => skin::plain_style(ui.style()),
     };
     let (sep, bar) = chrome(ui, skin);
-    // El mínimo del lienzo es lo que lleva su hoja este frame (la tira o el panel 3D fijo, el
-    // timeline): ningún lado se lo quita (ver `fit_splits` y `pin_sides`).
-    let canvas_min = app.canvas_area_min(&ctx);
-    let m = workspace_minima(ui, skin, &workspace, sep, canvas_min);
+    // El mínimo del lienzo es lo que lleva su hoja este frame (la tira o el panel 3D fijo):
+    // ningún lado se lo quita (ver `fit_splits` y `pin_sides`).
+    let canvas_min = app.canvas_area_min();
+    // La tira de íconos va a la derecha del lienzo (y del timeline, si va justo debajo); en la
+    // pestaña de un modelo, el panel 3D fijo (dentro de la hoja del lienzo).
+    let strip_width = if model_tab { 0.0 } else { dock::WIDTH };
+    let strip_room = if model_tab {
+        0.0
+    } else {
+        dock::strip_room(ui.style(), skin.is_some())
+    };
+    let m = workspace_minima(ui, skin, &workspace, sep, canvas_min, strip_width);
     // La columna derecha: del ancho elegido (o el que tomó sola), nunca menos que su mínimo (con su
     // divisor, que es la línea que el panel derecho tenía de borde). Se pide en puntos al centro
     // del divisor.
@@ -302,6 +395,15 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     workspace.sides.column = Some(column_width - sep / 2.0);
     // La toolbar, del ancho de su caja (la del skin), como el panel izquierdo de antes.
     workspace.sides.toolbar = Some(toolbar_width(skin));
+    // El timeline, de su alto (hasta el centro del divisor). Justo debajo del lienzo, el divisor
+    // está donde estaba el borde del panel de abajo de antes: con Pixel UI, en el aire de abajo
+    // del lienzo (fuera del panel); sin él, en su línea y un punto de su margen (dentro).
+    let below = workspace.timeline_below();
+    let overlap = if below && skin.is_none() { sep } else { 0.0 };
+    let line = ui.visuals().widgets.noninteractive.bg_stroke.width.round();
+    workspace.sides.timeline = Some(timeline_height(app, &ctx) + sep / 2.0 - overlap);
+    workspace.sides.overlap = overlap;
+    workspace.sides.strip = strip_room;
     let area = ui.available_rect_before_wrap();
     // El `DockArea`, en puntos enteros (egui_dock solo ajusta a píxel físico), en todo el área.
     let dock_rect =
@@ -339,7 +441,14 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         tools_floating: workspace.floating(PanelId::Tools),
         beside: workspace.beside_column(),
         sep,
-        strip: workspace.strip.clone(),
+        timeline_below: below,
+        strip_room,
+        timeline_margin: match skin {
+            Some(_) => egui::Margin::same(pixel_ui::WORKSPACE_MARGIN),
+            None => egui::Frame::side_top_panel(ui.style()).inner_margin,
+        },
+        canvas_bottom_less: if below { (sep - overlap) as i8 } else { 0 },
+        timeline_top_less: (overlap - line).max(0.0) as i8,
         canvas: None,
         actions: Vec::new(),
         hits: Vec::new(),
@@ -347,6 +456,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         extents: Vec::new(),
         style: ui.style().clone(),
     };
+    let strip = workspace.strip.clone();
     {
         let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(dock_rect));
         // El marco de las ventanas flotantes (solo lo leen los marcos).
@@ -385,20 +495,60 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .map_or(divider, |leaf| leaf.rect);
         cover_tools_divider(ui, skin, (leaf, divider), first, area.bottom());
     }
+    // El divisor del timeline justo debajo del lienzo: en reposo no se ve.
+    if workspace.timeline_below()
+        && let Some(divider) = workspace.timeline_divider(sep)
+    {
+        cover_timeline_divider(ui, skin, divider, strip_room);
+    }
     let Viewer {
         app,
         actions,
         hits,
         mut closed,
         extents,
-        canvas,
+        mut canvas,
         ..
     } = viewer;
+    // La tira de íconos, de alto completo a la derecha del lienzo (y del timeline justo debajo),
+    // encima de los dos y de su divisor (que ahí no se agarra), como el panel de antes.
+    if !model_tab
+        && let Some(canvas) = &mut canvas
+        && let Some(stack) = workspace.stack_rect()
+    {
+        let rect = stack.with_min_x(stack.right() - strip_width);
+        // El divisor del timeline de debajo no se agarra a través de la tira (el borde del panel
+        // de antes terminaba en ella): encima, un widget que se queda con el puntero (sin tocar
+        // la zona del divisor de la columna, a la derecha de la tira).
+        if let Some(divider) = workspace.timeline_divider(sep) {
+            let band = egui::Rect::from_x_y_ranges(
+                rect.left()..=rect.right() - 1.0,
+                divider.expand(skin::SEPARATOR_EXTRA).y_range(),
+            );
+            let _ = ui.interact(
+                band,
+                egui::Id::new("workspace_strip_block"),
+                egui::Sense::click_and_drag(),
+            );
+        }
+        let timeline = app.view.timeline;
+        canvas.dock = app.strip_area(ui, rect, modal, &strip);
+        // Su botón del timeline: el árbol cambia en el frame siguiente.
+        if app.view.timeline != timeline {
+            ctx.request_repaint();
+        }
+    }
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
     // El de la columna es su preferencia (sin bajar de su mínimo, como el panel de antes).
     let dragged = record_sides(&mut workspace.state, &before, &mut workspace.sides);
+    if let Some(points) = dragged.timeline {
+        // El alto del panel de antes (sin medio divisor, con lo que era suyo), a 1/64 de punto.
+        let height = (points - sep / 2.0 + workspace.sides.overlap)
+            .max(crate::panel_registry::TIMELINE_MIN.y);
+        app.view.timeline_height = Some((height * 64.0).round() / 64.0);
+    }
     let column = workspace.column_rect();
-    if let Some(points) = dragged {
+    if let Some(points) = dragged.column {
         // A 1/64 de punto: sin el ruido de ir de puntos a fracción y de vuelta (un arrastre de
         // 40 puntos guarda 40, no 39.99997), y sin correr el divisor (ver `record_sides`).
         let width = (points + sep / 2.0).max(column_min);
@@ -472,7 +622,14 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         skin::arm(&ctx, armed);
     }
     for id in closed {
-        workspace.to_strip(id);
+        if id == PanelId::Timeline {
+            // Cerrarlo es apagarlo (como su botón de la tira y View → Timeline): sale del árbol y
+            // vuelve a su lugar al prenderlo.
+            app.view.timeline = false;
+            workspace.sync_timeline(false);
+        } else {
+            workspace.to_strip(id);
+        }
     }
     let released = tab_drag_released(&ctx, &workspace.state, &hits);
     // Lo que egui_dock soltó en el lienzo (como pestaña): al lado, del lado del cuadrante.
@@ -510,7 +667,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         ctx.request_discard("workspace layout changed");
     }
     // Cada split con sus lados en su mínimo, y a puntos enteros, para el frame siguiente.
-    let m = workspace_minima(ui, skin, &workspace, sep, canvas_min);
+    let m = workspace_minima(ui, skin, &workspace, sep, canvas_min, strip_width);
     fit_splits(&mut workspace.state, &m, sep, bar);
     fit_windows(&ctx, &mut workspace, &m, sep, bar);
     skin::snap(&ctx, &mut workspace.state);
@@ -523,17 +680,24 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
 }
 
 /// Lo mínimo de cada panel en su grupo de `w` (ver [`minima`]): el lienzo, lo que lleva su hoja
-/// este frame (`canvas`); los pegados al divisor de la columna derecha y la toolbar junto al
-/// lienzo, un divisor (`sep`) menos (su margen de ese lado cuenta desde la línea).
+/// este frame (`canvas`); el timeline justo debajo del lienzo, la tira (`strip`) más; los pegados
+/// al divisor de la columna derecha y la toolbar junto al lienzo, un divisor (`sep`) menos (su
+/// margen de ese lado cuenta desde la línea).
 fn workspace_minima(
     ui: &egui::Ui,
     skin: Option<&Skin>,
     w: &Workspace,
     sep: f32,
     canvas: egui::Vec2,
+    strip: f32,
 ) -> Minima {
     let mut m = beside_minima(minima(ui, skin), &w.beside_column(), sep);
     m.insert(PanelId::Canvas, canvas);
+    if w.timeline_below()
+        && let Some(min) = m.get_mut(&PanelId::Timeline)
+    {
+        min.x += strip;
+    }
     if w.tools_side().is_some()
         && let Some(min) = m.get_mut(&PanelId::Tools)
     {
@@ -633,6 +797,37 @@ fn cover_tools_divider(
         egui::Id::new("workspace_tools_divider"),
         egui::Sense::click_and_drag(),
     );
+}
+
+/// El divisor entre el lienzo y el timeline justo debajo (`divider`) se ve, en reposo, como el
+/// borde del panel de abajo de antes: con Pixel UI, nada (el fondo: era el aire de abajo del
+/// lienzo); sin él, el fondo y la línea de 1 punto de egui arriba, a lo ancho del panel (sin la
+/// tira de `strip` de ancho, que va encima). Con el puntero encima o arrastrándolo (egui_dock pone
+/// el cursor de cambiar el alto) se ve como los demás divisores. Se arrastra (es el alto del
+/// timeline: ver `record_sides`).
+fn cover_timeline_divider(ui: &mut egui::Ui, skin: Option<&Skin>, divider: egui::Rect, strip: f32) {
+    let ctx = ui.ctx().clone();
+    let resizing = ctx.output(|o| o.cursor_icon == egui::CursorIcon::ResizeVertical);
+    let near = ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| {
+        divider.x_range().contains(p.x) && (p.y - divider.center().y).abs() <= 4.0
+    });
+    if resizing && near {
+        return;
+    }
+    let ppp = ctx.pixels_per_point();
+    // Donde lo pinta egui_dock (`show_separator`): a píxel físico.
+    let y = |v: f32| (v * ppp).round() / ppp;
+    let rect =
+        egui::Rect::from_x_y_ranges(divider.x_range(), y(divider.top())..=y(divider.bottom()));
+    ui.painter().rect_filled(rect, 0.0, ui.visuals().panel_fill);
+    if skin.is_none() {
+        // Como `egui::Panel::bottom` con `show_separator_line`: la línea en el borde de arriba del
+        // panel, por dentro.
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        let at = rect.top() + stroke.width / 2.0;
+        ui.painter()
+            .hline(rect.left()..=rect.right() - strip, at, stroke);
+    }
 }
 
 /// Los mínimos `m` con los de los paneles pegados al divisor izquierdo de la columna derecha

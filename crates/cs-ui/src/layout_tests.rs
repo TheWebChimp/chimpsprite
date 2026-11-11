@@ -322,6 +322,9 @@ impl LayoutHarness {
     /// lienzo, que es su divisor) es `Workspace::column_rect`, el mismo que tenía el panel.
     /// Tarea 3: la toolbar (`"tools"`) es una hoja más; su rect equivalente (con el divisor que
     /// la separa del lienzo, donde el panel tenía su borde) es `Workspace::tools_rect`.
+    /// Tarea 4: el timeline (`"timeline"`) también; su rect equivalente (su hoja sin la punta que
+    /// tapa la tira y, sin Pixel UI, con el divisor, que es la línea y el margen de arriba del
+    /// panel de antes) es `Workspace::timeline_rect`.
     fn panel(&self, id: &str) -> Rect {
         if id == "palette" {
             return self
@@ -336,6 +339,13 @@ impl LayoutHarness {
                 .workspace
                 .tools_rect()
                 .unwrap_or_else(|| panic!("no toolbar in the workspace"));
+        }
+        if id == "timeline" {
+            return self
+                .app
+                .workspace
+                .timeline_rect()
+                .unwrap_or_else(|| panic!("no timeline in the workspace"));
         }
         PanelState::load(&self.ctx, egui::Id::new(id))
             .unwrap_or_else(|| panic!("no panel {id:?}"))
@@ -352,6 +362,42 @@ impl LayoutHarness {
             .iter()
             .flat_map(|c| crate::pixel_ui::colored_rects(&c.shape))
             .collect()
+    }
+
+    /// Como [`Self::separator_lines_in`], pero cada línea recortada a su recorte (lo que se ve).
+    fn separator_lines_seen_in(&self, area: Rect) -> Vec<Rect> {
+        let color = self
+            .ctx
+            .global_style()
+            .visuals
+            .widgets
+            .noninteractive
+            .bg_stroke
+            .color;
+        fn collect(shape: &egui::Shape, color: egui::Color32, clip: Rect, out: &mut Vec<Rect>) {
+            match shape {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == color => {
+                    let r = Rect::from_two_pos(points[0], points[1]);
+                    let seen = Rect::from_x_y_ranges(
+                        r.left().max(clip.left())..=r.right().min(clip.right()),
+                        r.top().max(clip.top())..=r.bottom().min(clip.bottom()),
+                    );
+                    if seen.min.x <= seen.max.x && seen.min.y <= seen.max.y {
+                        out.push(seen);
+                    }
+                }
+                egui::Shape::Vec(shapes) => {
+                    shapes.iter().for_each(|s| collect(s, color, clip, out))
+                }
+                _ => {}
+            }
+        }
+        let mut lines = Vec::new();
+        for c in &self.shapes {
+            collect(&c.shape, color, c.clip_rect, &mut lines);
+        }
+        lines.retain(|r| r.expand(0.5).intersects(area));
+        lines
     }
 
     /// Las líneas de egui del color de sus separadores que tocan `area`.
@@ -12048,9 +12094,12 @@ fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
         h.frame();
         let groom = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
         let from = h.button("Library").center();
-        // Al borde izquierdo de Groom (lo parte) o al lienzo (una ventana).
+        // Al borde izquierdo de Groom (lo parte) o al lienzo (una ventana): al punto de la hoja del
+        // lienzo donde caía el centro del lienzo cuando el timeline iba dentro de ella (tarea 4: la
+        // hoja ya no baja hasta la barra de estado; su centro la parte, el anillo la pone a flotar).
         let to = if to_canvas {
-            h.canvas.expect("the canvas").center()
+            let leaf = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+            leaf.min + leaf.size() * vec2(0.486, 0.367)
         } else {
             pos2(groom.left() + groom.width() * 0.05, groom.center().y)
         };
@@ -12081,11 +12130,14 @@ fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
         h.frame();
         h.frame();
         let w = &h.app.workspace;
-        // Fase D: el lienzo y la toolbar también están en el árbol (una vez).
+        // Fase D: el lienzo, la toolbar y el timeline también están en el árbol (una vez).
         for &id in crate::panel_registry::PanelId::ALL {
             let expected = usize::from(
                 PanelId::DOCK.contains(&id)
-                    || matches!(id, PanelId::Color | PanelId::Canvas | PanelId::Tools),
+                    || matches!(
+                        id,
+                        PanelId::Color | PanelId::Canvas | PanelId::Tools | PanelId::Timeline
+                    ),
             );
             assert_eq!(w.places(id), expected, "canvas {to_canvas}: {id:?}");
         }
@@ -12270,7 +12322,7 @@ fn shrinking_the_window_and_growing_it_back_keeps_the_sides_points() {
 
 /// Lo mínimo de la hoja del lienzo en el último frame.
 fn canvas_min(h: &LayoutHarness) -> Vec2 {
-    h.app.canvas_area_min(&h.ctx)
+    h.app.canvas_area_min()
 }
 
 /// Groom debajo del lienzo (`V[Canvas / Groom]` a la izquierda de la columna).
@@ -12567,7 +12619,9 @@ fn the_toolbars_divider_paints_nothing_over_a_group_below_it() {
             "{tools:?} over {groom:?}"
         );
         // Lo del color del fondo de los paneles que cruza el borde de arriba de Groom (desde
-        // arriba de él hasta adentro), en su ancho.
+        // arriba de él hasta adentro), en su ancho. Tarea 4: lo que se ve (cada rect dentro de su
+        // recorte): el marco de la tira, que no cabe en la hoja del lienzo, se pasa de su rect
+        // pero se recorta a él (el `egui::Panel` de la tira recorta a su rect).
         let fill = h.ctx.global_style().visuals.panel_fill;
         let crossing = |r: &Rect| {
             r.top() < groom.top() - 0.5
@@ -12582,16 +12636,23 @@ fn the_toolbars_divider_paints_nothing_over_a_group_below_it() {
                 _ => {}
             }
         }
-        let mut rects = h.colored_rects();
+        let mut rects = Vec::new();
         for c in &h.shapes {
-            filled(&c.shape, &mut rects);
+            let mut mine = crate::pixel_ui::colored_rects(&c.shape);
+            filled(&c.shape, &mut mine);
+            rects.extend(
+                mine.into_iter()
+                    .map(|(color, r)| (color, r.intersect(c.clip_rect))),
+            );
         }
         let over: Vec<_> = rects
             .into_iter()
             .filter(|(c, r)| *c == fill && crossing(r))
             .collect();
         assert_eq!(over, vec![], "pixel {pixel}: the toolbar's fill over Groom");
-        let lines: Vec<_> = vertical(h.separator_lines_in(groom))
+        // Las líneas, también recortadas: la de la izquierda de la tira (sin Pixel UI) se pasa con
+        // su marco pero se recorta a la hoja del lienzo.
+        let lines: Vec<_> = vertical(h.separator_lines_seen_in(groom))
             .into_iter()
             .filter(crossing)
             .collect();
@@ -12634,5 +12695,296 @@ fn the_toolbars_flyout_scrolls_in_a_low_window() {
     assert!(
         after.is_none_or(|r| r.top() < marquee.top()),
         "{after:?} vs {marquee:?}"
+    );
+}
+
+// --- Fase D, tarea 4: el timeline es un panel del árbol ---
+
+/// El color de lo último que se pintó lleno (un rect o un cuadro de una malla sin textura, dentro
+/// de su recorte) sobre el punto `p` en el último frame: lo que se ve ahí.
+fn top_color(h: &LayoutHarness, p: Pos2) -> Option<egui::Color32> {
+    fn walk(shape: &egui::Shape, p: Pos2, out: &mut Option<egui::Color32>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, p, out)),
+            egui::Shape::Rect(r) if r.fill.a() > 0 && r.rect.contains(p) => *out = Some(r.fill),
+            egui::Shape::Mesh(_) => {
+                for (color, rect) in crate::pixel_ui::colored_rects(shape) {
+                    if rect.contains(p) && color.a() > 0 {
+                        *out = Some(color);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = None;
+    for c in &h.shapes {
+        if c.clip_rect.contains(p) {
+            walk(&c.shape, p, &mut out);
+        }
+    }
+    out
+}
+
+#[test]
+fn with_essentials_the_timeline_is_a_leaf_below_the_canvas_where_its_panel_was() {
+    use crate::panel_registry::PanelId;
+    // Con Pixel UI (1200×800): el panel de abajo de antes iba de 37,590 a 911,780 (con la tira a
+    // su derecha, de alto completo). Ahora es la hoja del timeline (37..937, con la tira encima de
+    // su punta derecha) debajo del divisor (588..590, que no se ve: es el aire de abajo del
+    // lienzo); el lienzo y los botones, donde estaban.
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Timeline) && w.timeline_below());
+    assert_eq!(
+        w.leaf_rect(PanelId::Timeline),
+        Some(Rect::from_min_max(pos2(37.0, 590.0), pos2(937.0, 780.0)))
+    );
+    assert_eq!(
+        w.leaf_rect(PanelId::Canvas),
+        Some(Rect::from_min_max(pos2(37.0, 63.0), pos2(937.0, 588.0)))
+    );
+    assert_eq!(
+        h.panel("timeline"),
+        Rect::from_min_max(pos2(37.0, 590.0), pos2(911.0, 780.0))
+    );
+    assert_eq!(
+        h.canvas,
+        Some(Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0)))
+    );
+    assert_eq!(
+        h.panel("dock"),
+        Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
+    );
+    for (label, rect) in [
+        ("First frame", (43.0, 596.0, 68.0, 613.0)),
+        ("Play", (91.0, 596.0, 116.0, 613.0)),
+        ("New tilemap layer", (301.0, 596.0, 326.0, 613.0)),
+        ("Longer frame", (662.0, 596.0, 677.0, 612.0)),
+        ("Add Layer Mask", (141.0, 631.0, 152.0, 640.0)),
+    ] {
+        let (x0, y0, x1, y1) = rect;
+        assert_eq!(
+            h.button(label),
+            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
+            "{label}"
+        );
+    }
+    // En reposo, el divisor no se ve (ni su línea grabada ni un marcador): encima, el fondo.
+    let background = h.app.pixel.skin().unwrap().colors().background;
+    for y in [588.5, 589.5] {
+        for x in [37.5, 400.0, 910.5] {
+            assert_eq!(top_color(&h, pos2(x, y)), Some(background), "{x},{y}");
+        }
+    }
+    // Sin Pixel UI: el panel de antes iba de 184,587 a 912,777, con su línea de 1 punto arriba y
+    // los botones 3 puntos abajo; la hoja empieza 2 puntos después (el divisor es esa línea y un
+    // punto del margen).
+    let h = LayoutHarness::editor();
+    let w = &h.app.workspace;
+    assert!(w.timeline_below());
+    assert_eq!(h.panel("status").top(), 777.0);
+    assert_eq!(
+        w.leaf_rect(PanelId::Timeline),
+        Some(Rect::from_min_max(pos2(184.0, 589.0), pos2(937.0, 777.0)))
+    );
+    assert_eq!(
+        h.panel("timeline"),
+        Rect::from_min_max(pos2(184.0, 587.0), pos2(912.0, 777.0))
+    );
+    assert_eq!(
+        h.canvas,
+        Some(Rect::from_min_max(pos2(184.0, 78.0), pos2(912.0, 587.0)))
+    );
+    assert_eq!(
+        h.panel("dock"),
+        Rect::from_min_max(pos2(912.0, 78.0), pos2(938.0, 777.0))
+    );
+    assert_eq!(h.button("⏮").min, pos2(192.0, 590.0));
+    let frame = h.button("+ Frame").min;
+    assert_eq!(frame, pos2(376.843_75, 590.0));
+    // La línea de egui arriba del timeline, a lo ancho del panel de antes (una sola).
+    let lines: Vec<Rect> = h
+        .separator_lines_in(Rect::from_min_max(pos2(184.0, 586.0), pos2(912.0, 590.0)))
+        .into_iter()
+        .filter(|r| r.height() == 0.0)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![Rect::from_min_max(pos2(184.0, 587.5), pos2(912.0, 587.5))]
+    );
+}
+
+#[test]
+fn the_view_timeline_toggle_hides_its_leaf_and_brings_it_back_in_its_place() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let (leaf, panel, canvas) = (
+        h.app.workspace.leaf_rect(PanelId::Timeline),
+        h.panel("timeline"),
+        h.canvas,
+    );
+    // El botón de la tira lo apaga: sin su hoja, el lienzo llega hasta abajo; la tira, igual.
+    h.click(h.button("Timeline").center(), PointerButton::Primary);
+    assert!(!h.app.view.timeline);
+    let w = &h.app.workspace;
+    assert!(!w.docked(PanelId::Timeline) && !w.floating(PanelId::Timeline));
+    assert!(!h.app.drawn_this_frame(PanelId::Timeline));
+    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().bottom(), 780.0);
+    assert_eq!(h.canvas.unwrap().bottom(), 780.0 - 5.0 - 3.0);
+    assert_eq!(
+        h.panel("dock"),
+        Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
+    );
+    // Y lo prende de vuelta, donde estaba.
+    h.click(h.button("Timeline").center(), PointerButton::Primary);
+    assert!(h.app.view.timeline);
+    assert!(h.app.drawn_this_frame(PanelId::Timeline));
+    assert_eq!(h.app.workspace.leaf_rect(PanelId::Timeline), leaf);
+    assert_eq!(h.panel("timeline"), panel);
+    assert_eq!(h.canvas, canvas);
+    // View → Timeline (la misma preferencia) con el timeline a la derecha del lienzo: vuelve ahí.
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Timeline, DockTarget::Split(s, n, Split::Right));
+    for _ in 0..3 {
+        h.frame();
+    }
+    let right = h.app.workspace.leaf_rect(PanelId::Timeline).unwrap();
+    h.app.view.timeline = false;
+    h.frame();
+    assert!(!h.app.workspace.docked(PanelId::Timeline));
+    h.app.view.timeline = true;
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(h.app.workspace.leaf_rect(PanelId::Timeline), Some(right));
+}
+
+#[test]
+fn in_a_model_tab_the_timeline_is_not_drawn_and_comes_back_with_the_sprite() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let leaf = h.app.workspace.leaf_rect(PanelId::Timeline);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    let id = h.app.doc.editor.workspace().expect("the model");
+    h.app.tabs.open_view(&mut h.app.doc, id);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.doc.editor.model_edit_on());
+    assert!(!h.app.drawn_this_frame(PanelId::Timeline));
+    assert!(!h.app.workspace.docked(PanelId::Timeline));
+    assert_eq!(
+        h.app.workspace.leaf_rect(PanelId::Canvas).unwrap().bottom(),
+        h.panel("status").top()
+    );
+    // La preferencia no cambia: de vuelta en el sprite, el timeline en su lugar.
+    assert!(h.app.view.timeline);
+    h.app.tabs.show_doc(&mut h.app.doc);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.drawn_this_frame(PanelId::Timeline));
+    assert_eq!(h.app.workspace.leaf_rect(PanelId::Timeline), leaf);
+}
+
+#[test]
+fn the_timeline_moved_right_of_the_canvas_docks_there() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let column = h.panel("palette");
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Timeline, DockTarget::Split(s, n, Split::Right));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Timeline) && !w.timeline_below());
+    let timeline = w.leaf_rect(PanelId::Timeline).unwrap();
+    let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+    // A la derecha del lienzo, de alto completo; el lienzo llega hasta abajo, con la tira a su
+    // derecha (no a la del timeline) y la columna donde estaba.
+    assert!(timeline.left() > canvas.right(), "{timeline:?} {canvas:?}");
+    assert_eq!(timeline.y_range(), canvas.y_range());
+    assert_eq!(canvas.bottom(), 780.0);
+    assert_eq!(h.panel("dock").right(), canvas.right());
+    assert_eq!(h.panel("dock").y_range(), canvas.y_range());
+    assert_eq!(h.panel("palette"), column);
+    assert!(timeline.right() <= column.left());
+    assert!(h.app.drawn_this_frame(PanelId::Timeline));
+    assert!(
+        timeline.contains_rect(h.button("Play")),
+        "{:?}",
+        h.button("Play")
+    );
+    // Sigue ahí frame tras frame.
+    h.frame();
+    assert_eq!(h.app.workspace.leaf_rect(PanelId::Timeline), Some(timeline));
+}
+
+#[test]
+fn dragging_the_timeline_divider_keeps_its_height_as_a_preference() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert_eq!(h.app.view.timeline_height, None);
+    // El divisor: el cursor de cambiar el alto, como el borde del panel de antes.
+    let at = pos2(400.0, 589.0);
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame();
+    assert_eq!(h.cursor, egui::CursorIcon::ResizeVertical);
+    h.drag(at, at - vec2(0.0, 50.0));
+    h.frame();
+    assert_eq!(h.app.view.timeline_height, Some(240.0));
+    assert_eq!(
+        h.panel("timeline"),
+        Rect::from_min_max(pos2(37.0, 540.0), pos2(911.0, 780.0))
+    );
+    // Oculto y de vuelta, del mismo alto; en una ventana más baja, también.
+    h.app.view.timeline = false;
+    h.frame();
+    h.app.view.timeline = true;
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(h.panel("timeline").height(), 240.0);
+    h.size = vec2(1200.0, 700.0);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let timeline = h.panel("timeline");
+    assert_eq!(timeline.height(), 240.0);
+    assert_eq!(timeline.bottom(), h.panel("status").top());
+    assert!(h.app.workspace.leaf_rect(PanelId::Canvas).unwrap().bottom() < timeline.top());
+}
+
+#[test]
+fn closing_the_timeline_tab_turns_it_off_and_it_comes_back_in_its_group() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Timeline, DockTarget::Leaf(s, n));
+    for _ in 0..3 {
+        h.frame();
+    }
+    h.click(h.button("Close Timeline").center(), PointerButton::Primary);
+    assert!(!h.app.view.timeline, "closing it turns it off");
+    assert!(!h.app.workspace.docked(PanelId::Timeline));
+    assert!(!h.app.workspace.strip().contains(&PanelId::Timeline));
+    h.app.view.timeline = true;
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(
+        h.app.workspace.leaf_of(PanelId::Timeline),
+        h.app.workspace.leaf_of(PanelId::Color)
     );
 }

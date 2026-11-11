@@ -244,6 +244,7 @@ impl ChimpApp {
             NewFrame => editor.duplicate_frame(),
             OnionSkin => editor.onion_enabled = !editor.onion_enabled,
             Extras => self.view.extras = !self.view.extras,
+            // Su hoja sale del árbol del workspace y vuelve a su lugar (`Workspace::sync_timeline`).
             Timeline => self.view.timeline = !self.view.timeline,
             FullScreen => {
                 if !cfg!(target_arch = "wasm32") {
