@@ -37,7 +37,8 @@ struct Harness {
     width: f32,
     /// La hoja del timeline en el último frame, en la ventana.
     leaf: Rect,
-    /// Los nodos con nombre del último frame; los de la hoja, primero.
+    /// Los nodos con nombre del último frame: los del timeline y sus menús
+    /// (`hosted_panel::panel_nodes`).
     nodes: Vec<(String, Rect)>,
     /// Posición del texto "Layers" del encabezado de la grilla.
     grid: Pos2,
@@ -130,25 +131,7 @@ impl Harness {
 
     /// Un frame con `events`, cuyas posiciones son relativas a la hoja.
     fn frame(&mut self, events: Vec<Event>) {
-        let offset = self.leaf.min.to_vec2();
-        let events = events
-            .into_iter()
-            .map(|e| match e {
-                Event::PointerMoved(p) => Event::PointerMoved(p + offset),
-                Event::PointerButton {
-                    pos,
-                    button,
-                    pressed,
-                    modifiers,
-                } => Event::PointerButton {
-                    pos: pos + offset,
-                    button,
-                    pressed,
-                    modifiers,
-                },
-                e => e,
-            })
-            .collect();
+        let events = hosted_panel::to_window(events, self.leaf);
         self.time += 0.05;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(self.width, 400.0))),
@@ -181,33 +164,9 @@ impl Harness {
         for (_, r) in &mut self.images {
             *r = r.translate(back);
         }
-        let mut nodes: Vec<(String, Rect)> = output
-            .platform_output
-            .accesskit_update
-            .map(|u| {
-                u.nodes
-                    .iter()
-                    .filter_map(|(_, n)| {
-                        let b = n.bounds()?;
-                        let text = n.label().or_else(|| n.value())?.to_string();
-                        Some((
-                            text,
-                            Rect::from_min_max(
-                                pos2(b.x0 as f32, b.y0 as f32),
-                                pos2(b.x1 as f32, b.y1 as f32),
-                            ),
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        // Los del timeline antes que los de otro lado con el mismo nombre (la barra de opciones
-        // de la herramienta también tiene una opacidad); los menús emergentes, aunque salgan de
-        // la hoja, también cuentan.
-        nodes.sort_by_key(|(_, r)| !leaf.intersects(*r));
-        self.nodes = nodes
+        self.nodes = hosted_panel::panel_nodes(&self.ctx, &output, leaf)
             .into_iter()
-            .map(|(t, r)| (t, r.translate(back)))
+            .map(|(t, r, _)| (t, r))
             .collect();
         for clipped in shapes {
             if let egui::Shape::Text(t) = &clipped.shape

@@ -36,7 +36,8 @@ struct Harness {
     time: f64,
     /// La hoja de Color en el último frame, en la ventana.
     leaf: Rect,
-    /// Los nodos con nombre del último frame; los de la hoja, primero.
+    /// Los nodos con nombre del último frame: los de Color y sus menús
+    /// (`hosted_panel::panel_nodes`).
     nodes: Vec<(String, Rect)>,
     /// Lo dibujado en la hoja (y en los menús que abre) en el último frame.
     shapes: Vec<egui::epaint::ClippedShape>,
@@ -87,25 +88,7 @@ impl Harness {
 
     /// Un frame de la app con `events` (las posiciones, relativas a la hoja).
     fn run(&mut self, events: Vec<Event>) -> egui::FullOutput {
-        let offset = self.leaf.min.to_vec2();
-        let events = events
-            .into_iter()
-            .map(|e| match e {
-                Event::PointerMoved(p) => Event::PointerMoved(p + offset),
-                Event::PointerButton {
-                    pos,
-                    button,
-                    pressed,
-                    modifiers,
-                } => Event::PointerButton {
-                    pos: pos + offset,
-                    button,
-                    pressed,
-                    modifiers,
-                },
-                e => e,
-            })
-            .collect();
+        let events = hosted_panel::to_window(events, self.leaf);
         self.time += 0.05;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0))),
@@ -121,13 +104,9 @@ impl Harness {
     fn frame(&mut self, events: Vec<Event>) {
         let output = self.run(events);
         let (leaf, back) = (self.leaf, -self.leaf.min.to_vec2());
-        let mut nodes = nodes(&output);
-        // Los de Color antes que los de otro lado con el mismo nombre; los menús emergentes,
-        // aunque salgan de la hoja, también cuentan.
-        nodes.sort_by_key(|(_, r)| !leaf.intersects(*r));
-        self.nodes = nodes
+        self.nodes = hosted_panel::panel_nodes(&self.ctx, &output, leaf)
             .into_iter()
-            .map(|(t, r)| (t, r.translate(back)))
+            .map(|(t, r, _)| (t, r))
             .collect();
         self.copied = output
             .platform_output
@@ -304,25 +283,6 @@ impl Harness {
         self.editor().primary = PixelValue::Rgba(c);
         self.frame(vec![]);
     }
-}
-
-fn nodes(output: &egui::FullOutput) -> Vec<(String, Rect)> {
-    let Some(update) = &output.platform_output.accesskit_update else {
-        return Vec::new();
-    };
-    update
-        .nodes
-        .iter()
-        .filter_map(|(_, n)| {
-            let b = n.bounds()?;
-            let text = n.label().or_else(|| n.value())?.to_string();
-            let rect = Rect::from_min_max(
-                pos2(b.x0 as f32, b.y0 as f32),
-                pos2(b.x1 as f32, b.y1 as f32),
-            );
-            Some((text, rect))
-        })
-        .collect()
 }
 
 fn collect_meshes(shape: &egui::Shape, out: &mut Vec<(egui::TextureId, Rect)>) {
@@ -866,27 +826,23 @@ fn with_pixel_ui_typing_into_g_b_and_a_changes_the_color() {
     assert_eq!(h.primary(), Rgba::new(10, 100, 200, 128));
 }
 
-/// Si el nodo de accesibilidad `label` se anuncia elegido (prendido).
-fn selected(output: &egui::FullOutput, label: &str) -> Option<bool> {
-    let update = output.platform_output.accesskit_update.as_ref()?;
-    update
-        .nodes
-        .iter()
-        .find(|(_, n)| n.label().is_some_and(|l| l == label))
-        .and_then(|(_, n)| n.toggled())
-        .map(|t| t == egui::accesskit::Toggled::True)
-}
-
 impl Harness {
+    /// El nodo `label` de Color (o de sus menús) en un frame sin eventos.
+    fn quiet_node<R>(
+        &mut self,
+        label: &str,
+        read: impl FnOnce(&egui::accesskit::Node) -> R,
+    ) -> Option<R> {
+        let output = self.quiet_output();
+        hosted_panel::panel_nodes(&self.ctx, &output, self.leaf)
+            .into_iter()
+            .find(|(t, _, _)| t == label)
+            .map(|(_, _, n)| read(n))
+    }
+
     /// Si el botón `label` se anuncia desactivado, en un frame sin eventos.
     fn is_disabled(&mut self, label: &str) -> Option<bool> {
-        let output = self.quiet_output();
-        let update = output.platform_output.accesskit_update.as_ref()?;
-        update
-            .nodes
-            .iter()
-            .find(|(_, n)| n.label().is_some_and(|l| l == label))
-            .map(|(_, n)| n.is_disabled())
+        self.quiet_node(label, |n| n.is_disabled())
     }
 
     /// El tinte de la malla dibujada en `rect` en el último frame.
@@ -905,8 +861,9 @@ impl Harness {
 
     /// Si el botón `label` se anuncia elegido (prendido), en un frame sin eventos.
     fn is_selected(&mut self, label: &str) -> Option<bool> {
-        let output = self.quiet_output();
-        selected(&output, label)
+        self.quiet_node(label, |n| n.toggled())
+            .flatten()
+            .map(|t| t == egui::accesskit::Toggled::True)
     }
 
     /// Un frame sin eventos (y sin guardar lo dibujado).
@@ -1090,9 +1047,13 @@ fn with_pixel_ui_the_page_button_asks_for_a_new_palette_only_when_unlocked() {
     let icon = h.drawn("palette.icon.new")[0];
     assert_ne!(h.mesh_tint(icon), Some(Color32::WHITE), "dimmed");
     h.click_at(h.node("New palette").center());
-    // La app aplica lo que pide el panel en el mismo frame: no pidió nada (ni la hizo ni
-    // preguntó).
+    // La app aplica lo que pide el panel en el mismo frame: no pidió nada. Ni la hizo ni
+    // preguntó, ni hizo lo de otra `PaletteAction` que se vea en la app (los presets, el nombre
+    // de un preset, un mensaje, otra paleta).
     assert!(h.app.palette_confirm.is_none());
+    assert!(h.app.presets_window.is_none());
+    assert!(h.app.preset_name.is_none());
+    assert!(h.app.message.is_none());
     assert_eq!(h.editor().sprite().palette, before);
     // Desbloqueada: la pide a la app (que la hace, o pregunta en indexado).
     h.click_at(h.node("Lock palette").center());
@@ -1164,7 +1125,8 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
 }
 
 impl Harness {
-    /// Con Pixel UI y el panel de `width` de ancho (con sus márgenes).
+    /// Con Pixel UI y la columna derecha de `width` de ancho (`view.palette_width`: con su
+    /// divisor de 2, del que cuenta el margen izquierdo de Color).
     fn with_width(width: f32) -> Self {
         let mut h = Self::new(true);
         h.app.view.palette_width = Some(width);

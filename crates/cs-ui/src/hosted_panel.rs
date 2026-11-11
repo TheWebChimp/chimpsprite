@@ -60,6 +60,63 @@ pub(crate) fn leaf(app: &ChimpApp, id: PanelId) -> egui::Rect {
         .unwrap_or_else(|| panic!("{id:?} is not in the workspace"))
 }
 
+/// `events` de un arnés, con las posiciones del puntero relativas a la hoja `leaf`, en la ventana.
+pub(crate) fn to_window(events: Vec<egui::Event>, leaf: egui::Rect) -> Vec<egui::Event> {
+    let offset = leaf.min.to_vec2();
+    events
+        .into_iter()
+        .map(|e| match e {
+            egui::Event::PointerMoved(p) => egui::Event::PointerMoved(p + offset),
+            egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers,
+            } => egui::Event::PointerButton {
+                pos: pos + offset,
+                button,
+                pressed,
+                modifiers,
+            },
+            e => e,
+        })
+        .collect()
+}
+
+/// Los nodos con nombre (o, si no, con valor) de `output` que son del panel de la hoja `leaf`,
+/// en orden, con su rect relativo a la hoja. Cuentan los que se cruzan con la hoja (con área:
+/// tocar el borde, como la barra de opciones justo encima, no cuenta) y los de lo que va encima de
+/// los paneles (un menú emergente, un combo abierto o una ventana: la capa que hay en el centro
+/// del nodo, `Context::layer_id_at`, no es la del fondo), que pueden salir de la hoja. Los de las
+/// barras de la ventana (la de opciones de la herramienta también tiene "Opacity" y "1"), del
+/// lienzo y de la tira no: están en la capa del fondo, fuera de la hoja.
+pub(crate) fn panel_nodes<'a>(
+    ctx: &egui::Context,
+    output: &'a egui::FullOutput,
+    leaf: egui::Rect,
+) -> Vec<(String, egui::Rect, &'a egui::accesskit::Node)> {
+    let Some(update) = &output.platform_output.accesskit_update else {
+        return Vec::new();
+    };
+    update
+        .nodes
+        .iter()
+        .filter_map(|(_, n)| {
+            let b = n.bounds()?;
+            let text = n.label().or_else(|| n.value())?.to_string();
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(b.x0 as f32, b.y0 as f32),
+                egui::pos2(b.x1 as f32, b.y1 as f32),
+            );
+            let popup = ctx
+                .layer_id_at(rect.center())
+                .is_some_and(|l| l.order != egui::Order::Background);
+            let ours = clipped_to(rect, leaf) || popup;
+            ours.then(|| (text, rect.translate(-leaf.min.to_vec2()), n))
+        })
+        .collect()
+}
+
 /// Si lo dibujado con recorte `clip` cae en `leaf` (con área: tocar el borde no cuenta). Lo del
 /// panel y sus menús emergentes (recortados a la ventana) sí; las barras de arriba, la de estado
 /// y el lienzo, no.
