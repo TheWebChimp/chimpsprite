@@ -85,6 +85,7 @@ impl Harness {
         };
         let (editor, state, skin) = (&mut self.editor, &mut self.state, self.skin.as_ref());
         let mut output = self.ctx.run_ui(input, |ui| {
+            // Arnés: un panel inferior propio; en la app real el timeline vive en el workspace.
             let mut panel = egui::Panel::bottom("timeline").exact_size(190.0);
             if let Some(skin) = skin {
                 panel = panel
