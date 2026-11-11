@@ -93,6 +93,7 @@ const NEW_WINDOW_ALPHA: f32 = 0.6;
 pub(super) fn dock_style(ui_style: &egui::Style, skin: &Skin) -> egui_dock::Style {
     let colors = *skin.colors();
     let mut style = plain_style(ui_style);
+    style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
     style.tab_bar.height = TAB_BAR_H;
     style.tab_bar.bg_fill = colors.background;
     style.tab_bar.hline_color = Color32::TRANSPARENT;
@@ -140,7 +141,11 @@ pub(super) fn plain_style(ui_style: &egui::Style) -> egui_dock::Style {
     style.tab.tab_body.corner_radius = CornerRadius::ZERO;
     // El fondo de los paneles de egui, como el panel derecho de antes (no el de las ventanas).
     style.tab.tab_body.bg_fill = ui_style.visuals.panel_fill;
-    style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
+    // Sin Pixel UI, sin franja de agarre (0: egui_dock no la registra para arrastrar y su rect
+    // queda vacío): la del lienzo se tragaría los clics de arriba de sus reglas, que sin Pixel UI
+    // llegan hasta arriba de su hoja. Con Pixel UI la pone `dock_style` (ahí el lienzo tiene 5
+    // puntos de aire arriba).
+    style.tab.tab_body.hidden_tab_bar_drag_height = Some(0.0);
     style.tab_bar.inner_margin.right += COLLAPSE_ROOM as i8;
     style.separator.extra_interact_width = SEPARATOR_EXTRA;
     // De 2 puntos (como el grabado del skin): el centro de un divisor cae en un punto entero y

@@ -12109,15 +12109,24 @@ fn with_color_floating_the_column_does_not_keep_colors_minimum() {
     assert_eq!(h.app.workspace.column_rect(), None);
     let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
     assert_eq!(canvas.right(), h.screen().right());
-    // Con Library acoplado (su mínimo, más angosto que el ancho de la columna), la columna se
-    // angosta hasta él: el mínimo de Color (en su ventana) no cuenta.
+    // Con Library acoplado, la columna se angosta hasta el mínimo de Library y no se queda en el
+    // de Color (en su ventana). Ningún panel del dock es más angosto que Color, así que eso de
+    // "no se queda en el de Color" lo prueba sin mentiras
+    // `fit::with_color_floating_its_minimum_does_not_count_for_the_column`; aquí, que el arrastre
+    // llega al mínimo de lo que sí está en la columna.
     h.app.workspace.dock(PanelId::Library, DockTarget::Focused);
     h.frame();
     h.frame();
     let panel = h.panel("palette");
     let edge = pos2(panel.left(), panel.center().y);
-    drag(&mut h, edge, edge + vec2(60.0, 0.0));
-    assert_eq!(h.panel("palette").width(), panel.width() - 60.0);
+    drag(&mut h, edge, edge + vec2(300.0, 0.0));
+    // Library en su mínimo (con su margen y la barra de scroll); su margen izquierdo cuenta desde
+    // la línea, que es el divisor de la columna.
+    let library = crate::library_panel::MIN_WIDTH
+        + 2.0 * f32::from(crate::dock::FLYOUT_MARGIN)
+        + crate::pixel_ui::SCROLL_BAR;
+    assert_eq!(h.panel("palette").width(), library);
+    assert!(h.panel("palette").width() < panel.width());
 }
 
 // --- Fase D, tarea 2: el lienzo como hoja protegida ---
@@ -12245,4 +12254,121 @@ fn shrinking_the_window_and_growing_it_back_keeps_the_sides_points() {
         groom
     );
     assert_eq!(h.panel("palette").width(), column);
+}
+
+// --- Fase D, tarea 2 (revisión): el lienzo nunca se queda sin su mínimo ---
+
+/// Lo mínimo de la hoja del lienzo en el último frame.
+fn canvas_min(h: &LayoutHarness) -> Vec2 {
+    h.app.canvas_area_min(&h.ctx)
+}
+
+/// Groom debajo del lienzo (`V[Canvas / Groom]` a la izquierda de la columna).
+fn groom_below_the_canvas(h: &mut LayoutHarness) {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Below));
+    for _ in 0..4 {
+        h.frame();
+    }
+}
+
+/// Que el último frame dibujó la hoja del lienzo entera: el lienzo, la tira y el timeline, y la
+/// hoja de al menos su mínimo.
+fn assert_canvas_area_whole(h: &LayoutHarness, what: &str) {
+    use crate::panel_registry::PanelId;
+    let leaf = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    let min = canvas_min(h);
+    assert!(
+        leaf.width() >= min.x && leaf.height() >= min.y,
+        "{what}: {leaf:?} vs {min:?}"
+    );
+    let canvas = h.canvas.expect("a document");
+    assert!(canvas.is_positive(), "{what}: the canvas {canvas:?}");
+    assert!(
+        h.app.drawn_this_frame(PanelId::Timeline),
+        "{what}: the timeline"
+    );
+    assert!(
+        h.buttons.iter().any(|(l, _)| l == "Artboards"),
+        "{what}: the strip"
+    );
+}
+
+#[test]
+fn dragging_a_divider_can_not_push_the_canvas_below_its_minimum() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    groom_below_the_canvas(&mut h);
+    let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    // El divisor entre el lienzo y Groom, hasta casi arriba de la ventana.
+    let from = pos2(canvas.center().x, canvas.bottom() + 1.0);
+    let to = pos2(from.x, 70.0);
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    for k in 1..=6 {
+        h.frame_with(vec![Event::PointerMoved(from.lerp(to, k as f32 / 6.0))]);
+        assert_canvas_area_whole(&h, &format!("step {k}"));
+    }
+    h.frame_with(vec![press(to, false)]);
+    h.frame();
+    assert_canvas_area_whole(&h, "released");
+    // Groom sí se movió (hasta donde deja el lienzo).
+    let after = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    assert!(after.height() < canvas.height(), "{after:?} vs {canvas:?}");
+}
+
+#[test]
+fn in_a_low_window_with_groom_below_the_canvas_the_canvas_strip_and_timeline_stay() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    groom_below_the_canvas(&mut h);
+    h.size = vec2(960.0, 400.0);
+    for _ in 0..4 {
+        h.frame();
+    }
+    assert_canvas_area_whole(&h, "960x400");
+}
+
+#[test]
+fn resizing_the_window_never_draws_the_canvas_below_its_minimum() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    // Groom a la izquierda (a lo ancho) y debajo (a lo alto): frame a frame, al achicar y al
+    // volver a agrandar.
+    for below in [false, true] {
+        let mut h = LayoutHarness::new(pixel_ui(), true);
+        if below {
+            groom_below_the_canvas(&mut h);
+        } else {
+            let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+            h.app
+                .workspace
+                .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Left));
+            for _ in 0..4 {
+                h.frame();
+            }
+        }
+        let sizes = (0..=10).map(|k| {
+            let t = k as f32 / 10.0;
+            if below {
+                vec2(1200.0, 800.0 - 450.0 * t)
+            } else {
+                vec2(1200.0 - 700.0 * t, 800.0)
+            }
+        });
+        for size in sizes.clone().chain(sizes.rev()) {
+            h.size = size;
+            h.frame();
+            assert_canvas_area_whole(&h, &format!("below {below}, {size:?}"));
+        }
+    }
 }

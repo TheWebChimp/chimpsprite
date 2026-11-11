@@ -258,7 +258,11 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         None => skin::plain_style(ui.style()),
     };
     let (sep, bar) = chrome(ui, skin);
-    let m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
+    // El mínimo del lienzo es lo que lleva su hoja este frame (la tira o el panel 3D fijo, el
+    // timeline): ningún lado se lo quita (ver `fit_splits` y `pin_sides`).
+    let canvas_min = app.canvas_area_min(&ctx);
+    let mut m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
+    m.insert(PanelId::Canvas, canvas_min);
     // La columna derecha: del ancho elegido (o el que tomó sola), nunca menos que su mínimo (con su
     // divisor, que es la línea que el panel derecho tenía de borde). Se pide en puntos al centro
     // del divisor.
@@ -270,6 +274,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         .unwrap_or(crate::color_panel::DEFAULT_WIDTH);
     let column_width = preferred.max(column_min).max(1.0);
     workspace.sides.sep = sep;
+    workspace.sides.bar = bar;
+    workspace.sides.mins = m.clone();
     workspace.sides.column = Some(column_width - sep / 2.0);
     let area = ui.available_rect_before_wrap();
     // El `DockArea`, en puntos enteros (egui_dock solo ajusta a píxel físico), en todo el área.
@@ -349,7 +355,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     } = viewer;
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
     // El de la columna es su preferencia (sin bajar de su mínimo, como el panel de antes).
-    let dragged = record_sides(&workspace.state, &before, &mut workspace.sides);
+    let dragged = record_sides(&mut workspace.state, &before, &mut workspace.sides);
     let column = workspace.column_rect();
     if let Some(points) = dragged {
         // A 1/64 de punto: sin el ruido de ir de puntos a fracción y de vuelta (un arrastre de
@@ -456,7 +462,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         ctx.request_discard("workspace layout changed");
     }
     // Cada split con sus lados en su mínimo, y a puntos enteros, para el frame siguiente.
-    let m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
+    let mut m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
+    m.insert(PanelId::Canvas, canvas_min);
     fit_splits(&mut workspace.state, &m, sep, bar);
     fit_windows(&ctx, &mut workspace, &m, sep, bar);
     skin::snap(&ctx, &mut workspace.state);
@@ -799,5 +806,24 @@ mod tests {
         assert!(app.canvas_size.is_some(), "OpenCanvasSize applied");
         // Y el workspace volvió a la app.
         assert!(app.workspace.docked(PanelId::Artboards));
+    }
+
+    #[test]
+    fn without_pixel_ui_the_canvas_grab_strip_takes_no_clicks() {
+        // Sin Pixel UI las reglas del lienzo llegan hasta arriba de su hoja: la franja de agarre
+        // (que con el lienzo no arrastra nada) no se queda con el puntero ni pone la mano.
+        let mut app = test_app();
+        app.view.pixel_ui = false;
+        let ctx = egui::Context::default();
+        frames(&ctx, &mut app);
+        assert!(app.pixel.skin().is_none());
+        let (surface, node) = app.workspace.leaf_of(PanelId::Canvas).unwrap();
+        let leaf = app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+        let at = egui::pos2(leaf.center().x, leaf.top() + 1.0);
+        frame(&ctx, &mut app, vec![egui::Event::PointerMoved(at)]);
+        let out = frame(&ctx, &mut app, Vec::new());
+        let path = NodePath { surface, node };
+        assert!(!skin::hidden_strip_hovered(&ctx, dock_id(), path));
+        assert_ne!(out.platform_output.cursor_icon, egui::CursorIcon::Grab);
     }
 }

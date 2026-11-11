@@ -32,10 +32,13 @@ pub(crate) enum Host {
     Flyout,
 }
 
-/// Lo más angosto que el workspace deja el lienzo cuando reparte un split que no alcanza (ver
-/// `workspace::fit`): la tira de íconos (que en la fase D todavía va dentro de su hoja) y un poco
-/// de lienzo.
+/// Lo más angosto que el workspace deja el lienzo mismo cuando reparte un split que no alcanza
+/// (ver `workspace::fit`); su hoja suma la tira de íconos o el panel 3D fijo, que en la fase D
+/// todavía van dentro de ella (ver `ChimpApp::canvas_area_min`).
 pub(crate) const CANVAS_MIN_WIDTH: f32 = 64.0;
+/// Lo más bajo que el workspace deja el lienzo mismo (su caja y sus reglas); su hoja suma el
+/// timeline cuando va dentro de ella (ver `ChimpApp::canvas_area_min`).
+pub(crate) const CANVAS_MIN_HEIGHT: f32 = 64.0;
 
 /// Los paneles de la app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -183,7 +186,7 @@ impl PanelId {
                 closable: false,
                 host: Host::Center,
                 body: Body::Fixed,
-                min_height: 0.0,
+                min_height: CANVAS_MIN_HEIGHT,
             },
             PanelId::Tools => PanelSpec {
                 key: "tools",

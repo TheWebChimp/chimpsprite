@@ -1547,6 +1547,29 @@ impl ChimpApp {
         canvas_rect
     }
 
+    /// Lo mínimo de la hoja del lienzo este frame: el lienzo mismo (`CANVAS_MIN_*`) más lo que
+    /// todavía va dentro de ella (ver [`Self::canvas_area`]): a lo ancho, la tira de íconos o, en
+    /// la pestaña de un modelo, el panel 3D fijo; a lo alto, el timeline si se muestra (de su alto
+    /// de ahora). Ningún lado del lienzo se lo quita: sin él, la hoja desaparecería y con ella la
+    /// tira y el timeline.
+    pub(crate) fn canvas_area_min(&self, ctx: &egui::Context) -> egui::Vec2 {
+        use crate::panel_registry::{CANVAS_MIN_HEIGHT, CANVAS_MIN_WIDTH, PanelId};
+        let side = if self.doc.editor.model_edit_on() {
+            dock::fixed_panel_width(model_panel::REFERENCE_WIDTH)
+        } else {
+            dock::WIDTH
+        };
+        let timeline = if self.view.timeline && PanelId::Timeline.available(self) {
+            egui::containers::panel::PanelState::load(ctx, egui::Id::new("timeline"))
+                .map_or(dock::TIMELINE_DEFAULT_HEIGHT, |state| {
+                    state.outer_rect.height()
+                })
+        } else {
+            0.0
+        };
+        egui::vec2(CANVAS_MIN_WIDTH + side, CANVAS_MIN_HEIGHT + timeline)
+    }
+
     /// La hoja del lienzo del workspace (ver `workspace::show`): lo que en la fase C era el
     /// `CentralPanel` de `editor_panels` y lo que todavía va dentro de su hoja: a la derecha, la
     /// tira de íconos (`strip`) o, en la pestaña de un modelo, el panel 3D fijo; abajo, el timeline.

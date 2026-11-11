@@ -151,8 +151,9 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                     crate::color_panel::panel_min_height(ui, skin),
                 ),
                 (PanelId::Color, None) => egui::Vec2::ZERO,
-                // El lienzo no tiene margen ni scroll: lo de su ficha.
-                (PanelId::Canvas, _) => egui::vec2(id.spec().min_width, 0.0),
+                // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
+                // que lleva su hoja, ver `ChimpApp::canvas_area_min`).
+                (PanelId::Canvas, _) => egui::vec2(id.spec().min_width, id.spec().min_height),
                 _ => {
                     let spec = id.spec();
                     let bar = match spec.body {
@@ -285,8 +286,13 @@ pub(super) fn fit_splits(state: &mut DockState<PanelId>, m: &Minima, sep: f32, b
                 } else {
                     (split.rect.height(), a.y, b.y)
                 };
-                // A lo alto, si no alcanza, se queda con su mínimo el lado que no se desplaza.
-                let keep = if horizontal {
+                // Si no alcanza, se queda con su mínimo el lado del lienzo (nunca cede: lleva la
+                // tira y el timeline); si no, a lo alto, el lado que no se desplaza.
+                let keep = if has_canvas(tree, node.left()) {
+                    Some(true)
+                } else if has_canvas(tree, node.right()) {
+                    Some(false)
+                } else if horizontal {
                     None
                 } else {
                     match (
@@ -472,6 +478,11 @@ pub(super) fn block_canvas_drag(
 // ---------------------------------------------------------------------------------------------
 // Los lados del lienzo, en puntos.
 
+/// Si el lienzo cuelga del nodo `node` de `tree`.
+fn has_canvas(tree: &Tree<PanelId>, node: NodeIndex) -> bool {
+    panels_of(tree, node).contains(&PanelId::Canvas)
+}
+
 /// Lo que mide en puntos cada lado del lienzo. egui_dock reparte cada split en fracciones, así
 /// que al cambiar la ventana (o lo acoplado) los lados crecerían y se encogerían con ella: cada
 /// split del camino de la raíz al lienzo deja su lado sin lienzo de lo que mide aquí y el lienzo
@@ -493,6 +504,11 @@ pub(crate) struct SidePoints {
     /// El ancho de los divisores (el lado del lienzo de cada split empieza medio divisor después
     /// de su centro).
     pub sep: f32,
+    /// Lo mínimo de cada panel (ver [`minima`]; el del lienzo, lo que lleva su hoja este frame) y
+    /// el alto de una barra de pestañas: ningún lado le quita al lado del lienzo su mínimo (sin
+    /// ellos, nada se limita).
+    pub mins: Minima,
+    pub bar: f32,
     /// Con qué se acomodaron por última vez: el área, la forma del árbol y la columna.
     last: Option<(egui::Rect, Shape, Option<f32>)>,
 }
@@ -500,6 +516,19 @@ pub(crate) struct SidePoints {
 impl SidePoints {
     fn get(&self, side: &Side) -> Option<f32> {
         self.sides.iter().find(|(s, _)| s == side).map(|(_, p)| *p)
+    }
+
+    /// Lo más que puede medir el lado `level` en un split de `len` (a su eje): lo que deja el
+    /// lado del lienzo en su mínimo (el lienzo gana; el lado se aprieta o se desplaza).
+    fn room(&self, tree: &Tree<PanelId>, level: &Level, len: f32) -> f32 {
+        let canvas_side = if level.first {
+            level.parent.right()
+        } else {
+            level.parent.left()
+        };
+        let min = node_min(tree, canvas_side, &self.mins, self.sep, self.bar);
+        let min = if level.horizontal { min.x } else { min.y };
+        (len - min - self.sep / 2.0).max(0.0)
     }
 
     fn set(&mut self, side: Side, points: f32) {
@@ -682,6 +711,7 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
         return;
     }
     let mut rect = area;
+    let mut alive = Vec::new();
     for level in chain(tree) {
         let len = if level.horizontal {
             rect.width()
@@ -696,6 +726,7 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             first: level.first,
             panels: panels_of(tree, level.other),
         };
+        alive.push(side.clone());
         let points = match (level.column, sides.column) {
             (true, Some(points)) => points,
             _ => match sides.get(&side) {
@@ -711,7 +742,8 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
                 }
             },
         }
-        .clamp(0.0, len);
+        // Lo guardado no cambia: si ahora no cabe, se aprieta solo mientras no quepa.
+        .clamp(0.0, sides.room(tree, &level, len));
         let f = if level.first {
             points / len
         } else {
@@ -729,6 +761,8 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             (false, false) => rect.with_max_y(rect.top() + len * f - half),
         };
     }
+    // Los lados que ya no existen se olvidan.
+    sides.sides.retain(|(side, _)| alive.contains(side));
     sides.last = Some(now);
 }
 
@@ -752,29 +786,45 @@ pub(super) fn fractions(state: &DockState<PanelId>) -> Fractions {
 
 /// Lo que el usuario cambió arrastrando (o con el teclado) un divisor del camino al lienzo en el
 /// `DockArea` de este frame (egui_dock es el único que mueve las fracciones mientras se dibuja):
-/// es lo que ese lado mide de ahí en adelante. Devuelve lo nuevo de la columna derecha, si fue
-/// la suya (el anfitrión lo guarda como su preferencia).
+/// es lo que ese lado mide de ahí en adelante, sin quitarle al lienzo su mínimo. Devuelve lo nuevo
+/// de la columna derecha, si fue la suya (el anfitrión lo guarda como su preferencia).
+///
+/// El doble clic en un divisor (egui_dock lo pone a la mitad) no es una elección: se deshace.
 pub(super) fn record_sides(
-    state: &DockState<PanelId>,
+    state: &mut DockState<PanelId>,
     before: &Fractions,
     sides: &mut SidePoints,
 ) -> Option<f32> {
-    let tree = state.main_surface();
+    let tree = state.main_surface_mut();
     if shape(tree) != before.shape {
         return None;
     }
     let mut column = None;
     for level in chain(tree) {
-        let Some((_, f)) = split_of(tree, level.parent) else {
+        let Some((rect, f)) = split_of(tree, level.parent) else {
             continue;
         };
-        let was = before.of.iter().find(|(n, _)| *n == level.parent);
-        if was.is_none_or(|&(_, w)| w == f) {
+        let Some(&(_, was)) = before.of.iter().find(|(n, _)| *n == level.parent) else {
+            continue;
+        };
+        if was == f {
+            continue;
+        }
+        if f == 0.5 {
+            if let Node::Horizontal(s) | Node::Vertical(s) = &mut tree[level.parent] {
+                s.fraction = was;
+            }
             continue;
         }
         let Some(points) = measured(tree, &level) else {
             continue;
         };
+        let len = if level.horizontal {
+            rect.width()
+        } else {
+            rect.height()
+        };
+        let points = points.min(sides.room(tree, &level, len));
         let side = Side {
             horizontal: level.horizontal,
             first: level.first,
@@ -991,7 +1041,7 @@ mod tests {
             s.fraction += 30.0 / s.rect.width();
         }
         assert_eq!(
-            record_sides(&w.state, &before, &mut sides),
+            record_sides(&mut w.state, &before, &mut sides),
             None,
             "not the column"
         );
@@ -1009,8 +1059,96 @@ mod tests {
         if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[inner] {
             s.fraction -= 40.0 / s.rect.width();
         }
-        let column = record_sides(&w.state, &before, &mut sides).expect("the column moved");
+        let column = record_sides(&mut w.state, &before, &mut sides).expect("the column moved");
         assert!((column - 340.0).abs() < 1e-3, "{column}");
+    }
+
+    #[test]
+    fn no_side_takes_the_canvas_minimum_and_it_gets_its_points_back_later() {
+        let mut w = groom_left_of_the_canvas();
+        let mut sides = SidePoints::default();
+        // El lienzo pide 300 (lo que lleva su hoja); los demás, nada.
+        sides.mins.insert(PanelId::Canvas, egui::vec2(300.0, 0.0));
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        laid_out(&mut w, area(1000.0));
+        let root = split_of_panel(&w, PanelId::Groom);
+        let groom = left_points(&w, root);
+        assert!((groom - 0.45 * 780.0).abs() < 1e-3, "{groom}");
+        // En 600 no caben Groom (351), Color (220) y el lienzo (300): el lienzo gana.
+        pin_sides(&mut w.state, area(600.0), &mut sides);
+        laid_out(&mut w, area(600.0));
+        let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+        assert!(canvas.width() >= 300.0 - 1e-3, "{canvas:?}");
+        assert!((left_points(&w, root) - 80.0).abs() < 1e-3);
+        // Al volver, Groom recupera lo suyo (lo guardado no cambió).
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        laid_out(&mut w, area(1000.0));
+        assert!((left_points(&w, root) - groom).abs() < 1e-3);
+        // Un arrastre que se come el lienzo se guarda hasta donde deja su mínimo.
+        let before = fractions(&w.state);
+        if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
+            s.fraction = 0.95;
+        }
+        record_sides(&mut w.state, &before, &mut sides);
+        pin_sides(&mut w.state, area(900.0), &mut sides);
+        laid_out(&mut w, area(900.0));
+        let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+        assert!(canvas.width() >= 300.0 - 1e-3, "{canvas:?}");
+    }
+
+    #[test]
+    fn a_double_click_on_a_canvas_divider_does_not_count_as_a_choice() {
+        let mut w = groom_left_of_the_canvas();
+        let mut sides = SidePoints {
+            column: Some(263.0),
+            ..Default::default()
+        };
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        laid_out(&mut w, area(1000.0));
+        let root = NodeIndex::root();
+        let was = match &w.state.main_surface()[root] {
+            Node::Horizontal(s) => s.fraction,
+            other => panic!("{other:?}"),
+        };
+        // egui_dock, con el doble clic en el divisor de la columna: a la mitad.
+        let before = fractions(&w.state);
+        if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
+            s.fraction = 0.5;
+        }
+        assert_eq!(record_sides(&mut w.state, &before, &mut sides), None);
+        match &w.state.main_surface()[root] {
+            Node::Horizontal(s) => assert_eq!(s.fraction, was),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_sides_that_go_away_are_forgotten() {
+        let mut w = groom_left_of_the_canvas();
+        let mut sides = SidePoints::default();
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        assert_eq!(sides.sides.len(), 2, "{:?}", sides.sides);
+        w.to_strip(PanelId::Groom);
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        assert_eq!(sides.sides.len(), 1, "{:?}", sides.sides);
+        assert_eq!(sides.sides[0].0.panels, [PanelId::Color]);
+    }
+
+    #[test]
+    fn with_color_floating_its_minimum_does_not_count_for_the_column() {
+        // Lo que la columna derecha pide es lo de sus paneles: Color flotando no cuenta (en su
+        // ventana), aunque sea más que el de lo acoplado (aquí, un Library de 50 de mentiras: el
+        // de verdad es más ancho que Color).
+        let mut w = Workspace::essentials();
+        w.float(PanelId::Color, egui::pos2(100.0, 100.0));
+        w.dock(PanelId::Library, DockTarget::Focused);
+        let mut m = Minima::new();
+        m.insert(PanelId::Color, egui::vec2(137.0, 400.0));
+        m.insert(PanelId::Library, egui::vec2(50.0, 0.0));
+        assert_eq!(w.column_min(&m, 0.0, 0.0), 50.0);
+        // Con Color acoplado en la columna, el suyo sí.
+        w.dock(PanelId::Color, DockTarget::Focused);
+        assert_eq!(w.column_min(&m, 0.0, 0.0), 137.0);
     }
 
     // --- Lo de antes ---
