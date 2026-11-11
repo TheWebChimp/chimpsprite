@@ -959,15 +959,11 @@ fn lospec_ui(
         if tab.listing_loading() && tab.shown_of_total().0 == 0 {
             ui.weak("Loading");
         } else if tab.can_load_more() {
-            ui.vertical_centered(|ui| {
-                let (shown, total) = tab.shown_of_total();
-                if tab.listing_loading() {
-                    ui.spinner();
-                } else if crate::pixel_ui::text_button(
-                    ui,
-                    &format!("Load more ({shown} of {total})"),
-                )
-                .clicked()
+            let (shown, total) = tab.shown_of_total();
+            let label = format!("Load more ({shown} of {total})");
+            let loading = tab.listing_loading();
+            let mut load = |ui: &mut egui::Ui| {
+                if crate::pixel_ui::text_button(ui, &label).clicked()
                     && let Some((g, query)) = tab.start_more()
                 {
                     requests.listing = Some(InFlight::new(
@@ -976,7 +972,27 @@ fn lospec_ui(
                         lospec_client::fetch_listing(&ctx, &query),
                     ));
                 }
-            });
+            };
+            match pixel_ui::frame_skin(ui.ctx()) {
+                // Centrado en puntos enteros (`vertical_centered` lo dejaba a medio punto con
+                // un ancho non de más).
+                Some(_) if !loading => {
+                    let free = ui.available_width() - crate::kit::button::width(ui, &label);
+                    ui.horizontal(|ui| {
+                        ui.add_space((free / 2.0).floor().max(0.0));
+                        load(ui);
+                    });
+                }
+                _ => {
+                    ui.vertical_centered(|ui| {
+                        if loading {
+                            ui.spinner();
+                        } else {
+                            load(ui);
+                        }
+                    });
+                }
+            }
         }
     });
     action

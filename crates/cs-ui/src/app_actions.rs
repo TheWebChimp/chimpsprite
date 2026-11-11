@@ -532,8 +532,13 @@ impl ChimpApp {
                         }
                         ui.add_space(6.0);
                         let clicked = pixel_ui::dialog_buttons(ui, skin, &["Save", "Cancel"]);
-                        if (clicked == Some(0) || enter) && problem.is_none() {
-                            done = Some(true);
+                        if clicked == Some(0) || enter {
+                            match problem {
+                                None => done = Some(true),
+                                // No se puede: el campo vuelve a pedir el foco (Save o Enter
+                                // se lo quitaron), para corregir el nombre ahí.
+                                Some(_) => *focused = false,
+                            }
                         }
                         if clicked == Some(1) {
                             done = Some(false);

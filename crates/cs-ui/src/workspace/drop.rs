@@ -139,6 +139,30 @@ pub(crate) fn paint_drop_zone(
 }
 
 impl Workspace {
+    /// Lo que pidió una tira (`request`; ver `dock::StripRequest`). Un ícono soltado sobre otra
+    /// tira (`strips`: las dibujadas en este frame, con su orilla) pasa a ella; en otro lado, va
+    /// donde cae en el árbol (ver [`drop_target`]).
+    pub(crate) fn apply_strip_request(
+        &mut self,
+        request: crate::dock::StripRequest,
+        strips: &[(crate::dock::Edge, egui::Rect)],
+    ) {
+        use crate::dock::StripRequest;
+        match request {
+            StripRequest::Drop(id, pointer) => {
+                match strips.iter().find(|(_, r)| r.contains(pointer)) {
+                    Some(&(edge, _)) => self.to_strip_at(id, edge),
+                    None => {
+                        let target = drop_target(self, pointer);
+                        self.drop_panel(id, target);
+                    }
+                }
+            }
+            StripRequest::Dock(id) => self.dock_from_strip(id),
+            StripRequest::Float(id, at) => self.float(id, at),
+        }
+    }
+
     /// Pone `id` donde cayó (ver [`drop_target`]).
     pub(crate) fn drop_panel(&mut self, id: PanelId, target: DropTarget) {
         match target {

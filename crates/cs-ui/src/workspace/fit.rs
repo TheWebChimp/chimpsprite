@@ -758,8 +758,9 @@ pub(crate) struct SidePoints {
     last: Option<Pinned>,
 }
 
-/// Con qué se acomodaron los lados del lienzo (ver [`pin_sides`]): el área, la forma del árbol y
-/// lo que pidió el anfitrión (la columna, la toolbar y el timeline).
+/// Con qué se acomodaron los lados del lienzo (ver [`pin_sides`]): el área, la forma del árbol,
+/// lo que pidió el anfitrión (la columna, la toolbar y el timeline) y el mínimo del lienzo (crece
+/// al entrar a la pestaña de un modelo, con el panel 3D fijo en su hoja).
 #[derive(Clone, Debug)]
 struct Pinned {
     area: egui::Rect,
@@ -767,6 +768,7 @@ struct Pinned {
     column: Option<f32>,
     toolbar: Option<f32>,
     timeline: Option<f32>,
+    canvas: Option<egui::Vec2>,
 }
 
 impl SidePoints {
@@ -987,9 +989,14 @@ fn measured(tree: &Tree<PanelId>, level: &Level) -> Option<f32> {
 /// Deja cada lado del lienzo de la superficie principal de lo que mide en `sides` (los que no
 /// conoce, de lo que miden en el último frame o, si son nuevos, de lo que piden de fábrica, a lo
 /// más el 45 % para que el lienzo no desaparezca) y el lienzo con lo demás de `area`. Solo si
-/// cambió algo desde la última vez (el área, la forma del árbol o la columna pedida): si no, se
-/// comería el arrastre de un divisor y lo que `fit_splits` ajusta.
+/// cambió algo desde la última vez (el área, la forma del árbol, lo que pide el anfitrión o el
+/// mínimo del lienzo): si no, se comería el arrastre de un divisor y lo que `fit_splits` ajusta.
+/// Un área sin lugar (1 punto o menos de ancho o de alto, p. ej. la ventana minimizada) no cambia
+/// nada: los lados recordados se quedan.
 pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides: &mut SidePoints) {
+    if !(area.width() > 1.0 && area.height() > 1.0) {
+        return;
+    }
     let tree = state.main_surface_mut();
     let now = Pinned {
         area,
@@ -997,6 +1004,7 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
         column: sides.column,
         toolbar: sides.toolbar,
         timeline: sides.timeline,
+        canvas: sides.mins.get(&PanelId::Canvas).copied(),
     };
     let same = |a: Option<f32>, b: Option<f32>| match (a, b) {
         (Some(a), Some(b)) => (a - b).abs() < 0.01,
@@ -1008,6 +1016,7 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
         && same(last.column, now.column)
         && same(last.toolbar, now.toolbar)
         && same(last.timeline, now.timeline)
+        && last.canvas == now.canvas
     {
         return;
     }
@@ -1044,11 +1053,13 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
                         let r = reference(tree, level.other, level.horizontal) + sides.sep / 2.0;
                         r.min(len * 0.45)
                     };
+                    // Lo que pide un workspace de fábrica, solo la primera vez (si el lado se
+                    // deshace y se rehace, lo que mida entonces).
                     let share = sides
                         .shares
                         .iter()
-                        .find(|(panels, _)| *panels == side.panels)
-                        .map(|(_, share)| (len * share).round());
+                        .position(|(panels, _)| *panels == side.panels)
+                        .map(|i| (len * sides.shares.remove(i).1).round());
                     let points = share
                         .or_else(|| measured(tree, &level))
                         .unwrap_or_else(fresh);
@@ -1112,13 +1123,15 @@ pub(super) struct Dragged {
 /// de la columna derecha y del timeline, si fue el suyo (el anfitrión lo guarda como su
 /// preferencia).
 ///
-/// El doble clic en un divisor (egui_dock lo pone a la mitad) no es una elección: se deshace. El
-/// divisor de la toolbar (ver [`Workspace::tools_side`]) no se arrastra (el anfitrión lo tapa):
-/// si algo lo movió, también se deshace.
+/// El doble clic en un divisor (`double_clicked`: egui_dock lo pone a la mitad) no es una
+/// elección: se deshace (el divisor no se mueve); un arrastre que cae justo en la mitad sí cuenta.
+/// El divisor de la toolbar (ver [`Workspace::tools_side`]) no se arrastra (el anfitrión lo
+/// tapa): si algo lo movió, también se deshace.
 pub(super) fn record_sides(
     state: &mut DockState<PanelId>,
     before: &Fractions,
     sides: &mut SidePoints,
+    double_clicked: bool,
 ) -> Dragged {
     let tree = state.main_surface_mut();
     if shape(tree) != before.shape {
@@ -1135,7 +1148,7 @@ pub(super) fn record_sides(
         if was == f {
             continue;
         }
-        if f == 0.5 || tools_level(tree, &level) {
+        if (double_clicked && f == 0.5) || tools_level(tree, &level) {
             if let Node::Horizontal(s) | Node::Vertical(s) = &mut tree[level.parent] {
                 s.fraction = was;
             }
@@ -1382,7 +1395,7 @@ mod tests {
             s.fraction += 30.0 / s.rect.width();
         }
         assert_eq!(
-            record_sides(&mut w.state, &before, &mut sides).column,
+            record_sides(&mut w.state, &before, &mut sides, false).column,
             None,
             "not the column"
         );
@@ -1400,7 +1413,7 @@ mod tests {
         if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[inner] {
             s.fraction -= 40.0 / s.rect.width();
         }
-        let column = record_sides(&mut w.state, &before, &mut sides)
+        let column = record_sides(&mut w.state, &before, &mut sides, false)
             .column
             .expect("the column moved");
         assert!((column - 340.0).abs() < 1e-3, "{column}");
@@ -1432,7 +1445,7 @@ mod tests {
         if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
             s.fraction = 0.95;
         }
-        record_sides(&mut w.state, &before, &mut sides);
+        record_sides(&mut w.state, &before, &mut sides, false);
         pin_sides(&mut w.state, area(900.0), &mut sides);
         laid_out(&mut w, area(900.0));
         let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
@@ -1459,13 +1472,74 @@ mod tests {
             s.fraction = 0.5;
         }
         assert_eq!(
-            record_sides(&mut w.state, &before, &mut sides),
+            record_sides(&mut w.state, &before, &mut sides, true),
             Dragged::default()
         );
         match &w.state.main_surface()[root] {
             Node::Horizontal(s) => assert_eq!(s.fraction, was),
             other => panic!("{other:?}"),
         }
+        // Arrastrado (sin doble clic) justo a la mitad: sí es una elección.
+        let before = fractions(&w.state);
+        if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
+            s.fraction = 0.5;
+        }
+        let column = record_sides(&mut w.state, &before, &mut sides, false).column;
+        assert!(column.is_some(), "a drag to exactly 0.5 counts");
+        match &w.state.main_surface()[root] {
+            Node::Horizontal(s) => assert_eq!(s.fraction, 0.5),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_new_canvas_minimum_reclamps_the_sides_in_the_same_call() {
+        // Entrar a la pestaña de un modelo: la hoja del lienzo lleva el panel 3D fijo y su mínimo
+        // crece, con la misma área y el mismo árbol.
+        let mut w = groom_left_of_the_canvas();
+        let mut sides = SidePoints::default();
+        pin_sides(&mut w.state, area(700.0), &mut sides);
+        laid_out(&mut w, area(700.0));
+        let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+        assert!(canvas.width() < 400.0, "{canvas:?}");
+        sides.mins.insert(PanelId::Canvas, egui::vec2(400.0, 0.0));
+        pin_sides(&mut w.state, area(700.0), &mut sides);
+        laid_out(&mut w, area(700.0));
+        let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+        assert!(canvas.width() >= 400.0 - 1e-3, "{canvas:?}");
+    }
+
+    #[test]
+    fn a_degenerate_area_keeps_the_remembered_sides() {
+        let mut w = groom_left_of_the_canvas();
+        let mut sides = SidePoints::default();
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        let remembered = sides.sides.clone();
+        assert_eq!(remembered.len(), 2, "{remembered:?}");
+        let at = egui::pos2(38.0, 63.0);
+        for size in [
+            egui::vec2(0.5, 700.0),
+            egui::vec2(1000.0, 1.0),
+            egui::Vec2::ZERO,
+        ] {
+            pin_sides(
+                &mut w.state,
+                egui::Rect::from_min_size(at, size),
+                &mut sides,
+            );
+            assert_eq!(sides.sides, remembered, "{size:?}");
+        }
+    }
+
+    #[test]
+    fn a_factory_share_is_used_once() {
+        // La franja de Animation toma el 40 % al llegar; si ese lado se deshace y se rehace, ya no
+        // (lo que mida entonces).
+        let mut w = crate::workspace::presets::factory("Animation").unwrap();
+        assert_eq!(w.sides.shares.len(), 1);
+        let mut sides = std::mem::take(&mut w.sides);
+        pin_sides(&mut w.state, area(1000.0), &mut sides);
+        assert!(sides.shares.is_empty(), "{:?}", sides.shares);
     }
 
     #[test]
@@ -1499,7 +1573,7 @@ mod tests {
             s.fraction += 0.1;
         }
         assert_eq!(
-            record_sides(&mut w.state, &before, &mut sides),
+            record_sides(&mut w.state, &before, &mut sides, false),
             Dragged::default()
         );
         match &w.state.main_surface()[root] {
@@ -1545,7 +1619,7 @@ mod tests {
         if let Node::Vertical(s) = &mut w.state.main_surface_mut()[stack] {
             s.fraction -= 50.0 / s.rect.height();
         }
-        let dragged = record_sides(&mut w.state, &before, &mut sides);
+        let dragged = record_sides(&mut w.state, &before, &mut sides, false);
         assert_eq!(dragged.column, None);
         let timeline = dragged.timeline.expect("the timeline's divider moved");
         assert!((timeline - 291.0).abs() < 1e-3, "{timeline}");
@@ -1555,7 +1629,7 @@ mod tests {
             s.fraction = 0.5;
         }
         assert_eq!(
-            record_sides(&mut w.state, &before, &mut sides),
+            record_sides(&mut w.state, &before, &mut sides, true),
             Dragged::default()
         );
         // Nunca le quita al lienzo su mínimo: en una ventana baja se aprieta y luego regresa.

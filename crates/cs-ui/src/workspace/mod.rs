@@ -195,10 +195,7 @@ impl Workspace {
     }
 
     /// Si el grupo de `id` va sin barra de pestañas.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "solo los tests por ahora; lo lee la tarea 6")
-    )]
+    #[cfg(test)]
     pub(crate) fn tab_bar_hidden_of(&self, id: PanelId) -> bool {
         self.state
             .find_tab(&id)

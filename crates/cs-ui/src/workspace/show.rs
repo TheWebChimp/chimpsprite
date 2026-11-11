@@ -122,7 +122,16 @@ impl TabViewer for Viewer<'_> {
             self.canvas = Some(CanvasArea {
                 rect,
                 dock: Default::default(),
+                strips: Vec::new(),
             });
+            return;
+        }
+        // Una instancia por panel por frame (su estado y los ids de `forms` son globales): si otro
+        // anfitrión ya lo tiene (en la pestaña de un modelo, al 3D lo hospeda su panel fijo), aquí
+        // solo dónde está. También la toolbar, el timeline de debajo del lienzo y el Preview en
+        // su ventana (sus ramas de abajo).
+        if let Err(owner) = self.app.claim_panel(id, PanelHost::Workspace) {
+            ui.add_enabled(false, egui::Label::new(owner.shown_in()));
             return;
         }
         // El timeline justo debajo del lienzo: lo de adentro del panel de abajo de antes (su
@@ -200,13 +209,6 @@ impl TabViewer for Viewer<'_> {
             if let Some(PanelAction::ClosePreview) = self.app.draw_panel(ui, id, &panel) {
                 self.closed.push(id);
             }
-            return;
-        }
-        // Una instancia por panel por frame (su estado y los ids de `forms` son globales): si otro
-        // anfitrión ya lo tiene (en la pestaña de un modelo, al 3D lo hospeda su panel fijo), aquí
-        // solo dónde está.
-        if let Err(owner) = self.app.claim_panel(id, PanelHost::Workspace) {
-            ui.add_enabled(false, egui::Label::new(owner.shown_in()));
             return;
         }
         // El fondo del grupo (dentro del scroll de egui_dock el `max_rect` puede no serlo): hasta
@@ -851,35 +853,36 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         ..
     } = viewer;
     // La tira de íconos, de alto completo a la derecha del lienzo (y del timeline justo debajo),
-    // encima de los dos y de su divisor (que ahí no se agarra), como el panel de antes.
-    if !model_tab
-        && let Some(canvas) = &mut canvas
-        && let Some(stack) = workspace.stack_rect()
-    {
-        let rect = stack.with_min_x(stack.right() - strip_width);
-        // El divisor del timeline de debajo no se agarra a través de la tira (el borde del panel
-        // de antes terminaba en ella): encima, un widget que se queda con el puntero (sin tocar
-        // la zona del divisor de la columna, a la derecha de la tira).
-        if let Some(divider) = workspace.timeline_divider(sep) {
-            let band = egui::Rect::from_x_y_ranges(
-                rect.left()..=rect.right() - 1.0,
-                divider.expand(skin::SEPARATOR_EXTRA).y_range(),
-            );
-            let _ = ui.interact(
-                band,
-                egui::Id::new("workspace_strip_block"),
-                egui::Sense::click_and_drag(),
-            );
-        }
+    // encima de los dos y de su divisor (que ahí no se agarra), como el panel de antes. Las de las
+    // otras orillas van aunque esa no se pueda dibujar (sin el rect del lienzo y el timeline).
+    if !model_tab && let Some(canvas) = &mut canvas {
         // Un panel que dejó las tiras (se acopló o flota) ya no se abre desde ellas.
         if crate::dock::open_panel(&ctx).is_some_and(|p| workspace.strip_of(p).is_none()) {
             crate::dock::set_open(&ctx, None);
         }
-        let timeline = app.view.timeline;
-        canvas.dock = app.strip_area(ui, (rect, dock_rect), modal, Edge::Right, &strip);
-        // Su botón del timeline: el árbol cambia en el frame siguiente.
-        if app.view.timeline != timeline {
-            ctx.request_repaint();
+        if let Some(stack) = workspace.stack_rect() {
+            let rect = stack.with_min_x(stack.right() - strip_width);
+            // El divisor del timeline de debajo no se agarra a través de la tira (el borde del
+            // panel de antes terminaba en ella): encima, un widget que se queda con el puntero
+            // (sin tocar la zona del divisor de la columna, a la derecha de la tira).
+            if let Some(divider) = workspace.timeline_divider(sep) {
+                let band = egui::Rect::from_x_y_ranges(
+                    rect.left()..=rect.right() - 1.0,
+                    divider.expand(skin::SEPARATOR_EXTRA).y_range(),
+                );
+                let _ = ui.interact(
+                    band,
+                    egui::Id::new("workspace_strip_block"),
+                    egui::Sense::click_and_drag(),
+                );
+            }
+            let timeline = app.view.timeline;
+            canvas.dock = app.strip_area(ui, (rect, dock_rect), modal, Edge::Right, &strip);
+            canvas.strips.push((Edge::Right, rect));
+            // Su botón del timeline: el árbol cambia en el frame siguiente.
+            if app.view.timeline != timeline {
+                ctx.request_repaint();
+            }
         }
         // Las de las otras orillas (si tienen algo).
         for &(edge, rect) in &edge_strips {
@@ -889,11 +892,22 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             dock.app_panel = dock.app_panel.or(out.app_panel);
             dock.request = dock.request.or(out.request);
             dock.dragging = dock.dragging.or(out.dragging);
+            canvas.strips.push((edge, rect));
         }
     }
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
     // El de la columna es su preferencia (sin bajar de su mínimo, como el panel de antes).
-    let dragged = record_sides(&mut workspace.state, &before, &mut workspace.sides);
+    // Un divisor que cambió en el mismo frame de un doble clic: el de egui_dock (a la mitad).
+    let double_clicked = ctx.input(|i| {
+        i.pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    });
+    let dragged = record_sides(
+        &mut workspace.state,
+        &before,
+        &mut workspace.sides,
+        double_clicked,
+    );
     if let Some(points) = dragged.timeline {
         // El alto del panel de antes (sin medio divisor, con lo que era suyo), a 1/64 de punto.
         let height = (points - sep / 2.0 + workspace.sides.overlap)
@@ -967,15 +981,18 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             ctx.request_repaint();
         }
         // La línea de arriba de cada divisor vertical que llega a la barra de opciones cruza su
-        // brillo (como los separadores de la barra y el borde del panel derecho de antes).
-        paint_crossings(
-            ui,
-            skin,
-            &workspace.state,
-            dock_rect,
-            sep,
-            tools_divider.map(|(_, d)| d),
-        );
+        // brillo (como los separadores de la barra y el borde del panel derecho de antes). Con la
+        // tira de arriba, el `DockArea` no llega a la barra: ese renglón es de la tira.
+        if dock_rect.top() <= area.top() {
+            paint_crossings(
+                ui,
+                skin,
+                &workspace.state,
+                dock_rect,
+                sep,
+                tools_divider.map(|(_, d)| d),
+            );
+        }
     }
     // La franja de agarre del lienzo no es para agarrarlo: sin la mano encima.
     if let Some(path) = workspace.state.find_tab(&PanelId::Canvas)
@@ -2486,6 +2503,85 @@ mod tests {
     }
 
     #[test]
+    fn the_crossings_are_not_painted_over_the_top_strip() {
+        // Los cruces del divisor de la columna con la barra de opciones van un punto arriba del
+        // `DockArea`: con la tira de arriba, ese renglón es el de abajo de la tira.
+        let crossings = |app: &mut ChimpApp| {
+            let ctx = egui::Context::default();
+            let out = frames(&ctx, app);
+            let color = app.pixel.shared_skin().unwrap().colors().canvas;
+            let y = app.workspace.leaf_rect(PanelId::Color).unwrap().top() - 1.0;
+            fn rects(shape: &egui::Shape, out: &mut Vec<(egui::Color32, egui::Rect)>) {
+                match shape {
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| rects(s, out)),
+                    egui::Shape::Rect(r) => out.push((r.fill, r.rect)),
+                    _ => {}
+                }
+            }
+            let mut all = Vec::new();
+            for c in &out.shapes {
+                rects(&c.shape, &mut all);
+            }
+            all.into_iter()
+                .filter(|(c, r)| {
+                    *c == color
+                        && r.width() <= 1.01
+                        && r.height() <= 1.01
+                        && (r.top() - y).abs() < 0.6
+                })
+                .count()
+        };
+        let mut app = test_app();
+        assert!(crossings(&mut app) > 0, "Essentials: under the options bar");
+        let mut app = test_app();
+        app.workspace.to_strip_at(PanelId::Library, Edge::Top);
+        assert_eq!(crossings(&mut app), 0, "over the top strip");
+    }
+
+    #[test]
+    fn a_strip_icon_dropped_on_another_strip_moves_to_it() {
+        for pixel in [true, false] {
+            let mut app = test_app();
+            app.view.pixel_ui = pixel;
+            app.workspace = Workspace::demo("left-strip").unwrap();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let out = frames_in(&ctx, &mut app, SIZE);
+            let groom = node_rect(&out, icon_label(&app, PanelId::Groom))
+                .unwrap()
+                .center();
+            let library = node_rect(&out, icon_label(&app, PanelId::Library))
+                .unwrap()
+                .center();
+            drag_to(&ctx, &mut app, (groom, library), SIZE);
+            let w = &app.workspace;
+            assert_eq!(
+                w.strip_of(PanelId::Groom),
+                Some(Edge::Right),
+                "pixel {pixel}"
+            );
+            assert!(!w.docked(PanelId::Groom) && !w.floating(PanelId::Groom));
+            assert_eq!(w.places(PanelId::Groom), 1);
+        }
+    }
+
+    #[test]
+    fn the_toolbar_and_the_timeline_below_are_claimed_by_the_workspace() {
+        // Una instancia por panel por frame: también la toolbar y el timeline de debajo del
+        // lienzo (sus ramas propias del `Viewer`) se reservan para el workspace.
+        let mut app = test_app();
+        assert!(app.workspace.timeline_below());
+        frames(&egui::Context::default(), &mut app);
+        for id in [PanelId::Tools, PanelId::Timeline] {
+            assert_eq!(
+                app.claim_panel(id, PanelHost::Flyout),
+                Err(PanelHost::Workspace),
+                "{id:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_tab_brought_to_the_front_is_paged_into_view() {
         // Window → panel (o Lospec) pone al frente una pestaña que no se ve: las flechas la traen.
         let mut app = test_app();
@@ -2711,6 +2807,32 @@ mod tests {
         frame_in(&ctx, &mut app, vec![zoom], SIZE);
         frames_in(&ctx, &mut app, SIZE);
         assert_eq!(tabs_offset(&ctx, &app, PanelId::Color), Some(1), "zoom");
+    }
+
+    #[test]
+    fn what_the_trackpad_left_on_a_bar_is_forgotten_when_the_pointer_leaves_it() {
+        let mut app = test_app();
+        many_tabs(&mut app);
+        let ctx = egui::Context::default();
+        frames_in(&ctx, &mut app, SIZE);
+        let bar = leaf(&app, PanelId::Color);
+        let at = egui::pos2(bar.left() + 20.0, bar.top() + 6.0);
+        frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(at)], SIZE);
+        // Casi un renglón (todo menos 10 puntos) y el puntero se va de la barra.
+        let notch = ctx.options(|o| o.input_options.line_scroll_speed);
+        let step = wheel(egui::MouseWheelUnit::Point, -10.0, Default::default());
+        let frames = (notch / 10.0).ceil() as usize;
+        for _ in 1..frames {
+            frame_in(&ctx, &mut app, vec![step.clone()], SIZE);
+        }
+        let away = egui::pos2(bar.center().x, bar.bottom() - 20.0);
+        frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(away)], SIZE);
+        frames_in(&ctx, &mut app, SIZE);
+        // De vuelta, lo que falta del renglón no basta: empieza de cero.
+        frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(at)], SIZE);
+        frame_in(&ctx, &mut app, vec![step], SIZE);
+        frames_in(&ctx, &mut app, SIZE);
+        assert_eq!(tabs_offset(&ctx, &app, PanelId::Color), Some(0));
     }
 
     #[test]

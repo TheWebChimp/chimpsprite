@@ -263,11 +263,11 @@ impl Workspaces {
     /// fuera; y si el de ahora no existe (o no viene: lo de una versión 6 o anterior), Essentials,
     /// con ese acomodo. Cada acomodo con nombre se lee como uno guardado (uno roto es Essentials)
     /// y queda en la versión de ahora. Lo que se descarta se anota en el log.
-    pub(crate) fn from_saved(saved: SavedWorkspace) -> (Workspaces, Workspace) {
+    pub(crate) fn from_saved(mut saved: SavedWorkspace) -> (Workspaces, Workspace) {
         let version = saved.version;
         let current = saved.current.trim().to_owned();
-        let user = saved.user.clone();
-        let edited = saved.edited.clone();
+        let user = std::mem::take(&mut saved.user);
+        let edited = std::mem::take(&mut saved.edited);
         // Leído y escrito: ya en la versión de ahora (y en buen estado).
         let read = |layout: SavedLayout| {
             let (w, shown) = Workspace::from_layout(version, layout);

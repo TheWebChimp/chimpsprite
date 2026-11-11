@@ -956,16 +956,7 @@ pub(crate) fn context_menu(
     let Some(skin) = pixel_ui::frame_skin(&response.ctx) else {
         return response.context_menu(content);
     };
-    let look = MenuLook::new(&skin, 0.0);
-    let config = menu::MenuConfig::new().style(pixel_menu_style);
-    Popup::context_menu(response)
-        .frame(Frame::NONE.inner_margin(PANEL_MARGIN))
-        .style(pixel_menu_style)
-        .info(
-            UiStackInfo::new(UiKind::Menu)
-                .with_tag_value(menu::MenuConfig::MENU_CONFIG_TAG, config),
-        )
-        .show(|ui| panel(ui, &look, None, content))
+    pixel_popup(Popup::context_menu(response), &skin, content)
 }
 
 /// El menú que abre (y cierra) un clic en `response`, del lado `align` de él: con Pixel UI, el
@@ -979,7 +970,17 @@ pub(crate) fn click_menu(
     let Some(skin) = pixel_ui::frame_skin(&response.ctx) else {
         return popup.show(content);
     };
-    let look = MenuLook::new(&skin, 0.0);
+    pixel_popup(popup, &skin, content)
+}
+
+/// `popup` con el panel de los menús de la barra (Pixel UI, `skin`): su marco, su estilo y sus
+/// filas, como menú (lo de [`context_menu`] y [`click_menu`]).
+fn pixel_popup(
+    popup: Popup<'_>,
+    skin: &Skin,
+    content: impl FnOnce(&mut Ui),
+) -> Option<InnerResponse<()>> {
+    let look = MenuLook::new(skin, 0.0);
     let config = menu::MenuConfig::new().style(pixel_menu_style);
     popup
         .frame(Frame::NONE.inner_margin(PANEL_MARGIN))

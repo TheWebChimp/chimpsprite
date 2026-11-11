@@ -741,7 +741,8 @@ fn wheel_step(ui: &egui::Ui, path: NodePath, wheel: Wheel) -> i32 {
 /// Las barras de los grupos de `state` que llevan barra de pestañas (con su rect del último
 /// frame que se dibujó). `wheel`: la rueda sobre la de alguno (la que tiene flechas) la corre, si
 /// lo de más arriba bajo el puntero es su capa (`on_top`, con la superficie del grupo): no a
-/// través de una ventana, un diálogo o un menú.
+/// través de una ventana, un diálogo o un menú. Lo que la rueda dejó juntado en una barra (menos
+/// de un renglón) se olvida cuando el puntero no está sobre ella.
 pub(super) fn plan_bars(
     ui: &egui::Ui,
     state: &DockState<PanelId>,
@@ -754,6 +755,13 @@ pub(super) fn plan_bars(
         .filter(|(_, leaf)| leaf.rect.is_positive())
         .map(|(path, leaf)| {
             let row = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), TAB_BAR_H));
+            if !ui
+                .ctx()
+                .pointer_hover_pos()
+                .is_some_and(|p| row.contains(p))
+            {
+                ui.data_mut(|d| d.remove::<f32>(wheel_sum_id(path)));
+            }
             let wheel = wheel.filter(|w| row.contains(w.at) && on_top(path.surface, w.at));
             let bar = plan_bar(ui, path, leaf.rect, (&leaf.tabs, leaf.active.0), 0);
             let step = match wheel {

@@ -806,77 +806,101 @@ fn edge_tab_shapes(
     let Some(center) = piece.center else {
         return Vec::new();
     };
-    let pos = egui::pos2;
-    // Los bordes de la caja (lo que queda fuera del centro del 9-slice).
-    let left = center.x as f32;
-    let right = (piece.size[0] - center.x - center.w) as f32;
-    let top = center.y as f32;
-    let bottom = (piece.size[1] - center.y - center.h) as f32;
-    let fill = piece.pixel(center.x, center.y);
-    let solid = |r: Rect, color: egui::Color32| Shape::rect_filled(r, 0.0, color);
     let tab = match edge {
         Edge::Left => Rect::from_min_max(
             button.min.round(),
-            pos(panel_rect.left() + 1.0, button.bottom()).round(),
+            egui::pos2(panel_rect.left() + 1.0, button.bottom()).round(),
         ),
         Edge::Top => Rect::from_min_max(
             button.min.round(),
-            pos(button.right(), panel_rect.top() + 1.0).round(),
+            egui::pos2(button.right(), panel_rect.top() + 1.0).round(),
         ),
         Edge::Bottom => Rect::from_min_max(
-            pos(button.left(), panel_rect.bottom() - 1.0).round(),
+            egui::pos2(button.left(), panel_rect.bottom() - 1.0).round(),
             button.max.round(),
         ),
         Edge::Right => return tab_shapes(skin, piece, icon, panel_rect, button, ppp),
     };
-    let mut shapes = pixel_ui::piece_shapes(piece, tab, ppp);
-    if edge == Edge::Left {
-        // Sin la línea entre la pestaña y la caja; los bordes de arriba y de abajo, de una a la
-        // otra (desde la línea oscura de la caja, si empiezan o terminan a la misma altura).
-        let (x0, inner) = (tab.right() - right, panel_rect.left() + left);
-        let seam = Rect::from_min_max(pos(x0, tab.top() + top), pos(inner, tab.bottom() - bottom));
-        shapes.push(solid(seam, fill));
-        let to = |aligned: bool| if aligned { inner } else { tab.right() };
-        let x1 = to((tab.top() - panel_rect.top()).abs() < 0.5);
-        for k in 0..center.y {
-            let y = tab.top() + k as f32;
-            let r = Rect::from_min_max(pos(x0, y), pos(x1, y + 1.0));
-            shapes.push(solid(r, piece.pixel(center.x, k)));
-        }
-        let x1 = to((tab.bottom() - panel_rect.bottom()).abs() < 0.5);
-        for k in center.y + center.h..piece.size[1] {
-            let y = tab.bottom() - (piece.size[1] - k) as f32;
-            let r = Rect::from_min_max(pos(x0, y), pos(x1, y + 1.0));
-            shapes.push(solid(r, piece.pixel(center.x, k)));
-        }
-    } else {
-        // Arriba o abajo: lo mismo de lado, con los bordes de la izquierda y de la derecha.
-        let (y0, y1) = if edge == Edge::Top {
-            (tab.bottom() - bottom, panel_rect.top() + top)
+    // Lo mismo para las tres orillas, en dos ejes: `a`, donde se juntan la pestaña y la caja (x a
+    // la izquierda, y arriba o abajo), y `c`, el otro. `before`: la pestaña va antes de la caja
+    // en `a` (a la izquierda o arriba).
+    let across = edge != Edge::Left;
+    let before = edge != Edge::Bottom;
+    let at = |a: f32, c: f32| {
+        if across {
+            egui::pos2(c, a)
         } else {
-            (panel_rect.bottom() - bottom, tab.top() + top)
-        };
-        let seam = Rect::from_min_max(pos(tab.left() + left, y0), pos(tab.right() - right, y1));
-        shapes.push(solid(seam, fill));
-        // Hasta dentro de la caja si su borde de ese lado va a la misma altura; si no, solo la
-        // pestaña.
-        let span = |aligned: bool| match (edge, aligned) {
-            (Edge::Top, true) | (Edge::Bottom, true) => (y0, y1),
-            (Edge::Top, false) => (y0, tab.bottom()),
-            _ => (tab.top(), y1),
-        };
-        let (a, b) = span((tab.left() - panel_rect.left()).abs() < 0.5);
-        for k in 0..center.x {
-            let x = tab.left() + k as f32;
-            let r = Rect::from_min_max(pos(x, a), pos(x + 1.0, b));
-            shapes.push(solid(r, piece.pixel(k, center.y)));
+            egui::pos2(a, c)
         }
-        let (a, b) = span((tab.right() - panel_rect.right()).abs() < 0.5);
-        for k in center.x + center.w..piece.size[0] {
-            let x = tab.right() - (piece.size[0] - k) as f32;
-            let r = Rect::from_min_max(pos(x, a), pos(x + 1.0, b));
-            shapes.push(solid(r, piece.pixel(k, center.y)));
+    };
+    let span_of = |r: Rect| if across { r.y_range() } else { r.x_range() };
+    let cross_of = |r: Rect| if across { r.x_range() } else { r.y_range() };
+    let (tab_a, panel_a, tab_c, panel_c) = (
+        span_of(tab),
+        span_of(panel_rect),
+        cross_of(tab),
+        cross_of(panel_rect),
+    );
+    // Los bordes de la caja (lo que queda fuera del centro del 9-slice), en cada eje: antes y
+    // después del centro.
+    let (cx, cy, cw, ch) = (center.x, center.y, center.w, center.h);
+    let (w, h) = (piece.size[0], piece.size[1]);
+    let border = |lo: u32, len: u32, size: u32| (lo as f32, (size - lo - len) as f32);
+    let (a_lo, a_hi) = if across {
+        border(cy, ch, h)
+    } else {
+        border(cx, cw, w)
+    };
+    let (c_lo, c_hi) = if across {
+        border(cx, cw, w)
+    } else {
+        border(cy, ch, h)
+    };
+    // Cada columna (o fila) del borde de la caja en `c`: su color, del centro del otro eje.
+    let pixel = |k: u32| {
+        if across {
+            piece.pixel(k, cy)
+        } else {
+            piece.pixel(cx, k)
         }
+    };
+    let (c_first, c_after, c_size) = if across {
+        (cx, cx + cw, w)
+    } else {
+        (cy, cy + ch, h)
+    };
+    let solid = |r: Rect, color: egui::Color32| Shape::rect_filled(r, 0.0, color);
+    let mut shapes = pixel_ui::piece_shapes(piece, tab, ppp);
+    // Sin la línea entre la pestaña y la caja: de lo de adentro de una a lo de adentro de la otra.
+    let (a0, a1) = if before {
+        (tab_a.max - a_hi, panel_a.min + a_lo)
+    } else {
+        (panel_a.max - a_hi, tab_a.min + a_lo)
+    };
+    let seam = Rect::from_min_max(at(a0, tab_c.min + c_lo), at(a1, tab_c.max - c_hi));
+    shapes.push(solid(seam, piece.pixel(cx, cy)));
+    // Los bordes de los lados, de la pestaña a la caja (hasta dentro de la caja si su borde de ese
+    // lado va a la misma altura; si no, solo la pestaña).
+    let span = |aligned: bool| match (before, aligned) {
+        (_, true) => (a0, a1),
+        (true, false) => (a0, tab_a.max),
+        (false, false) => (tab_a.min, a1),
+    };
+    let (s0, s1) = span((tab_c.min - panel_c.min).abs() < 0.5);
+    for k in 0..c_first {
+        let c = tab_c.min + k as f32;
+        shapes.push(solid(
+            Rect::from_min_max(at(s0, c), at(s1, c + 1.0)),
+            pixel(k),
+        ));
+    }
+    let (s0, s1) = span((tab_c.max - panel_c.max).abs() < 0.5);
+    for k in c_after..c_size {
+        let c = tab_c.max - (c_size - k) as f32;
+        shapes.push(solid(
+            Rect::from_min_max(at(s0, c), at(s1, c + 1.0)),
+            pixel(k),
+        ));
     }
     shapes.extend(pixel_draw::piece_centered(skin, icon, button, ppp));
     shapes

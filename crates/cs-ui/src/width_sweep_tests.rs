@@ -29,8 +29,10 @@ const WIDEST: f32 = 600.0;
 /// Lo que no cumple un control.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
-    /// Empieza o termina a medio punto.
+    /// Empieza o termina a medio punto a lo ancho (o, también, a lo alto).
     HalfPoint,
+    /// Empieza o termina a medio punto solo a lo alto (su x, entera).
+    HalfPointY,
     /// Se sale del ancho del panel.
     Outside,
     /// Tapa a otro.
@@ -62,12 +64,13 @@ const KNOWN_GAPS: &[Gap] = &[
     // filas de cada paleta de la lista (su título y "CREATED BY …", sus Apply, Append y Save) caen
     // a medio punto a lo alto, a cualquier ancho. Pide migrarlo. (Antes el barrido dependía de
     // cuándo respondía la red y solo lo veía desde 568; ahora la lista ya llegó: ver `app_for`.)
+    // Solo a lo alto: a lo ancho, todo cuenta.
     Gap {
         panel: PanelId::Lospec,
         from: crate::palette_ui::LOSPEC_PANEL_W,
         to: WIDEST,
-        kind: Kind::HalfPoint,
-        why: "not migrated to forms: its result rows fall on half points",
+        kind: Kind::HalfPointY,
+        why: "not migrated to forms: its result rows fall on half points (y)",
     },
 ];
 
@@ -130,20 +133,26 @@ fn glued(panel: PanelId, a: &str, b: &str, inter: egui::Rect) -> bool {
             .any(|(p, g)| *p == panel && in_group(g, a) && in_group(g, b))
 }
 
-/// Si uno va adentro del otro a propósito (`outer` con `inner`, de roles dados; nunca del mismo
-/// rect):
-/// - Una fila que es un botón de lado a lado con los suyos adentro (la del outliner del 3D, con
-///   su ojo y su candado): un `Button` dentro de otro.
+/// Si uno va adentro del otro a propósito en `panel` (`outer`, con su nombre, con `inner`, de roles
+/// dados; nunca del mismo rect):
+/// - La fila del outliner del 3D ("Cube"), que es un botón de lado a lado con los suyos adentro
+///   (su ojo y su candado): un `Button` dentro de otro, solo ahí.
 /// - Un campo (`SpinButton` o `TextInput`) con el cuadro de su texto (otro de esos, más bajo que
 ///   el campo; ver `color_panel::text_rect`): adentro a lo ancho, y a lo alto puede asomar medio
 ///   punto arriba (va donde caen las mayúsculas de su texto).
-fn nested((outer, ro): (egui::Rect, Role), (inner, ri): (egui::Rect, Role)) -> bool {
+fn nested(
+    panel: PanelId,
+    (outer, ro, name): (egui::Rect, Role, &str),
+    (inner, ri): (egui::Rect, Role),
+) -> bool {
     if outer == inner {
         return false;
     }
     let field = |r: Role| matches!(r, Role::SpinButton | Role::TextInput);
     match (ro, ri) {
-        (Role::Button, Role::Button) => outer.contains_rect(inner),
+        (Role::Button, Role::Button) => {
+            panel == PanelId::Model && name == "Cube" && outer.contains_rect(inner)
+        }
         (a, b) if field(a) && field(b) => {
             let poke = egui::Rect::from_min_max(outer.min - egui::vec2(0.0, 0.5), outer.max);
             inner.height() < crate::kit::input::HEIGHT && poke.contains_rect(inner)
@@ -171,8 +180,13 @@ fn problems(panel: PanelId, probe: &Probe, width: f32) -> Vec<(Kind, String)> {
         let xs = [r.min.x, r.max.x];
         let ys = [r.min.y, r.max.y];
         let half = |v: &f32| *v != v.round();
-        if xs.iter().any(half) || (!text_box(*role, r) && ys.iter().any(half)) {
+        if xs.iter().any(half) {
             out.push((Kind::HalfPoint, format!("half pixel: {name:?} at {r:?}")));
+        } else if !text_box(*role, r) && ys.iter().any(half) {
+            out.push((
+                Kind::HalfPointY,
+                format!("half pixel (y): {name:?} at {r:?}"),
+            ));
         }
         if r.min.x < 0.0 || r.max.x > width {
             out.push((Kind::Outside, format!("outside: {name:?} at {r:?}")));
@@ -188,8 +202,8 @@ fn problems(panel: PanelId, probe: &Probe, width: f32) -> Vec<(Kind, String)> {
             let inter = ra.intersect(*rb);
             if !inter.is_positive()
                 || glued(panel, a, b, inter)
-                || nested((*ra, *roa), (*rb, *rob))
-                || nested((*rb, *rob), (*ra, *roa))
+                || nested(panel, (*ra, *roa, a), (*rb, *rob))
+                || nested(panel, (*rb, *rob, b), (*ra, *roa))
                 || swap(a, b)
                 || swap(b, a)
             {
@@ -226,6 +240,7 @@ fn app_for(id: PanelId) -> ChimpApp {
         }
         // Las listas de Lospec y de dafont, ya llegadas y sin red (si no, llegan cuando la red
         // quiere, a la mitad del barrido).
+        #[cfg(not(target_arch = "wasm32"))]
         PanelId::Lospec => app.open_lospec_offline(lospec_page()),
         #[cfg(not(target_arch = "wasm32"))]
         PanelId::Dafont => app.dafont = crate::dafont::DafontPanel::offline(),
@@ -236,6 +251,7 @@ fn app_for(id: PanelId) -> ChimpApp {
 
 /// Una página de Lospec como las de verdad: paletas de varios tamaños, con autor, likes y
 /// descargas (sin imágenes de ejemplo, que se pedirían a la red).
+#[cfg(not(target_arch = "wasm32"))]
 fn lospec_page() -> cs_io::lospec::LospecPage {
     let palette = |k: usize, colors: usize| cs_io::lospec::LospecPalette {
         slug: format!("palette-{k}"),
@@ -313,23 +329,55 @@ fn the_allowances_name_their_controls() {
         "Next frame",
         r(20.0, 0.0, 25.0, 17.0)
     ));
-    // Uno dentro de otro: solo de sus roles, y nunca del mismo rect.
+    // Uno dentro de otro: solo de sus roles, y nunca del mismo rect. Un botón en otro, solo la
+    // fila "Cube" del 3D.
+    let model = PanelId::Model;
     let row = r(0.0, 0.0, 186.0, 13.0);
     let eye = r(164.0, 0.0, 175.0, 13.0);
-    assert!(nested((row, Role::Button), (eye, Role::Button)));
-    assert!(!nested((row, Role::Button), (row, Role::Button)));
-    assert!(!nested((row, Role::Label), (eye, Role::Button)));
-    assert!(!nested((eye, Role::Button), (row, Role::Button)));
+    assert!(nested(
+        model,
+        (row, Role::Button, "Cube"),
+        (eye, Role::Button)
+    ));
+    assert!(!nested(
+        model,
+        (row, Role::Button, "Other"),
+        (eye, Role::Button)
+    ));
+    assert!(!nested(
+        PanelId::Color,
+        (row, Role::Button, "Cube"),
+        (eye, Role::Button)
+    ));
+    assert!(!nested(
+        model,
+        (row, Role::Button, "Cube"),
+        (row, Role::Button)
+    ));
+    assert!(!nested(
+        model,
+        (row, Role::Label, "Cube"),
+        (eye, Role::Button)
+    ));
+    assert!(!nested(
+        model,
+        (eye, Role::Button, "Cube"),
+        (row, Role::Button)
+    ));
+    let color = PanelId::Color;
     let field = r(33.0, 240.0, 60.0, 256.0);
     let text = r(42.0, 239.5, 59.0, 253.5);
-    assert!(nested((field, Role::SpinButton), (text, Role::SpinButton)));
-    assert!(!nested((field, Role::SpinButton), (text, Role::Button)));
+    let f = (field, Role::SpinButton, "R");
+    assert!(nested(color, f, (text, Role::SpinButton)));
+    assert!(!nested(color, f, (text, Role::Button)));
     assert!(!nested(
-        (field, Role::SpinButton),
+        color,
+        f,
         (text.translate(egui::vec2(1.5, 0.0)), Role::SpinButton)
     ));
     assert!(!nested(
-        (field, Role::SpinButton),
+        color,
+        f,
         (text.translate(egui::vec2(0.0, -0.5)), Role::SpinButton)
     ));
 }

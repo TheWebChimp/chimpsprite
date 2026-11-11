@@ -1505,23 +1505,19 @@ impl ChimpApp {
         let CanvasArea {
             rect: canvas_rect,
             dock: dock_out,
+            strips,
         } = canvas_area.unwrap_or_default();
         // Sacar un panel de la tira: soltado en el árbol (como pestaña, partiendo un grupo o junto
-        // al lienzo) o en el lienzo (en una ventana), o desde su menú contextual. Mientras se
-        // arrastra, dónde caería.
-        if let Some((_, pointer)) = dock_out.dragging {
+        // al lienzo), en el lienzo (en una ventana) o en otra tira, o desde su menú contextual.
+        // Mientras se arrastra, dónde caería en el árbol (sobre una tira, nada).
+        if let Some((_, pointer)) = dock_out.dragging
+            && !strips.iter().any(|(_, r)| r.contains(pointer))
+        {
             let target = workspace::drop_target(&self.workspace, pointer);
             workspace::paint_drop_zone(ui, skin, &self.workspace, target);
         }
         if let Some(request) = dock_out.request {
-            match request {
-                dock::StripRequest::Drop(id, pointer) => {
-                    let target = workspace::drop_target(&self.workspace, pointer);
-                    self.workspace.drop_panel(id, target);
-                }
-                dock::StripRequest::Dock(id) => self.workspace.dock_from_strip(id),
-                dock::StripRequest::Float(id, at) => self.workspace.float(id, at),
-            }
+            self.workspace.apply_strip_request(request, &strips);
             ui.ctx().request_repaint();
         }
         if self.undo_history
@@ -1699,6 +1695,8 @@ pub(crate) struct CanvasArea {
     pub rect: egui::Rect,
     /// Lo de la tira de íconos: lo que se arrastra, lo que se pide y el flyout abierto.
     pub dock: dock::DockOutput,
+    /// Las tiras de íconos dibujadas, con su orilla (un ícono soltado sobre otra pasa a ella).
+    pub strips: Vec<(dock::Edge, egui::Rect)>,
 }
 
 /// Sin la hoja del lienzo (no cupo): sin lienzo ni tira.
@@ -1707,6 +1705,7 @@ impl Default for CanvasArea {
         CanvasArea {
             rect: egui::Rect::NOTHING,
             dock: dock::DockOutput::default(),
+            strips: Vec::new(),
         }
     }
 }

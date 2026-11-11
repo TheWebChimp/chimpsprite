@@ -62,15 +62,10 @@ pub(super) fn frame_with(
             .show(ui, |ui| show(app, ui, modal))
             .inner;
         // Lo que pidió una tira (como `editor_panels`): soltar, acoplar o flotar un ícono.
-        if let Some(request) = area.and_then(|a| a.dock.request) {
-            match request {
-                crate::dock::StripRequest::Drop(id, pointer) => {
-                    let target = super::drop_target(&app.workspace, pointer);
-                    app.workspace.drop_panel(id, target);
-                }
-                crate::dock::StripRequest::Dock(id) => app.workspace.dock_from_strip(id),
-                crate::dock::StripRequest::Float(id, at) => app.workspace.float(id, at),
-            }
+        if let Some(area) = area
+            && let Some(request) = area.dock.request
+        {
+            app.workspace.apply_strip_request(request, &area.strips);
         }
         after(ui.ctx());
     });

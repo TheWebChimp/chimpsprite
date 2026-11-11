@@ -1880,14 +1880,24 @@ fn new_workspace_saves_the_layout_under_a_new_name() {
         h.click("Save");
         assert!(h.app.workspace_dialog.is_some(), "pixel_ui {pixel_ui}");
         assert!(h.app.workspaces.user_names().is_empty());
-        // Vacío, Save tampoco (y no hace falta decir por qué).
+        // Enter con ese nombre tampoco, y el campo sigue con el foco: lo que se escribe, ahí.
+        let name = |h: &DialogHarness| match &h.app.workspace_dialog {
+            Some(crate::app_actions::WorkspaceDialog::New { name, .. }) => name.clone(),
+            _ => panic!("the dialog"),
+        };
+        h.key(Key::Enter);
+        h.settle();
+        assert!(h.app.workspace_dialog.is_some(), "pixel_ui {pixel_ui}");
+        h.frame(vec![Event::Text("x".into())]);
+        h.settle();
+        assert_eq!(name(&h), "tilesx", "pixel_ui {pixel_ui}");
+        // Vacío, Save tampoco (y no hace falta decir por qué). El campo recupera el foco solo
+        // (Save se lo quitó).
         let reset = |h: &mut DialogHarness| {
-            if let Some(crate::app_actions::WorkspaceDialog::New { name, focused }) =
+            if let Some(crate::app_actions::WorkspaceDialog::New { name, .. }) =
                 &mut h.app.workspace_dialog
             {
                 name.clear();
-                // El clic en Save le quitó el foco al campo: de vuelta a él.
-                *focused = false;
             }
             h.settle();
         };
