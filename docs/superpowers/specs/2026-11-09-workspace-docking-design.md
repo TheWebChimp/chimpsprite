@@ -359,8 +359,10 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - La clave guardada sigue siendo **`chimpsprite.workspace`**, versión 7 (en vez de una
     `chimpsprite.workspaces` nueva): la migración ya existía y un árbol de la fase C (versión 1) se
     migra solo.
-  - Un grupo que toca una orilla solo por su lado corto (la toolbar a la derecha del lienzo) se
-    colapsa a la tira de **arriba** (regla de orillas); « / Dock desde esa tira lo regresa.
+  - Un grupo **alto** que solo toca la orilla de arriba o la de abajo, sin tocar ningún lado (la
+    toolbar a la derecha del lienzo), se colapsa a la tira del **lado más cercano** (izquierda o
+    derecha; regla de orillas, ledger D6); "Dock" desde esa tira lo regresa junto al lienzo de ese
+    lado. Uno ancho en esa posición sigue yendo a la de arriba o abajo.
   - El « comparte la pieza de la flecha de atrás del kit (con flechas se ve "‹ › ‹"); soltar sobre
     una pestaña siempre inserta **antes** de ella (egui_dock); la barra de menú cambia por el título
     nuevo "Window" (única diferencia contra el Essentials de antes: 0 px en todo lo demás).

@@ -864,10 +864,21 @@ impl Workspace {
 
     /// La orilla de la ventana del grupo `(surface, node)`: la que toca (bajando de la raíz, cada
     /// split a lo ancho o a lo alto de su lado), primero a los lados (izquierda o derecha) y después
-    /// arriba o abajo; si toca las dos de un eje (o ninguna), cuenta el otro. Un grupo que no toca
-    /// ninguna (entre otros) o una ventana flotante, la más cercana a él en el último frame (en
-    /// empate, también los lados primero). Sin rects (antes de dibujarse), la derecha.
+    /// arriba o abajo; si toca las dos de un eje (o ninguna), cuenta el otro. Un grupo alto (más
+    /// alto que ancho) que solo toca arriba o abajo, sin tocar ningún lado (p. ej. la toolbar a la
+    /// derecha del lienzo), va al lado más cercano (ledger D6: su tira es la de ese lado, y "Dock"
+    /// desde ella lo regresa junto al lienzo de ese lado). Un grupo que no toca ninguna (entre
+    /// otros) o una ventana flotante, la más cercana a él en el último frame (en empate, también
+    /// los lados primero). Sin rects (antes de dibujarse): la de arriba o abajo que toque, si no,
+    /// la derecha.
     pub(crate) fn group_edge(&self, surface: SurfaceIndex, node: NodeIndex) -> Edge {
+        let area = self.root_rect(SurfaceIndex::main());
+        let rect = self
+            .state
+            .leaf(NodePath { surface, node })
+            .ok()
+            .map(|leaf| leaf.rect)
+            .filter(|r| r.is_finite() && r.is_positive());
         if surface.is_main() {
             let tree = self.state.main_surface();
             let (mut left, mut right, mut top, mut bottom) = (true, true, true, true);
@@ -882,24 +893,31 @@ impl Workspace {
                 }
                 n = parent;
             }
-            match (left, right, top, bottom) {
+            let level = match (left, right, top, bottom) {
                 (true, false, ..) => return Edge::Left,
                 (false, true, ..) => return Edge::Right,
-                (_, _, true, false) => return Edge::Top,
-                (_, _, false, true) => return Edge::Bottom,
+                (_, _, true, false) => Some(Edge::Top),
+                (_, _, false, true) => Some(Edge::Bottom),
                 (true, true, ..) => return Edge::Right,
-                _ => {}
+                _ => None,
+            };
+            if let Some(level) = level {
+                // Alto y entre los lados: al más cercano (en empate, la izquierda).
+                return match (area, rect) {
+                    (Some(area), Some(rect)) if !left && !right && rect.height() > rect.width() => {
+                        if rect.left() - area.left() <= area.right() - rect.right() {
+                            Edge::Left
+                        } else {
+                            Edge::Right
+                        }
+                    }
+                    _ => level,
+                };
             }
         }
-        let Some(area) = self.root_rect(SurfaceIndex::main()) else {
+        let Some(area) = area else {
             return Edge::Right;
         };
-        let rect = self
-            .state
-            .leaf(NodePath { surface, node })
-            .ok()
-            .map(|leaf| leaf.rect)
-            .filter(|r| r.is_finite() && r.is_positive());
         let Some(rect) = rect else {
             return Edge::Right;
         };

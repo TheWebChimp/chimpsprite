@@ -14218,12 +14218,24 @@ fn the_collapse_button_of_the_lone_toolbar_does_not_cover_its_box() {
         h.frame_with(vec![Event::PointerMoved(collapse.center())]);
         h.click(collapse.center(), PointerButton::Primary);
         // A la izquierda del lienzo toca la orilla izquierda; a su derecha (entre el lienzo y la
-        // columna) solo toca la de arriba.
-        let edge = if right { Edge::Top } else { Edge::Left };
+        // columna) solo toca la de arriba, pero es alta: va a la tira del lado más cercano (la
+        // derecha, ledger D6).
+        let edge = if right { Edge::Right } else { Edge::Left };
         assert!(
             h.app.workspace.strip_at(edge).contains(&PanelId::Tools),
             "right {right}"
         );
+        // Y "Dock" desde esa tira la regresa junto al lienzo, del mismo lado.
+        for _ in 0..3 {
+            h.frame();
+        }
+        h.click(h.button("Tools").center(), PointerButton::Secondary);
+        h.click(h.button("Dock").center(), PointerButton::Primary);
+        for _ in 0..3 {
+            h.frame();
+        }
+        assert_eq!(h.app.workspace.tools_side(), Some(!right), "right {right}");
+        assert_eq!(h.app.workspace.leaf_rect(PanelId::Tools), Some(leaf));
     }
 }
 
