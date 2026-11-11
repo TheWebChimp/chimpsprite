@@ -95,8 +95,10 @@ impl Workspace {
     /// lienzo y `id` acoplado solo en el lado `edge` del lienzo, de alto (o de ancho) completo. Los
     /// demás paneles del dock, en la tira de la derecha (como en Essentials); la toolbar, el
     /// timeline y Color, en ningún lado si no son `id` (ojo: con `view.timeline` prendido, `show`
-    /// vuelve a poner el timeline debajo del lienzo; `LayoutHarness::with_workspace` lo apaga). El
-    /// foco, en el grupo de `id`.
+    /// vuelve a poner el timeline debajo del lienzo; `LayoutHarness::with_workspace` lo apaga). Color
+    /// no va a las tiras: si no es `id`, queda fuera del acomodo (la app lo tolera; guardado y leído,
+    /// `Workspace::from_saved` lo volvería a acoplar junto al lienzo). El foco, en el grupo de `id`.
+    /// `id` no puede ser el lienzo.
     ///
     /// Lo que mide el lado lo pone `fit::pin_sides` en el primer frame (la fracción de aquí no
     /// importa): la toolbar a un lado, el ancho de su caja; cualquier otro a la derecha es la
@@ -109,6 +111,7 @@ impl Workspace {
 
         use super::{NodeIndex, SurfaceIndex};
 
+        debug_assert_ne!(id, PanelId::Canvas, "the canvas is always there");
         let mut state = DockState::new(vec![PanelId::Canvas]);
         let tree = state.main_surface_mut();
         let root = NodeIndex::root();

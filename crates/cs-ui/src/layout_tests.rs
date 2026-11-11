@@ -326,17 +326,23 @@ impl LayoutHarness {
             .outer_rect
     }
 
-    /// El rect de la hoja de `id` en el último frame: el de su grupo, acoplado
-    /// (`Workspace::leaf_rect`, sin los divisores); flotando, el de su ventana con su marco
-    /// (`Workspace::window_rect`).
+    /// El rect de la hoja de `id` en el último frame: el de su grupo (`Workspace::leaf_rect`, sin
+    /// los divisores), acoplado o flotando (en una ventana, el grupo de adentro, sin el marco; el
+    /// de la ventana es [`Self::window`]).
     fn leaf(&self, id: crate::panel_registry::PanelId) -> Rect {
-        let w = &self.app.workspace;
-        let rect = if w.docked(id) {
-            w.leaf_rect(id)
-        } else {
-            w.window_rect(&self.ctx, id)
-        };
-        rect.unwrap_or_else(|| panic!("{id:?} is not in the workspace"))
+        self.app
+            .workspace
+            .leaf_rect(id)
+            .unwrap_or_else(|| panic!("{id:?} is not in the workspace"))
+    }
+
+    /// El rect de la ventana flotante de `id` en el último frame, con su marco
+    /// (`Workspace::window_rect`).
+    fn window(&self, id: crate::panel_registry::PanelId) -> Rect {
+        self.app
+            .workspace
+            .window_rect(&self.ctx, id)
+            .unwrap_or_else(|| panic!("{id:?} is not floating"))
     }
 
     /// `r` relativo a la hoja de `id` (su esquina de arriba a la izquierda es (0, 0)).
@@ -345,11 +351,13 @@ impl LayoutHarness {
     }
 
     /// Como `start_in`, con el acomodo `w` (en vez de Essentials) desde el primer frame. El
-    /// timeline se ve si está en `w` (si no, `show` lo pondría debajo del lienzo: `view.timeline`
-    /// manda).
+    /// timeline y el Preview se ven si están en `w` (si no, `show` pondría el timeline debajo del
+    /// lienzo y quitaría el Preview: `view.timeline` y `view.preview` mandan).
     fn with_workspace(mut app: ChimpApp, w: crate::workspace::Workspace, size: Vec2) -> Self {
         use crate::panel_registry::PanelId;
-        app.view.timeline = w.state_tabs().contains(&PanelId::Timeline);
+        let tabs = w.state_tabs();
+        app.view.timeline = tabs.contains(&PanelId::Timeline);
+        app.view.preview = tabs.contains(&PanelId::Preview);
         app.workspace = w;
         Self::start_in(app, size)
     }
@@ -615,13 +623,12 @@ fn the_inside_of_a_panel_does_not_depend_on_where_it_is() {
     use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     use crate::workspace::Workspace;
-    // Color en la columna derecha de Essentials y solo a la izquierda del lienzo. Una diferencia a
-    // propósito (la de la fase C): en la columna, el margen izquierdo de lo que va pegado a su
-    // divisor cuenta desde la línea (como en el panel derecho de antes; ver `beside_column`), así
-    // que ahí lo de adentro empieza un divisor antes en su hoja. Con la columna de
-    // `palette_width` = el ancho de fábrica de Color (con su divisor) y Color a la izquierda de su
-    // ancho de fábrica, lo de adentro tiene el mismo ancho en los dos y va un divisor más a la
-    // derecha en su hoja de la izquierda.
+    // La regla de las tareas 3–5: lo de adentro de un panel se mide contra su hoja (`at`), y un
+    // panel de la columna derecha de Essentials mide exactamente lo mismo que en
+    // `Workspace::solo(_, Edge::Right)` (también es la columna). En otro lado difiere solo por el
+    // margen de la columna, a propósito (la fase C): ahí el margen izquierdo de lo que va pegado a
+    // su divisor cuenta desde la línea (como en el panel derecho de antes; ver `beside_column`),
+    // así que lo de adentro empieza un divisor (2) antes en su hoja.
     let view = ViewSettings {
         palette_width: Some(crate::color_panel::DEFAULT_WIDTH),
         ..pixel_ui()
@@ -632,19 +639,33 @@ fn the_inside_of_a_panel_does_not_depend_on_where_it_is() {
         app.new_document();
         app
     };
+    let size = vec2(1200.0, 800.0);
+    let labels = ["Lock palette", "Palette menu", "Mask", "R", "Alpha"];
     let essentials = LayoutHarness::start(app());
-    let solo = LayoutHarness::with_workspace(
-        app(),
-        Workspace::solo(PanelId::Color, Edge::Left),
-        vec2(1200.0, 800.0),
-    );
-    let (left, column) = (solo.leaf(PanelId::Color), essentials.leaf(PanelId::Color));
+    let column = essentials.leaf(PanelId::Color);
+    // A la derecha, sola, del mismo `palette_width`: lo mismo, exacto.
+    let right =
+        LayoutHarness::with_workspace(app(), Workspace::solo(PanelId::Color, Edge::Right), size);
+    assert_eq!(right.leaf(PanelId::Color).size(), column.size());
+    for label in labels {
+        assert_eq!(
+            right.at(PanelId::Color, right.node(label)),
+            essentials.at(PanelId::Color, essentials.node(label)),
+            "{label}"
+        );
+    }
+    // A la izquierda, de su ancho de fábrica: la columna de `palette_width` = ese ancho (con su
+    // divisor) deja lo de adentro del mismo ancho en las dos, y a la izquierda va un divisor más
+    // a la derecha en su hoja.
+    let solo =
+        LayoutHarness::with_workspace(app(), Workspace::solo(PanelId::Color, Edge::Left), size);
+    let left = solo.leaf(PanelId::Color);
     assert!(essentials.column().left() > left.right());
     let sep = column.left() - essentials.column().left();
     assert_eq!(sep, 2.0, "the divider");
     assert_eq!(left.width(), crate::color_panel::DEFAULT_WIDTH);
     assert_eq!(left.size(), column.size() + vec2(sep, 0.0));
-    for label in ["Lock palette", "Palette menu", "Mask", "R", "Alpha"] {
+    for label in labels {
         assert_eq!(
             solo.at(PanelId::Color, solo.node(label)),
             essentials
@@ -14380,7 +14401,9 @@ fn the_strip_menu_docks_the_toolbar_at_its_edge_and_floats_it_beside_the_strip()
     let button = h.button("Tools");
     menu(&mut h, "Float");
     assert!(h.app.workspace.floating(PanelId::Tools));
-    let window = h.app.workspace.window_rect(&h.ctx, PanelId::Tools).unwrap();
+    let window = h.window(PanelId::Tools);
+    // Su hoja, el grupo de adentro de la ventana (sin el marco).
+    assert!(window.contains_rect(h.leaf(PanelId::Tools)));
     assert!(
         window.right() <= button.left(),
         "{window:?} left of {button:?}"
