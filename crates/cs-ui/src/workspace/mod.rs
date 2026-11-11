@@ -26,26 +26,33 @@
 //! delgada para agarrarlo. Con dos o más, la barra con las pestañas del kit. Las ventanas flotantes
 //! siempre llevan su barra: es su título y de ahí se arrastran. Salvo una: el Preview solo en su
 //! ventana lleva la suya de antes (con su barra de título: de ahí se mueve y, con Pixel UI, de su
-//! franja de arriba se lleva a acoplar, como un grupo solo; ver `show::PreviewWindow`).
+//! franja de arriba se lleva a acoplar, como un grupo solo; ver `preview_window::PreviewWindow`).
 //!
 //! Solo este módulo usa egui_dock.
 //!
 //! Se parte por responsabilidad: [`model`] (las operaciones sobre el acomodo, sus invariantes y lo
 //! que se guarda), [`drop`](mod@drop) (dónde cae un panel que se suelta), [`fit`] (los mínimos y su
-//! ajuste a los splits y a las ventanas), [`show`](mod@show) (el `DockArea` y lo que lo rodea) y
-//! [`presets`] (los workspaces con nombre de Window → Workspace: los de fábrica y los del usuario).
+//! ajuste a los splits y a las ventanas), [`show`](mod@show) (el `DockArea` y lo que lo rodea),
+//! lo que `show` pega encima de egui_dock: [`tabs`] (las pestañas del kit, sus flechas y el «),
+//! [`dividers`] (los divisores tapados y sus cruces), [`preview_window`] (la ventana de antes del
+//! Preview) y [`modal`] (lo que no se toca con un diálogo), y [`presets`] (los workspaces con
+//! nombre de Window → Workspace: los de fábrica y los del usuario).
 //!
 //! El marco de las ventanas flotantes se viste con un `ui.scope` alrededor del `DockArea` cuyo
 //! estilo lleva el color marcador (`skin::window_visuals`): funciona porque egui_dock 0.21.1 arma
 //! el marco con `Frame::window(ui.style())` del `Ui` que se le pasa, mientras que el contenido de
 //! cada pestaña usa el estilo del contexto. Si eso cambia al subir de versión, hay que revisarlo.
 
+mod dividers;
 mod drop;
 mod fit;
+mod modal;
 mod model;
 mod presets;
+mod preview_window;
 mod show;
 mod skin;
+mod tabs;
 #[cfg(test)]
 mod test_util;
 
@@ -61,7 +68,9 @@ pub(crate) use model::{DockTarget, SAVED_VERSION, SavedWorkspace};
 pub(crate) use presets::{FACTORY, Shown, Workspaces};
 pub(crate) use show::show;
 #[cfg(test)]
-pub(crate) use show::{COLLAPSE, MODEL_ELSEWHERE, has_marker};
+pub(crate) use show::{MODEL_ELSEWHERE, has_marker};
+#[cfg(test)]
+pub(crate) use tabs::COLLAPSE;
 
 /// El acomodo de los paneles: el árbol de egui_dock (acoplados y flotantes) y la tira de íconos.
 #[derive(Clone, Debug)]

@@ -1062,7 +1062,7 @@ impl Workspace {
 
     /// La ventana del Preview solo (un solo grupo, con él solo): su ventana es la de antes (con
     /// Pixel UI la del diseño, sin él la `egui::Window`: su marco y su barra de título, sin
-    /// pestañas; ver `show::PreviewWindow`).
+    /// pestañas; ver `preview_window::PreviewWindow`).
     pub(crate) fn bare_preview(&self) -> Option<SurfaceIndex> {
         self.lone_window(PanelId::Preview)
     }
