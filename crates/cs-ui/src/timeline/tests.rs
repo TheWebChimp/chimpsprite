@@ -35,6 +35,8 @@ struct Harness {
     app: ChimpApp,
     time: f64,
     width: f32,
+    /// El alto de la ventana.
+    height: f32,
     /// La hoja del timeline en el último frame, en la ventana.
     leaf: Rect,
     /// Los nodos con nombre del último frame: los del timeline y sus menús
@@ -65,11 +67,16 @@ impl Harness {
     /// La ventana mide `width` × 400 y el timeline va a lo ancho, debajo del lienzo, de 190 de
     /// alto (`view.timeline_height`).
     fn with(width: f32, pixel: bool) -> Self {
+        Self::sized(width, pixel, 400.0, 190.0)
+    }
+
+    /// La ventana mide `width` × `height` y el timeline, `timeline` de alto.
+    fn sized(width: f32, pixel: bool, height: f32, timeline: f32) -> Self {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let view = ViewSettings {
             pixel_ui: pixel,
-            timeline_height: Some(190.0),
+            timeline_height: Some(timeline),
             ..Default::default()
         };
         let editor = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
@@ -79,6 +86,7 @@ impl Harness {
             app,
             time: 0.0,
             width,
+            height,
             leaf: Rect::ZERO,
             nodes: Vec::new(),
             grid: Pos2::ZERO,
@@ -134,7 +142,10 @@ impl Harness {
         let events = hosted_panel::to_window(events, self.leaf);
         self.time += 0.05;
         let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(self.width, 400.0))),
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::ZERO,
+                vec2(self.width, self.height),
+            )),
             time: Some(self.time),
             events,
             ..Default::default()
@@ -1413,4 +1424,210 @@ fn with_pixel_ui_a_tag_narrower_than_its_label_drops_both_legs_below_it() {
     }
     // Y nada sale a la derecha de la cajita.
     assert_ne!(h.color_at(m.label_right + 2.0, m.t + 5.0), Some(color));
+}
+
+// ---- La fila de botones de la barra en anchos chicos ----
+
+/// Los controles con nombre de la barra con Pixel UI: los botones de los grupos, "Opacity" y los
+/// − y + de sus steppers, y el combo.
+const BAR_CONTROLS: [&str; 18] = [
+    "First frame",
+    "Previous frame",
+    "Play",
+    "Next frame",
+    "Last frame",
+    "New frame",
+    "Delete frame",
+    "New layer",
+    "Delete layer",
+    "New group",
+    "New tilemap layer",
+    "Onion skin",
+    "Opacity",
+    "Less opacity",
+    "More opacity",
+    "Normal",
+    "Shorter frame",
+    "Longer frame",
+];
+
+/// El timeline con Pixel UI con `w` de ancho a la vista: la ventana mide `w` más lo que le quita
+/// la tira de la derecha (medido en un arnés de 600, no adivinado). Alto como acoplado junto al
+/// lienzo (450 de 700): a 64 la barra tiene 12 filas (264) y en 190 no se verían todas.
+fn pixel_seen(w: f32) -> Harness {
+    let probe = Harness::pixel(600.0);
+    let strip = 600.0 - probe.visible_width();
+    let h = Harness::sized(w + strip, true, 700.0, 450.0);
+    assert_eq!(h.visible_width(), w, "the timeline is {w} wide");
+    h
+}
+
+/// Los nodos de la barra (arriba de su línea de abajo, `timeline.divider`): los de
+/// [`BAR_CONTROLS`] y los campos (su nombre es su número). Los íconos de la tira, que bajan a la
+/// derecha del timeline, no. Ordenados por fila y de izquierda a derecha.
+fn bar_nodes(h: &Harness) -> Vec<(String, Rect)> {
+    let divider = h.drawn("timeline.divider")[0].top();
+    let mut bar: Vec<(String, Rect)> = h
+        .nodes
+        .iter()
+        .filter(|(t, r)| {
+            r.bottom() <= divider
+                && (BAR_CONTROLS.contains(&t.as_str()) || t.parse::<u32>().is_ok())
+        })
+        .cloned()
+        .collect();
+    bar.sort_by(|(_, a), (_, b)| {
+        (a.top(), a.left())
+            .partial_cmp(&(b.top(), b.left()))
+            .unwrap()
+    });
+    bar
+}
+
+#[test]
+fn the_button_row_wraps_down_to_the_minimum() {
+    let mut rows = Vec::new();
+    for w in [64.0, 69.0, 70.0, 80.0, 100.0, 126.0, 127.0, 200.0] {
+        let h = pixel_seen(w);
+        let bar = bar_nodes(&h);
+        for label in BAR_CONTROLS {
+            assert!(
+                bar.iter().any(|(t, _)| t == label),
+                "{w}: {label} in the bar {bar:?}"
+            );
+        }
+        // Nada se sale de lo que se ve del timeline. A 64 la barra mide 49 (64 − 15: la caja,
+        // su aire a la derecha y el de la barra) y lo que no se parte y es más ancho se sale: el
+        // combo (59) a 64 y el stepper de la duración (64: el campo de "100ms" mide 34) hasta
+        // 69 (ver `KNOWN_GAPS` del barrido de anchos).
+        let outside: Vec<&str> = bar
+            .iter()
+            .filter(|(_, r)| r.left() < 0.0 || r.right() > w)
+            .map(|(t, _)| t.as_str())
+            .collect();
+        let expected: &[&str] = if w == 64.0 {
+            &["Normal", "Longer frame"]
+        } else if w == 69.0 {
+            &["Longer frame"]
+        } else {
+            &[]
+        };
+        assert_eq!(outside, expected, "{w}: {bar:?}");
+        // Los controles, en puntos enteros y sin encimarse: los botones de un grupo solo
+        // comparten la columna de su borde (se cruzan en 1 punto de ancho).
+        let controls: Vec<&(String, Rect)> = bar
+            .iter()
+            .filter(|(t, _)| BAR_CONTROLS.contains(&t.as_str()))
+            .collect();
+        for (t, r) in &controls {
+            let corners = [r.min.x, r.min.y, r.max.x, r.max.y];
+            assert!(
+                corners.iter().all(|v| *v == v.round()),
+                "{w}: {t:?} at {r:?}"
+            );
+        }
+        for (i, (a, ra)) in controls.iter().enumerate() {
+            for (b, rb) in &controls[i + 1..] {
+                let both = ra.intersect(*rb);
+                assert!(
+                    both.width() <= 1.0 || both.height() <= 1.0,
+                    "{w}: {a:?} {ra:?} and {b:?} {rb:?}"
+                );
+            }
+        }
+        let mut tops: Vec<f32> = controls.iter().map(|(_, r)| r.top()).collect();
+        tops.sort_by(f32::total_cmp);
+        tops.dedup();
+        rows.push((w, tops.len()));
+    }
+    let of = |w: f32| rows.iter().find(|(x, _)| *x == w).unwrap().1;
+    assert!(of(64.0) > of(127.0), "more rows when narrower: {rows:?}");
+}
+
+/// Con `w` a la vista y 4 frames en el primero: un clic en "Last frame" y uno en "Play". Devuelve
+/// el frame y si se reproduce, y el arnés.
+fn last_then_play(w: f32) -> (usize, bool, Harness) {
+    let mut h = pixel_seen(w);
+    for _ in 0..3 {
+        h.editor().duplicate_frame();
+    }
+    h.editor().set_frame(0);
+    h.frame(vec![]);
+    h.click("Last frame");
+    let frame = h.editor().frame;
+    h.click("Play");
+    let playing = h.editor().playing;
+    (frame, playing, h)
+}
+
+#[test]
+fn a_split_group_keeps_its_buttons_working() {
+    let wide = last_then_play(600.0);
+    assert_eq!((wide.0, wide.1), (3, true));
+    let (frame, playing, h) = last_then_play(64.0);
+    // A 64, Play y Last frame van en filas de abajo de las del primero del grupo.
+    let first = h.rect("First frame").top();
+    assert!(h.rect("Pause").top() > first, "Play went down a row");
+    assert!(
+        h.rect("Last frame").top() > first,
+        "Last frame went down a row"
+    );
+    assert_eq!((frame, playing), (wide.0, wide.1), "the same as at 600");
+}
+
+#[test]
+fn the_button_row_is_unchanged_where_it_fit() {
+    // Los rects (relativos a la hoja) de antes de partirse por botón, en una fila más la
+    // duración en la de abajo a 600 y en una sola fila al ancho del timeline en Essentials: su
+    // hoja de 37 a 937 (`essentials_at_1200_by_800`) sin la tira (26).
+    type Want = (&'static str, [f32; 4]);
+    let row: [Want; 19] = [
+        ("1", [334.0, 5.5, 355.0, 19.5]),
+        ("1", [356.0, 5.5, 377.0, 19.5]),
+        ("255", [444.0, 5.5, 472.0, 19.5]),
+        ("First frame", [6.0, 6.0, 31.0, 23.0]),
+        ("Previous frame", [30.0, 6.0, 55.0, 23.0]),
+        ("Play", [54.0, 6.0, 79.0, 23.0]),
+        ("Next frame", [78.0, 6.0, 103.0, 23.0]),
+        ("Last frame", [102.0, 6.0, 127.0, 23.0]),
+        ("New frame", [135.0, 6.0, 160.0, 23.0]),
+        ("Delete frame", [159.0, 6.0, 184.0, 23.0]),
+        ("New layer", [192.0, 6.0, 217.0, 23.0]),
+        ("Delete layer", [216.0, 6.0, 241.0, 23.0]),
+        ("New group", [240.0, 6.0, 265.0, 23.0]),
+        ("New tilemap layer", [264.0, 6.0, 289.0, 23.0]),
+        ("Onion skin", [297.0, 6.0, 322.0, 23.0]),
+        ("Opacity", [393.0, 6.0, 423.0, 22.0]),
+        ("Less opacity", [429.0, 6.0, 444.0, 22.0]),
+        ("More opacity", [472.0, 6.0, 487.0, 22.0]),
+        ("Normal", [491.0, 6.0, 550.0, 23.0]),
+    ];
+    let at_600: [Want; 3] = [
+        ("100", [42.0, 27.5, 57.0, 41.5]),
+        ("Shorter frame", [24.0, 28.0, 39.0, 44.0]),
+        ("Longer frame", [73.0, 28.0, 88.0, 44.0]),
+    ];
+    let at_essentials: [Want; 3] = [
+        ("100", [594.0, 5.5, 609.0, 19.5]),
+        ("Shorter frame", [576.0, 6.0, 591.0, 22.0]),
+        ("Longer frame", [625.0, 6.0, 640.0, 22.0]),
+    ];
+    for (w, duration) in [(600.0, at_600), (900.0 - 26.0, at_essentials)] {
+        let h = pixel_seen(w);
+        let want: Vec<(String, Rect)> = row
+            .iter()
+            .chain(&duration)
+            .map(|(t, [x0, y0, x1, y1])| {
+                let r = Rect::from_min_max(pos2(*x0, *y0), pos2(*x1, *y1));
+                (t.to_string(), r)
+            })
+            .collect();
+        let mut want = want;
+        want.sort_by(|(_, a), (_, b)| {
+            (a.top(), a.left())
+                .partial_cmp(&(b.top(), b.left()))
+                .unwrap()
+        });
+        assert_eq!(bar_nodes(&h), want, "at {w}");
+    }
 }

@@ -14,6 +14,9 @@ use crate::panel_registry::PanelId;
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
 pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
 
+/// La ventana del timeline de la demo `timeline-narrow` (ver [`Workspace::demo`]).
+const TIMELINE_NARROW_DEMO: egui::Vec2 = egui::vec2(96.0, 420.0);
+
 /// Dónde estaba un panel cuando se ocultó (el timeline o el Preview, ver
 /// [`Workspace::sync_panel`]): ahí vuelve.
 #[derive(Clone, Debug)]
@@ -654,8 +657,9 @@ impl Workspace {
     /// en la tira del lado más cercano: la de la derecha), `tools-float` (la toolbar flotando),
     /// `timeline-right` (el timeline a la derecha del lienzo), `preview-docked` (el Preview
     /// acoplado debajo de Color; se ve con `view.preview`), `left-strip` (la toolbar y Groom en la
-    /// tira de la izquierda) o `groom-below` (Groom debajo del lienzo: la tira de la derecha, solo
-    /// junto a él). `None` si no es ninguno de esos.
+    /// tira de la izquierda), `groom-below` (Groom debajo del lienzo: la tira de la derecha, solo
+    /// junto a él) o `timeline-narrow` (el timeline flotando, angosto). `None` si no es ninguno de
+    /// esos.
     pub(crate) fn demo(name: &str) -> Option<Workspace> {
         let mut w = Workspace::essentials();
         let (surface, node) = w.leaf_of(PanelId::Color)?;
@@ -677,6 +681,14 @@ impl Workspace {
                 DockTarget::Split(surface, node, Split::Below),
             ),
             "float" => w.float(PanelId::Lumen, egui::pos2(320.0, 120.0)),
+            // El timeline flotando angosto (su fila de botones partida por botón) y alto.
+            "timeline-narrow" => {
+                w.float(PanelId::Timeline, egui::pos2(560.0, 90.0));
+                let surface = w.state.find_tab(&PanelId::Timeline)?.surface;
+                w.state
+                    .get_window_state_mut(surface)?
+                    .set_size(TIMELINE_NARROW_DEMO);
+            }
             "left-strip" => {
                 w.to_strip_at(PanelId::Tools, Edge::Left);
                 w.to_strip_at(PanelId::Groom, Edge::Left);
@@ -1655,6 +1667,8 @@ mod tests {
         assert_ne!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
         let w = Workspace::demo("float").unwrap();
         assert!(w.floating(PanelId::Lumen));
+        let w = Workspace::demo("timeline-narrow").unwrap();
+        assert!(w.floating(PanelId::Timeline));
         assert!(Workspace::demo("nope").is_none());
     }
 
