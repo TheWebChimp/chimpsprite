@@ -121,6 +121,7 @@ impl ChimpApp {
         if !self.panels_drawn.contains(&id) {
             self.panels_drawn.push(id);
         }
+        debug_assert!(id != PanelId::Canvas, "el lienzo se dibuja con canvas_area");
         // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la instancia.
         if id == PanelId::Color {
             return self.draw_color(ui, panel.modal);
@@ -193,6 +194,9 @@ impl ChimpApp {
             }
             // Color maneja el modal adentro: lo dibuja `draw_panel`, sin pasar por aquí.
             PanelId::Color => unreachable!("Color se dibuja con draw_color"),
+            // El lienzo (con lo que todavía va en su hoja) lo dibuja el workspace con
+            // `ChimpApp::canvas_area`: devuelve más que una acción.
+            PanelId::Canvas => unreachable!("el lienzo se dibuja con canvas_area"),
             PanelId::Timeline => {
                 timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin);
                 std::mem::take(&mut self.doc.timeline.new_tilemap)

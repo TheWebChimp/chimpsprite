@@ -49,6 +49,8 @@ struct LayoutHarness {
     repaint_delay: std::time::Duration,
     /// Si la ventana tiene el foco.
     focused: bool,
+    /// El cursor que pidió egui en el último frame.
+    cursor: egui::CursorIcon,
 }
 
 impl LayoutHarness {
@@ -108,6 +110,7 @@ impl LayoutHarness {
             size,
             repaint_delay: std::time::Duration::MAX,
             focused: true,
+            cursor: egui::CursorIcon::Default,
         };
         for _ in 0..3 {
             h.frame();
@@ -150,6 +153,7 @@ impl LayoutHarness {
             .get(&egui::ViewportId::ROOT)
             .map_or(std::time::Duration::MAX, |v| v.repaint_delay);
         self.canvas = canvas;
+        self.cursor = output.platform_output.cursor_icon;
         self.shapes = std::mem::take(&mut output.shapes);
         self.textures.clear();
         self.texts.clear();
@@ -312,7 +316,18 @@ impl LayoutHarness {
     }
 
     /// Rect exterior del panel `id` (con su margen y la línea que lo separa del resto).
+    ///
+    /// Fase D: la columna derecha (`"palette"`) ya no es un `egui::Panel` sino el lado derecho del
+    /// lienzo en el árbol del workspace; su rect equivalente (con la línea que la separa del
+    /// lienzo, que es su divisor) es `Workspace::column_rect`, el mismo que tenía el panel.
     fn panel(&self, id: &str) -> Rect {
+        if id == "palette" {
+            return self
+                .app
+                .workspace
+                .column_rect()
+                .unwrap_or_else(|| panic!("no right column"));
+        }
         PanelState::load(&self.ctx, egui::Id::new(id))
             .unwrap_or_else(|| panic!("no panel {id:?}"))
             .outer_rect
@@ -11375,6 +11390,30 @@ fn with_essentials_the_right_panel_and_the_color_controls_stay_where_they_were()
     }
 }
 
+#[test]
+fn with_essentials_the_canvas_and_the_color_panel_are_where_they_were() {
+    // Fase D: el árbol abarca toda el área central, con el lienzo como hoja. Con Essentials, lo
+    // mismo que antes (1200×800, Pixel UI): el lienzo (sus reglas y su caja), la tira y la columna.
+    let h = LayoutHarness::new(pixel_ui(), true);
+    assert_eq!(
+        h.canvas,
+        Some(Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0))),
+        "the canvas rect"
+    );
+    assert_eq!(
+        h.panel("dock"),
+        Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
+    );
+    assert_eq!(
+        h.panel("timeline"),
+        Rect::from_min_max(pos2(37.0, 590.0), pos2(911.0, 780.0))
+    );
+    assert_eq!(
+        h.panel("palette"),
+        Rect::from_min_max(pos2(937.0, 63.0), pos2(1200.0, 780.0))
+    );
+}
+
 /// Library acoplado junto a Color (como `CHIMPSPRITE_DEMO_WORKSPACE=library-tab`).
 fn library_beside_color() -> LayoutHarness {
     use crate::panel_registry::PanelId;
@@ -11848,14 +11887,19 @@ fn reset_workspace_goes_back_to_essentials_in_one_step() {
 }
 
 #[test]
-fn the_right_columns_resize_handle_has_the_id_the_width_preference_reads() {
-    let h = LayoutHarness::new(pixel_ui(), true);
-    let id = egui::Id::new("palette").with("__resize");
-    assert!(
-        h.ctx.read_response(id).is_some(),
-        "egui's private `resize_widget_id` (the panel id `.with(\"__resize\")`) changed: \
-         update `resizing` in `ChimpApp::editor_panels` (the column's width preference)"
-    );
+fn the_right_columns_resize_handle_is_the_divider_on_its_edge() {
+    // Fase D: el borde de la columna ya no es el asa de un `egui::Panel` (con su id privado
+    // `"palette".with("__resize")`) sino el divisor de egui_dock entre el lienzo y la columna; la
+    // preferencia de ancho sale de lo que egui_dock le cambia a su fracción (sin ids internos).
+    // Lo equivalente: en la línea del borde, el cursor de redimensionar a lo ancho.
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let column = h.panel("palette");
+    h.frame_with(vec![Event::PointerMoved(pos2(
+        column.left() + 1.0,
+        column.center().y,
+    ))]);
+    h.frame();
+    assert_eq!(h.cursor, egui::CursorIcon::ResizeHorizontal);
 }
 
 // --- Fase C: arreglos de la revisión final ---
@@ -12028,8 +12072,11 @@ fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
         h.frame();
         h.frame();
         let w = &h.app.workspace;
+        // Fase D: el lienzo también está en el árbol (una vez).
         for &id in crate::panel_registry::PanelId::ALL {
-            let expected = usize::from(PanelId::DOCK.contains(&id) || id == PanelId::Color);
+            let expected = usize::from(
+                PanelId::DOCK.contains(&id) || matches!(id, PanelId::Color | PanelId::Canvas),
+            );
             assert_eq!(w.places(id), expected, "canvas {to_canvas}: {id:?}");
         }
         if to_canvas {
@@ -12051,14 +12098,151 @@ fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
 #[test]
 fn with_color_floating_the_column_does_not_keep_colors_minimum() {
     use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app.workspace.float(PanelId::Color, pos2(320.0, 120.0));
     h.frame();
     h.frame();
     assert!(h.app.workspace.floating(PanelId::Color));
-    // La columna vacía se puede angostar más que el mínimo de Color (que está en su ventana).
+    // Fase D: la columna es el lado derecho del lienzo; vacía, no hay columna (el lienzo llega a
+    // la orilla) en lugar de una columna vacía que se angostaba más que el mínimo de Color.
+    assert_eq!(h.app.workspace.column_rect(), None);
+    let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    assert_eq!(canvas.right(), h.screen().right());
+    // Con Library acoplado (su mínimo, más angosto que el ancho de la columna), la columna se
+    // angosta hasta él: el mínimo de Color (en su ventana) no cuenta.
+    h.app.workspace.dock(PanelId::Library, DockTarget::Focused);
+    h.frame();
+    h.frame();
     let panel = h.panel("palette");
     let edge = pos2(panel.left(), panel.center().y);
-    drag(&mut h, edge, edge + vec2(150.0, 0.0));
-    assert_eq!(h.panel("palette").width(), panel.width() - 150.0);
+    drag(&mut h, edge, edge + vec2(60.0, 0.0));
+    assert_eq!(h.panel("palette").width(), panel.width() - 60.0);
+}
+
+// --- Fase D, tarea 2: el lienzo como hoja protegida ---
+
+/// Arrastra con egui_dock lo que está en `from` hasta `to` (como una mano: varias movidas y un rato
+/// quieto al final, más que `max_preference_time`) y lo suelta. Devuelve si en algún frame quedó
+/// un marcador sin cambiar por su pieza.
+fn dock_drag(h: &mut LayoutHarness, from: Pos2, to: Pos2) -> bool {
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    let mut marker = false;
+    for t in [0.1, 0.3, 0.5, 0.7, 0.9].into_iter().chain([1.0; 8]) {
+        h.frame_with(vec![Event::PointerMoved(from + (to - from) * t)]);
+        marker |= h
+            .shapes
+            .iter()
+            .any(|c| crate::workspace::has_marker(&c.shape));
+    }
+    h.frame_with(vec![press(to, false)]);
+    h.frame();
+    h.frame();
+    marker
+}
+
+#[test]
+fn a_tab_dropped_in_the_middle_of_the_canvas_is_split_beside_it_on_that_side() {
+    use crate::panel_registry::PanelId;
+    // Library en el grupo de Color (con barra de pestañas); su pestaña al centro del lienzo, un
+    // poco a la izquierda: egui_dock la mete "como pestaña" del lienzo y el workspace la parte a
+    // su lado izquierdo (el cuadrante del soltado), el mismo frame.
+    let mut h = library_beside_color();
+    let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    let from = h.button("Library").center();
+    let to = canvas.center() - vec2(canvas.width() * 0.05, 0.0);
+    assert!(
+        !dock_drag(&mut h, from, to),
+        "every marker became a skin piece"
+    );
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Library));
+    assert_eq!(w.places(PanelId::Canvas), 1);
+    assert_ne!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Canvas));
+    assert_ne!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+    let library = w.leaf_rect(PanelId::Library).unwrap();
+    let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+    assert!(
+        library.right() <= canvas.left(),
+        "{library:?} left of {canvas:?}"
+    );
+    // De su ancho de fábrica (en puntos), no de la mitad del lienzo.
+    assert!(library.width() < canvas.width(), "{library:?} {canvas:?}");
+    // Color sigue en la columna, del mismo ancho.
+    assert_eq!(h.panel("palette").width(), 263.0);
+}
+
+#[test]
+fn the_canvas_can_not_be_dragged_from_its_grab_strip() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    let column = h.panel("palette");
+    // En su franja de arriba no hay mano (no se agarra) ni se resalta.
+    let strip = pos2(canvas.center().x, canvas.top() + 1.0);
+    h.frame_with(vec![Event::PointerMoved(strip)]);
+    h.frame();
+    assert_ne!(h.cursor, egui::CursorIcon::Grab);
+    // Arrastrarla hasta la columna no lo mueve: egui_dock nunca lo ve arrastrado.
+    assert!(!dock_drag(&mut h, strip, column.center()));
+    let w = &h.app.workspace;
+    assert_eq!(w.places(PanelId::Canvas), 1);
+    assert!(w.docked(PanelId::Canvas) && !w.floating(PanelId::Canvas));
+    assert_eq!(w.leaf_rect(PanelId::Canvas), Some(canvas));
+    assert_eq!(h.panel("palette"), column);
+}
+
+#[test]
+fn a_strip_icon_dropped_on_the_canvas_edge_docks_beside_it_at_its_reference_width() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    let from = h.button("Groom").center();
+    // La franja izquierda del lienzo (su cuarto de la izquierda).
+    let to = pos2(canvas.left() + 20.0, canvas.center().y);
+    drag_in_steps(&mut h, from, to);
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Groom));
+    let groom = w.leaf_rect(PanelId::Groom).unwrap();
+    let after = w.leaf_rect(PanelId::Canvas).unwrap();
+    assert!(groom.right() <= after.left(), "{groom:?} {after:?}");
+    assert_eq!(groom.left(), canvas.left());
+    // La columna derecha no se movió: el lienzo absorbió a Groom.
+    assert_eq!(h.panel("palette").width(), 263.0);
+    assert_eq!(after.right(), canvas.right());
+}
+
+#[test]
+fn shrinking_the_window_and_growing_it_back_keeps_the_sides_points() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Left));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let groom = h.app.workspace.leaf_rect(PanelId::Groom).unwrap().width();
+    let column = h.panel("palette").width();
+    // Más angosta de lo que caben los dos lados con el lienzo: algo cede; al volver, nada perdido.
+    for size in [vec2(700.0, 800.0), vec2(1200.0, 800.0)] {
+        h.size = size;
+        for _ in 0..4 {
+            h.frame();
+        }
+    }
+    assert_eq!(
+        h.app.workspace.leaf_rect(PanelId::Groom).unwrap().width(),
+        groom
+    );
+    assert_eq!(h.panel("palette").width(), column);
 }

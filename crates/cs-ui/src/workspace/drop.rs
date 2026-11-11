@@ -28,42 +28,42 @@ pub(crate) enum DropTarget {
 const EDGE_ZONE: f32 = 0.25;
 
 /// Dónde cae un panel soltado con el puntero en `pointer`, con los rects de los grupos del frame
-/// pasado: sobre una ventana flotante, en su grupo; sobre la columna acoplada (`dock_rect`), en
-/// el grupo bajo el puntero (o el más cercano, si cae en un divisor); en el centro de un grupo,
-/// como pestaña, y en la franja de un borde, partiéndolo. En cualquier otro lado, flotando.
-pub(crate) fn drop_target(w: &Workspace, pointer: egui::Pos2, dock_rect: egui::Rect) -> DropTarget {
-    let leaves: Vec<(NodePath, egui::Rect)> = w
+/// pasado: sobre una ventana flotante, en su grupo; sobre el área del árbol (la superficie
+/// principal), en el grupo bajo el puntero (o el más cercano, si cae en un divisor); en el centro
+/// de un grupo, como pestaña, y en la franja de un borde, partiéndolo. El lienzo no recibe
+/// pestañas: en la franja de un borde se parte a su lado y en su centro el panel flota. Fuera del
+/// árbol, también flotando.
+pub(crate) fn drop_target(w: &Workspace, pointer: egui::Pos2) -> DropTarget {
+    let leaves: Vec<(NodePath, egui::Rect, bool)> = w
         .state
         .iter_leaves()
         .filter(|(_, leaf)| !leaf.tabs.is_empty() && leaf.rect.is_positive())
-        .map(|(path, leaf)| (path, leaf.rect))
+        .map(|(path, leaf)| (path, leaf.rect, leaf.tabs.contains(&PanelId::Canvas)))
         .collect();
-    // Las ventanas van encima de la columna y del lienzo.
+    // Las ventanas van encima del árbol.
     let window = leaves
         .iter()
-        .find(|(path, rect)| !path.surface.is_main() && rect.contains(pointer));
+        .find(|(path, rect, _)| !path.surface.is_main() && rect.contains(pointer));
     let docked = || {
         leaves
             .iter()
-            .filter(|(path, _)| path.surface.is_main())
+            .filter(|(path, _, _)| path.surface.is_main())
             .min_by(|a, b| {
                 let d = |r: &egui::Rect| r.distance_sq_to_pos(pointer);
                 d(&a.1).total_cmp(&d(&b.1))
             })
     };
+    let area = w.root_rect(SurfaceIndex::main());
     let hit = match window {
         Some(hit) => Some(hit),
-        None if dock_rect.contains(pointer) => match docked() {
-            Some(hit) => Some(hit),
-            // La columna vacía (Color se fue a una ventana): a la superficie principal.
-            None => return DropTarget::Tab(SurfaceIndex::main(), NodeIndex::root()),
-        },
+        None if area.is_some_and(|a| a.contains(pointer)) => docked(),
         None => None,
     };
     match hit {
-        Some(&(path, rect)) => match edge_of(rect, pointer) {
-            Some(side) => DropTarget::Split(path.surface, path.node, side),
-            None => DropTarget::Tab(path.surface, path.node),
+        Some(&(path, rect, canvas)) => match (edge_of(rect, pointer), canvas) {
+            (Some(side), _) => DropTarget::Split(path.surface, path.node, side),
+            (None, false) => DropTarget::Tab(path.surface, path.node),
+            (None, true) => DropTarget::Float(pointer),
         },
         None => DropTarget::Float(pointer),
     }
@@ -177,15 +177,27 @@ impl Workspace {
     }
 }
 
+/// Dónde [`tab_drag_released`] recuerda el panel que egui_dock arrastra.
+fn tab_drag_id() -> egui::Id {
+    egui::Id::new("workspace_tab_drag")
+}
+
+/// El panel que egui_dock arrastraba en el frame anterior (por su pestaña o por su franja), si
+/// alguno: lo que [`tab_drag_released`] recordó.
+pub(super) fn dragged_tab(ctx: &egui::Context) -> Option<PanelId> {
+    ctx.data(|d| d.get_temp::<Option<PanelId>>(tab_drag_id()))
+        .flatten()
+}
+
 /// El panel que egui_dock arrastraba y dónde se soltó, el frame en que se suelta. Mientras se
 /// arrastra (por su pestaña o por la franja de un grupo sin barra), se recuerda cuál es: el frame
-/// de soltar egui_dock ya no lo dice.
+/// de soltar egui_dock ya no lo dice. El lienzo no cuenta (su arrastre se corta).
 pub(super) fn tab_drag_released(
     ctx: &egui::Context,
     state: &DockState<PanelId>,
     hits: &[skin::TabHit],
 ) -> Option<(PanelId, egui::Pos2)> {
-    let memory = egui::Id::new("workspace_tab_drag");
+    let memory = tab_drag_id();
     if ctx.input(|i| i.pointer.primary_released()) {
         let id = ctx.data_mut(|d| d.remove_temp::<Option<PanelId>>(memory))??;
         return Some((id, ctx.input(|i| i.pointer.latest_pos())?.round()));
@@ -199,7 +211,8 @@ pub(super) fn tab_drag_released(
                 .iter_leaves()
                 .find(|(path, _)| skin::hidden_strip_dragged(ctx, dock_id(), *path))
                 .and_then(|(_, leaf)| leaf.tabs.get(leaf.active.0).copied())
-        });
+        })
+        .filter(|&id| id != PanelId::Canvas);
     ctx.data_mut(|d| d.insert_temp(memory, dragged));
     None
 }
@@ -210,22 +223,42 @@ mod tests {
 
     use super::*;
 
+    /// Lo acomoda como `show` en el área de 0..`right` × 50..650 (sin divisores), con la columna
+    /// derecha (Color y lo que tenga) de `column` puntos: la de las medidas de la fase C.
+    fn laid_out(w: &mut Workspace, right: f32, column: f32) {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 50.0), egui::pos2(right, 650.0));
+        let mut sides = super::super::fit::SidePoints::default();
+        sides.column = Some(column);
+        super::super::fit::pin_sides(&mut w.state, area, &mut sides);
+        w.layout_for_test(area); // da a las hojas su rect como lo haría show()
+    }
+
     #[test]
     fn the_drop_target_is_a_tab_in_the_middle_a_split_at_the_edge_and_a_window_outside() {
+        // El lienzo de 0 a 1000; Color, de 1000 a 1220.
         let mut w = Workspace::essentials();
-        let dock_rect =
-            egui::Rect::from_min_size(egui::pos2(1000.0, 50.0), egui::vec2(220.0, 600.0));
-        w.layout_for_test(dock_rect); // da a las hojas su rect como lo haría show()
+        laid_out(&mut w, 1220.0, 220.0);
         let (s, n) = w.leaf_of(PanelId::Color).unwrap();
         assert!(
-            matches!(drop_target(&w, egui::pos2(1110.0, 350.0), dock_rect), DropTarget::Tab(ss, nn) if (ss, nn) == (s, n))
+            matches!(drop_target(&w, egui::pos2(1110.0, 350.0)), DropTarget::Tab(ss, nn) if (ss, nn) == (s, n))
         );
         assert!(matches!(
-            drop_target(&w, egui::pos2(1110.0, 640.0), dock_rect),
+            drop_target(&w, egui::pos2(1110.0, 640.0)),
             DropTarget::Split(_, _, egui_dock::Split::Below)
         ));
+        // En el centro del lienzo: flotando; en la franja de su borde, a su lado.
         assert!(matches!(
-            drop_target(&w, egui::pos2(400.0, 300.0), dock_rect),
+            drop_target(&w, egui::pos2(400.0, 300.0)),
+            DropTarget::Float(_)
+        ));
+        let (cs, cn) = w.leaf_of(PanelId::Canvas).unwrap();
+        assert_eq!(
+            drop_target(&w, egui::pos2(100.0, 300.0)),
+            DropTarget::Split(cs, cn, Split::Left)
+        );
+        // Fuera del árbol (más abajo, en la barra de estado): flotando.
+        assert!(matches!(
+            drop_target(&w, egui::pos2(1110.0, 700.0)),
             DropTarget::Float(_)
         ));
     }
@@ -235,13 +268,11 @@ mod tests {
         let mut w = Workspace::essentials();
         let (s, color) = w.leaf_of(PanelId::Color).unwrap();
         w.dock(PanelId::Groom, DockTarget::Split(s, color, Split::Below));
-        let dock_rect =
-            egui::Rect::from_min_size(egui::pos2(1000.0, 50.0), egui::vec2(200.0, 600.0));
-        w.layout_for_test(dock_rect);
-        // Color arriba (50..350), Groom abajo (350..650).
+        laid_out(&mut w, 1200.0, 200.0);
+        // Color arriba (50..350), Groom abajo (350..650), de 1000 a 1200.
         let groom = w.leaf_of(PanelId::Groom).unwrap();
         let color = w.leaf_of(PanelId::Color).unwrap();
-        let at = |x, y| drop_target(&w, egui::pos2(x, y), dock_rect);
+        let at = |x, y| drop_target(&w, egui::pos2(x, y));
         assert_eq!(at(1100.0, 500.0), DropTarget::Tab(groom.0, groom.1));
         assert_eq!(at(1100.0, 200.0), DropTarget::Tab(color.0, color.1));
         assert_eq!(

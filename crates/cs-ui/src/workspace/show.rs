@@ -1,27 +1,33 @@
-//! El workspace en pantalla: [`show`] arma el `DockArea` con la piel, hospeda cada panel
-//! ([`Viewer`]) y pega lo que va encima de egui_dock (las pestañas y la × del kit, la franja de
-//! agarre y el botón « de cada grupo), y le reporta al anfitrión su ancho ([`host_width`]).
+//! El workspace en pantalla: [`show`] arma el `DockArea` con la piel en toda el área central,
+//! hospeda cada panel ([`Viewer`]; el lienzo, con `ChimpApp::canvas_area`) y pega lo que va encima
+//! de egui_dock (las pestañas y la × del kit, la franja de agarre y el botón « de cada grupo).
+//! También lleva el ancho de la columna derecha: la preferencia del usuario
+//! (`view.palette_width`), el que tomó sola ([`host_width`]) y el arrastre de su divisor.
 
 use std::collections::HashMap;
 
 use eframe::egui;
 use egui_dock::{DockArea, DockState, TabViewer};
 
-use super::drop::tab_drag_released;
-use super::fit::{chrome, fit_splits, fit_windows, minima};
+use super::drop::{dragged_tab, tab_drag_released};
+use super::fit::{
+    block_canvas_drag, chrome, fit_splits, fit_windows, fractions, half, minima, pin_sides,
+    quadrant, record_sides, tidy_canvas,
+};
 use super::{NodeIndex, SurfaceIndex, Workspace, dock_id, skin};
-use crate::ChimpApp;
 use crate::app_panels::{PanelAction, PanelCtx};
 use crate::panel_registry::{Body, PanelId};
 use crate::skin::Skin;
+use crate::{CanvasArea, ChimpApp};
 use crate::{dock, kit, pixel_ui};
 
 /// Lo que dice la pestaña del panel 3D (acoplado o flotando) en la pestaña de un modelo, donde lo
 /// hospeda su panel fijo (`"model_panel"`).
 pub(crate) const MODEL_ELSEWHERE: &str = "Shown in the 3D panel";
 
-/// Lo que egui_dock ve de los paneles: los dibuja con [`ChimpApp::draw_panel`] y junta lo que
-/// piden (se aplica después del `DockArea`, con la app entera).
+/// Lo que egui_dock ve de los paneles: los dibuja con [`ChimpApp::draw_panel`] (el lienzo, con
+/// `ChimpApp::canvas_area`) y junta lo que piden (se aplica después del `DockArea`, con la app
+/// entera).
 struct Viewer<'a> {
     app: &'a mut ChimpApp,
     modal: bool,
@@ -32,6 +38,15 @@ struct Viewer<'a> {
     /// El margen de cada panel en su grupo: el del panel derecho de hoy para Color, el de los
     /// paneles del dock para los demás.
     color_margin: egui::Margin,
+    /// Los paneles pegados al divisor izquierdo de la columna derecha y el ancho del divisor: su
+    /// margen izquierdo cuenta desde la línea, como en el panel derecho de antes (la línea era su
+    /// borde, por dentro del panel).
+    beside: Vec<PanelId>,
+    sep: f32,
+    /// La tira de íconos (va dentro de la hoja del lienzo; ver `ChimpApp::canvas_area`).
+    strip: Vec<PanelId>,
+    /// Lo que dejó la hoja del lienzo, si se dibujó.
+    canvas: Option<CanvasArea>,
     actions: Vec<PanelAction>,
     hits: Vec<skin::TabHit>,
     /// Los que egui_dock cerró (sin Pixel UI, con su ×): van a la tira.
@@ -71,6 +86,13 @@ impl TabViewer for Viewer<'_> {
         let spacing = ui.spacing().item_spacing;
         ui.set_style(self.style.clone());
         ui.spacing_mut().item_spacing = spacing;
+        // El lienzo (y lo que todavía va en su hoja): lo de antes del `CentralPanel`.
+        if id == PanelId::Canvas {
+            let app = &mut *self.app;
+            let area = app.canvas_area(ui, self.modal, &self.strip, &mut self.actions);
+            self.canvas = Some(area);
+            return;
+        }
         // Una instancia por panel por frame (su estado y los ids de `forms` son globales): en la
         // pestaña de un modelo, al 3D lo hospeda su panel fijo; aquí, solo dónde está.
         if id == PanelId::Model && self.app.doc.editor.model_edit_on() {
@@ -131,6 +153,11 @@ impl TabViewer for Viewer<'_> {
         tab.spec().closable
     }
 
+    /// El lienzo no flota (egui_dock tampoco lo deja arrastrar: ver `fit::block_canvas_drag`).
+    fn allowed_in_windows(&self, tab: &mut PanelId) -> bool {
+        *tab != PanelId::Canvas
+    }
+
     fn tab_style_override(
         &self,
         tab: &PanelId,
@@ -140,11 +167,16 @@ impl TabViewer for Viewer<'_> {
         if self.skinned {
             style.minimum_width = self.widths.get(tab).copied();
         }
-        style.tab_body.inner_margin = if *tab == PanelId::Color {
-            self.color_margin
-        } else {
-            egui::Margin::same(dock::FLYOUT_MARGIN)
+        let mut margin = match tab {
+            // El lienzo, de borde a borde (sus márgenes son los del `CentralPanel` de antes).
+            PanelId::Canvas => egui::Margin::ZERO,
+            PanelId::Color => self.color_margin,
+            _ => egui::Margin::same(dock::FLYOUT_MARGIN),
         };
+        if self.beside.contains(tab) {
+            margin.left = (f32::from(margin.left) - self.sep).max(0.0) as i8;
+        }
+        style.tab_body.inner_margin = margin;
         Some(style)
     }
 
@@ -180,31 +212,37 @@ struct Extent {
     delta: f32,
 }
 
-/// El ancho que el workspace le reporta a su anfitrión (desde su borde izquierdo), un
-/// `egui::Panel` que se ajusta a lo que ocupa su contenido: de ese ajuste sale el ancho de
+/// El ancho que toma sola la columna derecha (desde su línea): como el panel derecho de antes con
+/// Color adentro, que se ajustaba a lo que ocupaba su contenido; de ese ajuste sale el ancho de
 /// fábrica de la columna en los primeros frames, cuando la escala y la fuente de Pixel UI todavía
-/// cambian. Como el panel derecho de antes con Color adentro (que en esos frames quedaba igual en
-/// un ancho entero): el ancho en puntos enteros del `DockArea` (`dock_width`) más lo que se pase
-/// el contenido de un panel acoplado; si el rect del anfitrión no era de puntos enteros
-/// (`whole` falso, un frame de transición), redondeado hacia arriba. Si al contenido le sobra
-/// lugar no encoge: un panel angosto no achica la columna.
-fn host_width(dock_width: f32, whole: bool, docked: impl Iterator<Item = Extent>) -> f32 {
-    let width = dock_width + docked.map(|e| e.delta).fold(0.0, f32::max);
+/// cambian. El ancho de la columna (`width`) más lo que se pase el contenido de un panel de la
+/// columna; si no era de puntos enteros (`whole` falso, un frame de transición), redondeado hacia
+/// arriba. Si al contenido le sobra lugar no encoge: un panel angosto no achica la columna.
+fn host_width(width: f32, whole: bool, docked: impl Iterator<Item = Extent>) -> f32 {
+    let width = width + docked.map(|e| e.delta).fold(0.0, f32::max);
     if whole { width } else { width.ceil() }
 }
 
-/// El workspace en `ui`: el `DockArea` con la piel (con Pixel UI) y cada panel con
-/// [`ChimpApp::draw_panel`]. Lo que piden los paneles se aplica al final, con la app entera;
-/// cerrar una pestaña la regresa a la tira. Con un diálogo modal (`modal`), los paneles quedan
-/// apagados y las pestañas no se arrastran.
+/// El workspace en `ui` (toda el área que le queda: el lienzo y lo que lo rodea): el `DockArea`
+/// con la piel (con Pixel UI) y cada panel con [`ChimpApp::draw_panel`]. Lo que piden los paneles
+/// se aplica al final, con la app entera; cerrar una pestaña la regresa a la tira. Con un diálogo
+/// modal (`modal`), los paneles quedan apagados y las pestañas no se arrastran. Devuelve lo que
+/// dejó la hoja del lienzo (su rect y lo de la tira), si se dibujó.
 ///
 /// Mientras los paneles se dibujan, `app.workspace` es un acomodo de relleno (el de verdad lo
 /// tiene `show`): cambiarlo desde un panel no serviría, por eso sus operaciones lo revisan en
 /// debug. Lo que haya que cambiar del acomodo se pide como acción y se hace después.
-pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
+///
+/// La columna derecha (el lado derecho del lienzo, ver [`Workspace::column`]) va del ancho
+/// elegido (`view.palette_width`, que solo cambia al arrastrar su divisor) o, sin uno, del que
+/// tomó sola (`palette_natural_width`); nunca menos que su mínimo (sus paneles en su mínimo).
+pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option<CanvasArea> {
+    let ctx = ui.ctx().clone();
     let mut workspace = std::mem::replace(&mut app.workspace, Workspace::placeholder());
     workspace.tidy();
-    workspace.place_restored_windows(ui.ctx());
+    tidy_canvas(&mut workspace.state, None);
+    workspace.place_restored_windows(&ctx);
+    workspace.place_new_windows();
     workspace.refresh_tab_bars();
     let shared_skin = app.pixel.shared_skin();
     let skin: Option<&Skin> = shared_skin.as_deref();
@@ -219,26 +257,63 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
         Some(skin) => skin::dock_style(ui.style(), skin),
         None => skin::plain_style(ui.style()),
     };
+    let (sep, bar) = chrome(ui, skin);
+    let m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
+    // La columna derecha: del ancho elegido (o el que tomó sola), nunca menos que su mínimo (con su
+    // divisor, que es la línea que el panel derecho tenía de borde). Se pide en puntos al centro
+    // del divisor.
+    let column_min = workspace.column_min(&m, sep, bar) + sep;
+    let preferred = app
+        .view
+        .palette_width
+        .or(app.palette_natural_width)
+        .unwrap_or(crate::color_panel::DEFAULT_WIDTH);
+    let column_width = preferred.max(column_min).max(1.0);
+    workspace.sides.sep = sep;
+    workspace.sides.column = Some(column_width - sep / 2.0);
+    let area = ui.available_rect_before_wrap();
+    // El `DockArea`, en puntos enteros (egui_dock solo ajusta a píxel físico), en todo el área.
+    let dock_rect =
+        egui::Rect::from_min_max(area.min.ceil(), area.max.floor().max(area.min.ceil()));
+    // Nada de lo que se arrastra es el lienzo; sus lados, en puntos.
+    block_canvas_drag(&ctx, dock_id(), &workspace.state);
+    pin_sides(&mut workspace.state, dock_rect, &mut workspace.sides);
+    let before = fractions(&workspace.state);
+    let was_floating: Vec<PanelId> = workspace
+        .state
+        .iter_all_tabs()
+        .filter(|(path, _)| !path.surface.is_main())
+        .map(|(_, p)| *p)
+        .collect();
+    // Mientras se arrastra una pestaña sobre el lienzo: egui_dock pinta el lienzo entero ("como
+    // pestaña"), pero lo que pasa es que se parte al lado (`tidy_canvas`): se pinta esa mitad.
+    let pointer = ctx.input(|i| i.pointer.latest_pos());
+    let canvas_drop = match (dragged_tab(&ctx), pointer) {
+        (Some(_), Some(p)) => workspace
+            .state
+            .find_tab(&PanelId::Canvas)
+            .and_then(|path| workspace.state.leaf(path.node_path()).ok())
+            .map(|leaf| leaf.rect)
+            .filter(|r| r.contains(p))
+            .map(|r| (r, half(r, quadrant(r, p)))),
+        _ => None,
+    };
     let mut viewer = Viewer {
         app,
         modal,
         skinned: skin.is_some(),
         widths: &widths,
         color_margin: egui::Frame::side_top_panel(ui.style()).inner_margin,
+        beside: workspace.beside_column(),
+        sep,
+        strip: workspace.strip.clone(),
+        canvas: None,
         actions: Vec::new(),
         hits: Vec::new(),
         closed: Vec::new(),
         extents: Vec::new(),
         style: ui.style().clone(),
     };
-    let area = ui.available_rect_before_wrap();
-    // El `DockArea`, de un ancho de puntos enteros (egui_dock solo ajusta a píxel físico) y en un
-    // `Ui` aparte (ocupa todo su rect): al anfitrión se le reporta el ancho de lo acoplado (ver
-    // `host_width`).
-    let dock_rect = egui::Rect::from_x_y_ranges(
-        area.left().ceil()..=area.right().floor().max(area.left().ceil()),
-        area.y_range(),
-    );
     {
         let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(dock_rect));
         // El marco de las ventanas flotantes (solo lo leen los marcos).
@@ -262,21 +337,38 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
             .draggable_tabs(!modal)
             .show_inside(ui, &mut viewer);
     }
+    ui.advance_cursor_after_rect(area);
     let Viewer {
         app,
         actions,
         hits,
         mut closed,
         extents,
+        canvas,
         ..
     } = viewer;
-    let docked = extents.into_iter().filter(|e| workspace.docked(e.id));
-    let whole = area.left() == dock_rect.left() && area.right() == dock_rect.right();
-    let width = host_width(dock_rect.width(), whole, docked);
-    ui.advance_cursor_after_rect(egui::Rect::from_min_size(
-        area.min,
-        egui::vec2(width, area.height()),
-    ));
+    // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
+    // El de la columna es su preferencia (sin bajar de su mínimo, como el panel de antes).
+    let dragged = record_sides(&workspace.state, &before, &mut workspace.sides);
+    let column = workspace.column_rect();
+    if let Some(points) = dragged {
+        // A 1/64 de punto: sin el ruido de ir de puntos a fracción y de vuelta (un arrastre de
+        // 40 puntos guarda 40, no 39.99997), y sin correr el divisor (ver `record_sides`).
+        let width = (points + sep / 2.0).max(column_min);
+        app.view.palette_width = Some((width * 64.0).round() / 64.0);
+    } else if app.view.palette_width.is_none()
+        && let Some(rect) = column
+    {
+        // Sin una elegida, la que toma sola (más lo que se pase Color, si está en ella); si es más
+        // que su mínimo, es suya (no la de un panel acoplado ancho).
+        let in_column = workspace.column_panels();
+        let docked = extents.into_iter().filter(|e| in_column.contains(&e.id));
+        let whole = rect.width() == rect.width().round();
+        let width = host_width(rect.width(), whole, docked);
+        if width > column_min + 1.0 {
+            app.palette_natural_width = Some(width);
+        }
+    }
     // El nombre de cada pestaña para los lectores de pantalla (el título es de 1 pt) y, con
     // Pixel UI, las del kit encima y su ×.
     let active: Vec<PanelId> = workspace
@@ -294,15 +386,24 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     if let Some(skin) = skin {
         skin::paint_tabs(ui, skin, &workspace.state, &hits, dock_id());
         closed.extend(close_marks(ui, &workspace.state, &hits, modal));
+        // La línea de arriba de cada divisor vertical que llega a la barra de opciones cruza su
+        // brillo (como los separadores de la barra y el borde del panel derecho de antes).
+        paint_crossings(ui, skin, &workspace.state, dock_rect, sep);
+    }
+    // La franja de agarre del lienzo no es para agarrarlo: sin la mano encima.
+    if let Some(path) = workspace.state.find_tab(&PanelId::Canvas)
+        && skin::hidden_strip_hovered(&ctx, dock_id(), path.node_path())
+    {
+        ctx.set_cursor_icon(egui::CursorIcon::Default);
     }
     // Dónde puede haber marcadores este frame: el DockArea y sus ventanas, fuera del cuerpo de los
     // grupos (ver `skin::Armed`).
     if let Some(skin) = &shared_skin {
         let mut armed = skin::Armed::new(skin.clone());
-        armed.areas.push(area);
+        armed.areas.push(dock_rect);
         for (s, _) in workspace.state.iter_surfaces_indexed() {
             if !s.is_main()
-                && let Some(rect) = ui.ctx().memory(|m| m.area_rect(skin::window_area_id(s)))
+                && let Some(rect) = ctx.memory(|m| m.area_rect(skin::window_area_id(s)))
             {
                 armed.areas.push(rect);
             }
@@ -313,44 +414,101 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
             .map(|(_, leaf)| leaf.viewport)
             .filter(|r| r.is_positive())
             .collect();
-        skin::arm(ui.ctx(), armed);
+        armed.canvas_drop = canvas_drop;
+        skin::arm(&ctx, armed);
     }
     for id in closed {
         workspace.to_strip(id);
     }
-    // Una pestaña (o un grupo sin barra) de egui_dock soltada fuera de la columna y de las
-    // ventanas: egui_dock no hace nada (solo suelta sobre sus grupos y su `DockArea` es la
-    // columna); aquí se pone a flotar donde se soltó, como un ícono de la tira sobre el lienzo.
-    let windows: Vec<egui::Rect> = workspace
-        .state
-        .iter_surfaces_indexed()
-        .filter(|(s, _)| !s.is_main())
-        .filter_map(|(s, _)| ui.ctx().memory(|m| m.area_rect(skin::window_area_id(s))))
-        .collect();
-    let outside = |p: egui::Pos2| !dock_rect.contains(p) && !windows.iter().any(|r| r.contains(p));
-    if let Some((id, at)) = tab_drag_released(ui.ctx(), &workspace.state, &hits)
-        && outside(at)
-    {
-        workspace.float(id, at);
+    let released = tab_drag_released(&ctx, &workspace.state, &hits);
+    // Lo que egui_dock soltó en el lienzo (como pestaña): al lado, del lado del cuadrante.
+    let mut changed = tidy_canvas(&mut workspace.state, released.map(|(_, at)| at));
+    if let Some((id, at)) = released {
+        // Una pestaña (o un grupo sin barra) de egui_dock soltada fuera del árbol y de las
+        // ventanas (en la barra de estado, la toolbar...): egui_dock no hace nada (solo suelta
+        // sobre sus grupos); aquí se pone a flotar donde se soltó, como un ícono de la tira.
+        let windows: Vec<egui::Rect> = workspace
+            .state
+            .iter_surfaces_indexed()
+            .filter(|(s, _)| !s.is_main())
+            .filter_map(|(s, _)| ctx.memory(|m| m.area_rect(skin::window_area_id(s))))
+            .collect();
+        let outside = !dock_rect.contains(at) && !windows.iter().any(|r| r.contains(at));
+        if id != PanelId::Canvas && outside {
+            workspace.float(id, at);
+        } else if workspace.floating(id) && !was_floating.contains(&id) {
+            // egui_dock lo puso a flotar (soltado en el anillo de "ventana nueva"): su ventana,
+            // donde se soltó.
+            workspace.placing.retain(|(p, _, _)| *p != id);
+            workspace
+                .placing
+                .push((id, at, super::fit::NEW_WINDOW_FRAMES));
+        }
     }
     if let Some((surface, node)) = collapse_buttons(ui, skin, &workspace, modal) {
         workspace.collapse_to_icons(surface, node);
     }
-    // Si un panel se soltó en otro grupo, la barra de algún grupo cambia: este frame ya se dibujó
-    // con la de antes, así que se descarta y se vuelve a dibujar (sin el parpadeo de un frame).
-    if workspace.refresh_tab_bars() {
-        ui.ctx().request_discard("tab bar visibility changed");
+    // Si un panel se soltó en otro grupo (o junto al lienzo), la barra de algún grupo cambia: este
+    // frame ya se dibujó con la de antes, así que se descarta y se vuelve a dibujar (sin el
+    // parpadeo de un frame).
+    changed |= workspace.refresh_tab_bars();
+    if changed {
+        ctx.request_discard("workspace layout changed");
     }
     // Cada split con sus lados en su mínimo, y a puntos enteros, para el frame siguiente.
-    let (sep, bar) = chrome(ui, skin);
-    let m = minima(ui, skin);
+    let m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
     fit_splits(&mut workspace.state, &m, sep, bar);
-    fit_windows(ui.ctx(), &mut workspace, &m, sep, bar);
-    skin::snap(ui.ctx(), &mut workspace.state);
-    skin::snap_windows(ui.ctx(), &mut workspace.state);
+    fit_windows(&ctx, &mut workspace, &m, sep, bar);
+    skin::snap(&ctx, &mut workspace.state);
+    skin::snap_windows(&ctx, &mut workspace.state);
     app.workspace = workspace;
     for action in actions {
-        app.apply_panel_action(ui.ctx(), action);
+        app.apply_panel_action(&ctx, action);
+    }
+    canvas
+}
+
+/// Los mínimos `m` con los de los paneles pegados al divisor izquierdo de la columna derecha
+/// (`beside`) un divisor (`sep`) más angostos: su margen izquierdo cuenta desde la línea, como en el
+/// panel derecho de antes (ver `Viewer::tab_style_override`), así que la columna mínima mide lo
+/// mismo que el panel mínimo de antes.
+fn beside_minima(mut m: super::fit::Minima, beside: &[PanelId], sep: f32) -> super::fit::Minima {
+    for id in beside {
+        if let Some(min) = m.get_mut(id) {
+            min.x = (min.x - sep).max(0.0);
+        }
+    }
+    m
+}
+
+/// La línea oscura de cada divisor vertical de la superficie principal que llega arriba del
+/// `DockArea` (`area`), un punto más arriba: cruza el brillo de la línea de la barra de opciones
+/// (como el borde del panel derecho de antes).
+fn paint_crossings(
+    ui: &egui::Ui,
+    skin: &Skin,
+    state: &DockState<PanelId>,
+    area: egui::Rect,
+    sep: f32,
+) {
+    let ppp = ui.ctx().pixels_per_point();
+    for node in state.main_surface().iter() {
+        let egui_dock::Node::Horizontal(split) = node else {
+            continue;
+        };
+        if split.rect.top() != area.top() || !split.rect.is_positive() {
+            continue;
+        }
+        // Donde la pinta egui_dock (`show_separator`): su borde izquierdo, a píxel físico.
+        let mid = split.rect.left() + split.rect.width() * split.fraction;
+        let left = ((mid - sep / 2.0) * ppp).round() / ppp;
+        let cross =
+            egui::Rect::from_min_size(egui::pos2(left, area.top() - 1.0), egui::vec2(1.0, 1.0));
+        ui.painter().add(egui::Shape::rect_filled(
+            eframe::emath::GuiRounding::round_to_pixels(cross, ppp),
+            0.0,
+            skin.colors().canvas,
+        ));
     }
 }
 

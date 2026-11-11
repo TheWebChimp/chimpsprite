@@ -259,7 +259,11 @@ pub fn show(
         DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
         // Los que no son botones del dock (no están en `PanelId::DOCK`) nunca llegan a la tira:
         // el botón « de un grupo deja a Color donde está (`Workspace::goes_to_strip`).
-        DockPanel::Tools | DockPanel::Color | DockPanel::Timeline | DockPanel::Preview => {}
+        DockPanel::Canvas
+        | DockPanel::Tools
+        | DockPanel::Color
+        | DockPanel::Timeline
+        | DockPanel::Preview => {}
     }
     out
 }

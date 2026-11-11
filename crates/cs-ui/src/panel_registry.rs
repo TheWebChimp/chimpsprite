@@ -26,13 +26,23 @@ pub(crate) enum Host {
     Bottom,
     /// Una ventanita flotante (el preview).
     Window,
+    /// El centro del workspace: la hoja protegida del árbol (el lienzo).
+    Center,
     /// Flotando junto a su botón del dock (su cuerpo lo dice `PanelSpec::body`).
     Flyout,
 }
 
+/// Lo más angosto que el workspace deja el lienzo cuando reparte un split que no alcanza (ver
+/// `workspace::fit`): la tira de íconos (que en la fase D todavía va dentro de su hoja) y un poco
+/// de lienzo.
+pub(crate) const CANVAS_MIN_WIDTH: f32 = 64.0;
+
 /// Los paneles de la app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PanelId {
+    /// El lienzo: la hoja protegida al centro del workspace (no se cierra, no se arrastra, no
+    /// recibe pestañas y existe siempre una vez, en la superficie principal).
+    Canvas,
     /// La barra de herramientas.
     Tools,
     /// El editor de color y la paleta.
@@ -89,6 +99,7 @@ impl PanelId {
     /// Todos los paneles.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const ALL: &[PanelId] = &[
+        PanelId::Canvas,
         PanelId::Tools,
         PanelId::Color,
         PanelId::Timeline,
@@ -106,6 +117,7 @@ impl PanelId {
     /// Todos los paneles (en la web no hay dafont).
     #[cfg(target_arch = "wasm32")]
     pub(crate) const ALL: &[PanelId] = &[
+        PanelId::Canvas,
         PanelId::Tools,
         PanelId::Color,
         PanelId::Timeline,
@@ -161,6 +173,18 @@ impl PanelId {
             min_height: 0.0,
         };
         match self {
+            PanelId::Canvas => PanelSpec {
+                key: "canvas",
+                title: "Canvas",
+                icon: "icon.canvas",
+                plain: "▦",
+                reference_width: CANVAS_MIN_WIDTH,
+                min_width: CANVAS_MIN_WIDTH,
+                closable: false,
+                host: Host::Center,
+                body: Body::Fixed,
+                min_height: 0.0,
+            },
             PanelId::Tools => PanelSpec {
                 key: "tools",
                 title: "Tools",
@@ -439,6 +463,9 @@ mod tests {
 
     #[test]
     fn every_panel_has_one_host_and_the_fixed_ones_are_where_they_are_today() {
+        assert!(matches!(PanelId::Canvas.spec().host, Host::Center));
+        assert!(!PanelId::Canvas.spec().closable);
+        assert_eq!(PanelId::Canvas.key(), "canvas");
         assert!(matches!(PanelId::Tools.spec().host, Host::Left));
         assert!(matches!(PanelId::Color.spec().host, Host::Right));
         assert!(matches!(PanelId::Timeline.spec().host, Host::Bottom));

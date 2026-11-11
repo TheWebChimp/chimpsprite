@@ -1441,8 +1441,7 @@ impl ChimpApp {
                 });
             });
         }
-        // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
-        // la línea de tiempo empieza a su derecha.
+        // La toolbar antes que el workspace: va a todo el alto, hasta la barra de estado.
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
         self.doc.canvas.background = canvas::background_for(skin);
         // Con Pixel UI, las reglas del mockup.
@@ -1487,159 +1486,30 @@ impl ChimpApp {
                     self.draw_panel(ui, PanelId::Tools, &fixed);
                 });
             });
-        // El panel derecho antes que la línea de tiempo: va a todo el alto, hasta la barra de
-        // estado, y la línea de tiempo termina a su izquierda.
-        // Adentro va el workspace (Color acoplado y lo que se le junte): lo que piden sus paneles
-        // lo aplica `workspace::show` al final, con la app entera.
+        // El resto del área es del workspace (fase D): un árbol con el lienzo al centro y Color
+        // acoplado a su derecha (la columna de antes); lo que piden sus paneles lo aplica
+        // `workspace::show` al final, con la app entera. Con un diálogo abierto, la paleta sigue
+        // viva: solo se apagan sus menús y la instancia (lo decide el panel); los demás paneles
+        // acoplados se apagan.
         // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
         self.doc.editor.palette_locked = self.view.palette_locked;
-        // Lo más angosta que puede quedar la columna: con Pixel UI y Color acoplado, la fila más
-        // ancha de Color que no se parte (con los márgenes del panel); y cada panel acoplado en su
-        // mínimo (los que van lado a lado, sumados), con o sin Pixel UI. Con Color flotando, el
-        // suyo no cuenta (va en su ventana).
-        let color_min = match skin {
-            Some(skin) if self.workspace.docked(PanelId::Color) => {
-                color_panel::panel_min_size(ui, skin)
-            }
-            _ => 0.0,
-        };
-        let column_min = self.workspace.column_min_width(ui, skin).max(color_min);
-        // El ancho guardado de la columna de colores; sin uno, el de fábrica (nunca menos que
-        // el mínimo).
-        let saved_width = self
-            .view
-            .palette_width
-            .unwrap_or(color_panel::DEFAULT_WIDTH)
-            .max(column_min)
-            .max(1.0);
-        // El ancho que se ve es el elegido (`view.palette_width`, que solo cambia cuando el
-        // usuario arrastra el borde) o, sin uno, el que la columna tomó sola; nunca menos que el
-        // mínimo. Se impone cada cuadro (egui guarda el ancho del panel, que un panel acoplado
-        // ancho estiró: al irse, la columna vuelve), salvo mientras se arrastra el borde. Los
-        // primeros cuadros egui guarda medidas que todavía cambian (la fuente y la escala del skin
-        // rigen después): también por eso se impone el elegido desde el primero.
-        let palette_id = egui::Id::new("palette");
-        // El asa del borde: egui 0.36 la registra con `id.with("__resize")` (`resize_widget_id`,
-        // privado). Si cambia al subir de versión, lo notan los tests de arrastrar el borde.
-        let resizing = ui
-            .ctx()
-            .read_response(palette_id.with("__resize"))
-            .is_some_and(|r| r.dragged() || r.drag_stopped());
-        let preferred = self.view.palette_width.or(self.palette_natural_width);
-        let load = |ui: &egui::Ui| egui::containers::panel::PanelState::load(ui.ctx(), palette_id);
-        if !resizing && let (Some(width), Some(state)) = (preferred, load(ui)) {
-            let width = width.max(column_min).max(1.0);
-            if state.outer_rect.width() != width {
-                let mut outer_rect = state.outer_rect;
-                outer_rect.min.x = outer_rect.max.x - width;
-                ui.data_mut(|d| {
-                    d.insert_persisted(
-                        palette_id,
-                        egui::containers::panel::PanelState { outer_rect },
-                    )
-                });
-            }
-        }
-        let before = load(ui).map(|state| state.outer_rect.width());
-        // El margen de Color lo pone el cuerpo de su grupo (ver `workspace`): el panel va sin él y
-        // el `DockArea` lo llena de borde a borde.
-        let mut panel = egui::Panel::right("palette")
-            .default_size(saved_width)
-            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0));
-        if skin.is_some() {
-            panel = panel.min_size(column_min).show_separator_line(false);
-        } else if column_min > 0.0 {
-            // Sin Pixel UI, Color no pide mínimo (queda el de egui); los demás acoplados, sí.
-            panel = panel.min_size(column_min);
-        }
-        let palette_panel = panel.show(ui, |ui| {
-            // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la
-            // instancia (lo decide el panel); los demás paneles acoplados se apagan.
-            workspace::show(self, ui, modal);
-        });
-        // Lo que el usuario arrastró se guarda con la vista (el panel ya respetó su mínimo); un
-        // clic en el borde que no lo movió no cuenta.
-        let width = palette_panel.response.rect.width();
-        if resizing && before != Some(width) {
-            self.view.palette_width = Some(width);
-        } else if self.view.palette_width.is_none() && width > column_min + 1.0 {
-            // Más ancha que el mínimo: es su ancho propio, no el de un panel acoplado.
-            self.palette_natural_width = Some(width);
-        }
-        // Con Pixel UI, la línea del borde grabada (la oscura y su brillo), como las demás. Arriba,
-        // la oscura cruza el brillo de la línea de la barra de opciones (como los separadores de
-        // la barra).
-        if let Some(skin) = skin {
-            let rect = palette_panel.response.rect;
-            let ppp = ui.ctx().pixels_per_point();
-            let left = rect.left().round();
-            ui.painter().add(pixel_ui::etched_vline(
-                left,
-                rect.y_range(),
-                skin.colors(),
-                ppp,
-            ));
-            let cross =
-                egui::Rect::from_min_size(egui::pos2(left, rect.top() - 1.0), egui::vec2(1.0, 1.0));
-            ui.painter().add(egui::Shape::rect_filled(
-                eframe::emath::GuiRounding::round_to_pixels(cross, ppp),
-                0.0,
-                skin.colors().canvas,
-            ));
-        }
+        let canvas_area = workspace::show(self, ui, modal);
         self.view.palette_locked = self.doc.editor.palette_locked;
-        // El dock de "otros paneles", a la izquierda del derecho y también a todo el alto.
-        let mut dock_frame = egui::Frame::side_top_panel(ui.style());
-        dock_frame.inner_margin.left = 0;
-        dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
-        // En la pestaña de un modelo (ChimpCAD) no va la columna del dock: en su lugar, el panel
-        // 3D fijo, que no se cierra. El panel abierto del dock (el del lienzo) queda como estaba.
-        let model_tab = self.doc.editor.model_edit_on();
-        let mut model_action = None;
-        let dock_out = if model_tab {
-            egui::Panel::right("model_panel")
-                .resizable(false)
-                .exact_size(dock::fixed_panel_width(model_panel::REFERENCE_WIDTH))
-                .frame(dock_frame)
-                .show_separator_line(skin.is_none())
-                .show(ui, |ui| {
-                    dock::fixed_panel(ui, skin, model_panel::REFERENCE_WIDTH, |ui| {
-                        model_action = self.draw_panel(ui, PanelId::Model, &fixed);
-                    });
-                });
-            dock::DockOutput::default()
-        } else {
-            egui::Panel::right("dock")
-                .resizable(false)
-                .exact_size(dock::WIDTH)
-                .frame(dock_frame)
-                .show_separator_line(skin.is_none())
-                .show(ui, |ui| {
-                    ui.add_enabled_ui(!modal, |ui| {
-                        dock::show(
-                            ui,
-                            skin,
-                            self.workspace.strip(),
-                            &mut self.view.timeline,
-                            &mut self.view.preview,
-                        )
-                    })
-                    .inner
-                })
-                .inner
-        };
-        // Sacar un panel de la tira: soltado en la columna (como pestaña o partiendo un grupo) o
-        // fuera de ella (en una ventana), o desde su menú contextual. Mientras se arrastra, dónde
-        // caería.
-        let column = palette_panel.response.rect;
+        let CanvasArea {
+            rect: canvas_rect,
+            dock: dock_out,
+        } = canvas_area.unwrap_or_default();
+        // Sacar un panel de la tira: soltado en el árbol (como pestaña, partiendo un grupo o junto
+        // al lienzo) o en el lienzo (en una ventana), o desde su menú contextual. Mientras se
+        // arrastra, dónde caería.
         if let Some((_, pointer)) = dock_out.dragging {
-            let target = workspace::drop_target(&self.workspace, pointer, column);
+            let target = workspace::drop_target(&self.workspace, pointer);
             workspace::paint_drop_zone(ui, skin, &self.workspace, target);
         }
         if let Some(request) = dock_out.request {
             match request {
                 dock::StripRequest::Drop(id, pointer) => {
-                    let target = workspace::drop_target(&self.workspace, pointer, column);
+                    let target = workspace::drop_target(&self.workspace, pointer);
                     self.workspace.drop_panel(id, target);
                 }
                 dock::StripRequest::Dock(id) => {
@@ -1648,30 +1518,6 @@ impl ChimpApp {
                 dock::StripRequest::Float(id, at) => self.workspace.float(id, at),
             }
             ui.ctx().request_repaint();
-        }
-        // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
-        // Tampoco en la pestaña de un modelo en modo Texture (el activo es su textura).
-        if self.view.timeline && PanelId::Timeline.available(self) {
-            let mut panel = egui::Panel::bottom("timeline")
-                .resizable(true)
-                .default_size(dock::TIMELINE_DEFAULT_HEIGHT);
-            // Con Pixel UI, la caja del diseño sobre el fondo del skin, sin la línea de egui.
-            if let Some(skin) = skin {
-                panel = panel
-                    .frame(timeline::pixel_panel_frame(skin))
-                    .show_separator_line(false);
-            }
-            let timeline_action = panel
-                .show(ui, |ui| self.draw_panel(ui, PanelId::Timeline, &fixed))
-                .inner;
-            // New Tilemap Layer: su diálogo.
-            if let Some(action) = timeline_action {
-                self.apply_panel_action(ui.ctx(), action);
-            }
-        }
-        // Después de los paneles: lo pedido desde el panel 3D necesita `self` entero.
-        if let Some(action) = model_action {
-            self.apply_panel_action(ui.ctx(), action);
         }
         let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
         // En la pestaña de un modelo no está su botón (no hay dock): la ventana se esconde sin
@@ -1697,10 +1543,89 @@ impl ChimpApp {
             self.panel_flyout(ui.ctx(), id, anchor, modal);
         }
         // Lo que no se dibujó en este frame suelta su estado (Lospec).
-        self.end_panel_frame(model_tab);
-        // Otra vez: el panel derecho necesita `self` entero.
-        let Some(skin) = self.pixel.skin() else {
-            return egui::CentralPanel::no_frame()
+        self.end_panel_frame(self.doc.editor.model_edit_on());
+        canvas_rect
+    }
+
+    /// La hoja del lienzo del workspace (ver `workspace::show`): lo que en la fase C era el
+    /// `CentralPanel` de `editor_panels` y lo que todavía va dentro de su hoja: a la derecha, la
+    /// tira de íconos (`strip`) o, en la pestaña de un modelo, el panel 3D fijo; abajo, el timeline.
+    /// Con sus estilos y márgenes de siempre: los rects son los de antes. Lo que piden sus paneles
+    /// va a `actions` (el workspace lo aplica con el acomodo de vuelta).
+    pub(crate) fn canvas_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        modal: bool,
+        strip: &[panel_registry::PanelId],
+        actions: &mut Vec<app_panels::PanelAction>,
+    ) -> CanvasArea {
+        use crate::app_panels::PanelCtx;
+        use crate::panel_registry::PanelId;
+        let fixed = PanelCtx {
+            modal,
+            bottom: None,
+        };
+        let shared_skin = self.pixel.shared_skin();
+        let skin = shared_skin.as_deref();
+        // El dock de "otros paneles", a la izquierda de la columna y también a todo el alto.
+        let mut dock_frame = egui::Frame::side_top_panel(ui.style());
+        dock_frame.inner_margin.left = 0;
+        dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
+        // En la pestaña de un modelo (ChimpCAD) no va la columna del dock: en su lugar, el panel
+        // 3D fijo, que no se cierra. El panel abierto del dock (el del lienzo) queda como estaba.
+        let dock = if self.doc.editor.model_edit_on() {
+            egui::Panel::right("model_panel")
+                .resizable(false)
+                .exact_size(dock::fixed_panel_width(model_panel::REFERENCE_WIDTH))
+                .frame(dock_frame)
+                .show_separator_line(skin.is_none())
+                .show(ui, |ui| {
+                    dock::fixed_panel(ui, skin, model_panel::REFERENCE_WIDTH, |ui| {
+                        actions.extend(self.draw_panel(ui, PanelId::Model, &fixed));
+                    });
+                });
+            dock::DockOutput::default()
+        } else {
+            egui::Panel::right("dock")
+                .resizable(false)
+                .exact_size(dock::WIDTH)
+                .frame(dock_frame)
+                .show_separator_line(skin.is_none())
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!modal, |ui| {
+                        dock::show(
+                            ui,
+                            skin,
+                            strip,
+                            &mut self.view.timeline,
+                            &mut self.view.preview,
+                        )
+                    })
+                    .inner
+                })
+                .inner
+        };
+        // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
+        // Tampoco en la pestaña de un modelo en modo Texture (el activo es su textura).
+        if self.view.timeline && PanelId::Timeline.available(self) {
+            let mut panel = egui::Panel::bottom("timeline")
+                .resizable(true)
+                .default_size(dock::TIMELINE_DEFAULT_HEIGHT);
+            // Con Pixel UI, la caja del diseño sobre el fondo del skin, sin la línea de egui.
+            if let Some(skin) = skin {
+                panel = panel
+                    .frame(timeline::pixel_panel_frame(skin))
+                    .show_separator_line(false);
+            }
+            // New Tilemap Layer: su diálogo (después, con la app entera).
+            actions.extend(
+                panel
+                    .show(ui, |ui| self.draw_panel(ui, PanelId::Timeline, &fixed))
+                    .inner,
+            );
+        }
+        let Some(skin) = skin else {
+            let rect = egui::CentralPanel::no_frame()
                 .show(ui, |ui| {
                     self.doc.canvas.show(
                         ui,
@@ -1711,6 +1636,7 @@ impl ChimpApp {
                 })
                 .response
                 .rect;
+            return CanvasArea { rect, dock };
         };
         // Con Pixel UI, como en el mockup: el lienzo y sus reglas en una caja, con 5 px de fondo
         // alrededor (a la izquierda, los de la barra de íconos; a la derecha, 3 hasta el dock).
@@ -1725,7 +1651,7 @@ impl ChimpApp {
             });
         let doc = &mut self.doc;
         let (dialog, view) = (self.canvas_size.as_mut(), &self.view);
-        egui::CentralPanel::default()
+        let rect = egui::CentralPanel::default()
             .frame(frame)
             .show(ui, |ui| {
                 let inner = pixel_ui::workspace_box(ui, skin, ui.max_rect());
@@ -1734,7 +1660,26 @@ impl ChimpApp {
                 });
                 inner
             })
-            .inner
+            .inner;
+        CanvasArea { rect, dock }
+    }
+}
+
+/// Lo que deja la hoja del lienzo del workspace al dibujarse (ver [`ChimpApp::canvas_area`]).
+pub(crate) struct CanvasArea {
+    /// El rect del lienzo (con Pixel UI, dentro de su caja).
+    pub rect: egui::Rect,
+    /// Lo de la tira de íconos: lo que se arrastra, lo que se pide y el flyout abierto.
+    pub dock: dock::DockOutput,
+}
+
+/// Sin la hoja del lienzo (no cupo): sin lienzo ni tira.
+impl Default for CanvasArea {
+    fn default() -> Self {
+        CanvasArea {
+            rect: egui::Rect::NOTHING,
+            dock: dock::DockOutput::default(),
+        }
     }
 }
 

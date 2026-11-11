@@ -36,6 +36,13 @@
 //!    de fuera, con el marco) por un frame, `WindowState::rect()` viene vacío (se mide el área),
 //!    una pestaña solo se suelta sobre un grupo (fuera de ellos `workspace` la pone a flotar) y el
 //!    grupo por el que pasó el puntero se recuerda `max_preference_time` (0.3 s).
+//! 10. El lienzo (fase D): el id de la pestaña de un grupo, `(tab, "tab")` después del de su
+//!     nodo ([`canvas_drag_ids`]: con él y el de la franja se le corta el arrastre), y que la zona
+//!     de destino "como pestaña" de un grupo sea su rect entero (así se reconoce la del lienzo para
+//!     pintarla como la mitad que de verdad queda; ver [`Armed::canvas_drop`]).
+//! 11. `separator.extra`: de fábrica, 175; `show_separator` lo impone cada frame como lo mínimo de
+//!     cada lado de un split (la toolbar o una columna angosta no cabrían). Va en 0: los mínimos
+//!     los pone `fit_splits`.
 
 use std::sync::Arc;
 
@@ -136,6 +143,11 @@ pub(super) fn plain_style(ui_style: &egui::Style) -> egui_dock::Style {
     style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
     style.tab_bar.inner_margin.right += COLLAPSE_ROOM as i8;
     style.separator.extra_interact_width = SEPARATOR_EXTRA;
+    // De 2 puntos (como el grabado del skin): el centro de un divisor cae en un punto entero y
+    // cada lado empieza en uno.
+    style.separator.width = pixel_ui::ETCHED_SIZE;
+    // Sin el mínimo de 175 por lado de egui_dock (ver el comentario del módulo, punto 11).
+    style.separator.extra = 0.0;
     style.buttons.show_tab_bar_size = 0.0;
     style.buttons.show_tab_bar_hover_expand = 0.0;
     style.buttons.show_tab_bar_color = Color32::TRANSPARENT;
@@ -190,6 +202,10 @@ pub(super) struct Armed {
     /// El cuerpo de cada grupo: lo recortado adentro es de los paneles (un cuadro de la paleta
     /// del color justo de un marcador no se toca).
     pub bodies: Vec<Rect>,
+    /// Mientras se arrastra una pestaña sobre el lienzo: el rect de su grupo y la mitad que de
+    /// verdad ocuparía lo soltado. egui_dock pinta el grupo entero ("como pestaña"), pero el lienzo
+    /// no recibe pestañas: `tidy_canvas` lo parte al lado, del lado del cuadrante.
+    pub canvas_drop: Option<(Rect, Rect)>,
 }
 
 impl Armed {
@@ -241,18 +257,19 @@ impl egui::Plugin for SkinRewriter {
         let ppp = output.pixels_per_point;
         for clipped in &mut output.shapes {
             if armed.in_scope(clipped.clip_rect) {
-                rewrite(&mut clipped.shape, &skin, ppp);
+                rewrite(&mut clipped.shape, &skin, ppp, armed.canvas_drop);
             }
         }
     }
 }
 
-/// Cambia los marcadores de `shape` (y de lo que lleva adentro).
-fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32) {
+/// Cambia los marcadores de `shape` (y de lo que lleva adentro). La zona de destino que cubre el
+/// grupo del lienzo entero (`canvas_drop`) se pinta como la mitad que de verdad queda.
+fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, canvas_drop: Option<(Rect, Rect)>) {
     match shape {
         Shape::Vec(shapes) => {
             for s in shapes {
-                rewrite(s, skin, ppp);
+                rewrite(s, skin, ppp, canvas_drop);
             }
         }
         Shape::Rect(r) => {
@@ -265,7 +282,11 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32) {
                 }
                 *shape = etched_in(r.rect, &c, ppp);
             } else if r.fill == M_DROP {
-                *shape = Shape::Vec(drop_shapes(skin, r.rect, ppp));
+                let rect = match canvas_drop {
+                    Some((canvas, half)) if same_rect(r.rect, canvas) => half,
+                    _ => r.rect,
+                };
+                *shape = Shape::Vec(drop_shapes(skin, rect, ppp));
             } else if r.fill == M_WINDOW {
                 *shape = Shape::Vec(frame_shapes(skin, r.rect, ppp));
             } else if r.stroke.color == M_DROP {
@@ -277,6 +298,11 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32) {
         }
         _ => {}
     }
+}
+
+/// Si `a` y `b` son el mismo rect (a medio punto: egui_dock lo ajusta a píxel físico).
+fn same_rect(a: Rect, b: Rect) -> bool {
+    (a.min - b.min).length() < 1.5 && (a.max - b.max).length() < 1.5
 }
 
 /// Multiplica la opacidad de los rects llenos y de las mallas de `shape` (las piezas del skin son
@@ -369,6 +395,20 @@ pub(super) fn hidden_strip_id(dock_id: Id, path: NodePath) -> Id {
         .with((path.surface, "surface"))
         .with((path.node, "node"))
         .with("hidden_tab_bar_drag")
+}
+
+/// Los ids de lo que arrastra el lienzo en egui_dock: la franja de agarre de su grupo (sin barra)
+/// y su pestaña (`tab_title` en `show/leaf.rs`: el id del nodo con `(tab, "tab")`), por si un día
+/// lleva barra. Con ellos `fit::block_canvas_drag` le corta el arrastre.
+pub(super) fn canvas_drag_ids(dock_id: Id, path: egui_dock::TabPath) -> [Id; 2] {
+    let node = path.node_path();
+    [
+        hidden_strip_id(dock_id, node),
+        dock_id
+            .with((node.surface, "surface"))
+            .with((node.node, "node"))
+            .with((path.tab.0, "tab")),
+    ]
 }
 
 /// Si se está arrastrando el grupo `path` (sin barra de pestañas) desde su franja de arriba.
@@ -514,6 +554,10 @@ pub(super) fn paint_tabs(
             continue;
         };
         if leaf.tab_bar_hidden {
+            // El lienzo no se agarra (su arrastre se corta): su franja no se resalta.
+            if active == PanelId::Canvas {
+                continue;
+            }
             let strip = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), GRAB_STRIP));
             let dragged = hidden_strip_dragged(ctx, dock_id, path);
             if dragged || hidden_strip_hovered(ctx, dock_id, path) {
@@ -664,6 +708,23 @@ mod tests {
             panic!("a piece is a mesh")
         };
         assert!(mesh.vertices.iter().all(|v| v.color.a() < 255), "{mesh:?}");
+    }
+
+    #[test]
+    fn the_drop_zone_over_the_whole_canvas_is_painted_as_the_half_that_results() {
+        let skin = crate::skin::Skin::embedded(&egui::Context::default());
+        let canvas = Rect::from_min_max(egui::pos2(37.0, 63.0), egui::pos2(937.0, 780.0));
+        let half = canvas.with_max_x(canvas.center().x);
+        let bounds = |shape: &Shape| shape.visual_bounding_rect();
+        // egui_dock pinta el lienzo entero ("como pestaña", a medio píxel): se pinta la mitad.
+        let mut zone = Shape::rect_filled(canvas.translate(vec2(0.5, 0.0)), 0.0, M_DROP);
+        rewrite(&mut zone, &skin, 2.0, Some((canvas, half)));
+        assert_eq!(bounds(&zone), half);
+        // Otra zona (un borde del lienzo, un grupo) queda como la pinta egui_dock.
+        let other = canvas.with_min_y(canvas.center().y);
+        let mut zone = Shape::rect_filled(other, 0.0, M_DROP);
+        rewrite(&mut zone, &skin, 2.0, Some((canvas, half)));
+        assert_eq!(bounds(&zone), other);
     }
 
     #[test]

@@ -1,8 +1,16 @@
-//! El workspace (fase C del docking del lado derecho): dónde está cada panel. Cada uno vive en un
-//! solo lugar: en la tira de íconos (el dock de hoy), acoplado en la superficie principal (un
-//! grupo de pestañas en el árbol de egui_dock) o flotando en una ventana. [`show`] muestra el
-//! `DockArea` con la piel pixel art (ver `skin`) y hospeda cada panel con
-//! [`ChimpApp::draw_panel`].
+//! El workspace: dónde está cada panel. Cada uno vive en un solo lugar: en la tira de íconos (el
+//! dock de hoy), acoplado en la superficie principal (un grupo de pestañas en el árbol de
+//! egui_dock) o flotando en una ventana. [`show`] muestra el `DockArea` con la piel pixel art (ver
+//! `skin`) y hospeda cada panel con [`ChimpApp::draw_panel`].
+//!
+//! Fase D (diseño aprobado el 2026-11-11, después del spike `proto_workspace_d`): **un solo árbol
+//! para toda el área central** (entre la barra de opciones, la toolbar y la barra de estado), con
+//! el **lienzo como hoja protegida** (`PanelId::Canvas`: no se cierra, no se arrastra, no recibe
+//! pestañas y está siempre una vez, en la superficie principal; ver `fit::tidy_canvas`). Lo que lo
+//! rodea va en puntos (`fit::pin_sides`): al cambiar la ventana, el lienzo absorbe la diferencia.
+//! La columna derecha de la fase C es ahora el lado derecho del lienzo ([`Workspace::column`]);
+//! su ancho sigue siendo la preferencia del usuario (`view.palette_width`). En esta tarea la tira
+//! de íconos y el timeline todavía van dentro de la hoja del lienzo (`ChimpApp::canvas_area`).
 //!
 //! Decisión del usuario (2026-11-10): un grupo acoplado con **un solo panel no lleva barra de
 //! pestañas** (se ve como hoy); al pasar el puntero por su borde de arriba se resalta una franja
@@ -53,6 +61,11 @@ pub(crate) struct Workspace {
     /// [`Workspace::place_restored_windows`]). Se olvidan con cualquier cambio del acomodo (los
     /// índices de las superficies se mueven).
     placements: Vec<(SurfaceIndex, egui::Rect)>,
+    /// Las ventanas recién abiertas: su panel, la esquina pedida y cuántos frames más pedírsela
+    /// (ver [`Workspace::place_new_windows`]).
+    placing: Vec<(PanelId, egui::Pos2, u8)>,
+    /// Lo que mide en puntos cada lado del lienzo (ver `fit::pin_sides`).
+    sides: fit::SidePoints,
 }
 
 impl Default for Workspace {
@@ -81,17 +94,24 @@ impl Workspace {
     }
 
     /// Los paneles de la tira, en orden.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "solo los tests; la tira la toma `show`")
+    )]
     pub(crate) fn strip(&self) -> &[PanelId] {
         &self.strip
     }
 
-    /// Si `id` está acoplado (en la superficie principal).
+    /// Si `id` está acoplado (en la superficie principal: en cualquier lado del lienzo).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "solo los tests; la columna la mide `show`")
+    )]
     pub(crate) fn docked(&self, id: PanelId) -> bool {
         self.state.find_main_surface_tab(&id).is_some()
     }
 
     /// Si `id` está flotando (en una ventana).
-    #[cfg_attr(not(test), expect(dead_code, reason = "solo lo leen los tests"))]
     pub(crate) fn floating(&self, id: PanelId) -> bool {
         self.state
             .find_tab(&id)
