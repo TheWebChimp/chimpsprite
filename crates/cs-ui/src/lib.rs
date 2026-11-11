@@ -141,7 +141,7 @@ const KEYMAP_KEY: &str = "chimpsprite.keymap";
 const MASCOT_KEY: &str = "chimpsprite.mascot";
 /// Lo último que se exportó con GIF settings (ChimpCAD).
 const GIF_KEY: &str = "chimpsprite.gif";
-/// El acomodo de los paneles (la tira, lo acoplado y lo flotante).
+/// El acomodo de los paneles (la tira, lo acoplado y lo flotante) y los workspaces con nombre.
 const WORKSPACE_KEY: &str = "chimpsprite.workspace";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
@@ -271,6 +271,11 @@ pub struct ChimpApp {
     panel_hosts: Vec<(panel_registry::PanelId, app_panels::PanelHost)>,
     /// Dónde está cada panel: en la tira, acoplado o flotando (lo muestra `workspace::show`).
     workspace: workspace::Workspace,
+    /// Los workspaces con nombre (Window → Workspace): cuál se usa (su acomodo es `workspace`),
+    /// los del usuario y lo que se dejó cambiado de los demás.
+    workspaces: workspace::Workspaces,
+    /// Window → Workspace → New Workspace… o Delete Workspace…, abierto.
+    workspace_dialog: Option<app_actions::WorkspaceDialog>,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
     /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
@@ -442,6 +447,8 @@ impl ChimpApp {
             panels_drawn_prev: Vec::new(),
             panel_hosts: Vec::new(),
             workspace: workspace::Workspace::essentials(),
+            workspaces: Default::default(),
+            workspace_dialog: None,
             preset_name: None,
             palette_confirm: None,
             pasted: false,
@@ -451,12 +458,12 @@ impl ChimpApp {
         }
     }
 
-    /// El acomodo de los paneles guardado (`WORKSPACE_KEY`). Sin él (una configuración de antes)
-    /// o ilegible, se queda el de fábrica; de uno que se lee se descarta lo que no sirva (ver
-    /// `Workspace::from_saved`).
+    /// El acomodo de los paneles guardado (`WORKSPACE_KEY`) y los workspaces con nombre. Sin él
+    /// (una configuración de antes) o ilegible, se queda Essentials de fábrica; de uno que se lee
+    /// se descarta lo que no sirva (ver `Workspaces::from_saved`).
     fn restore_workspace(&mut self, storage: &dyn eframe::Storage) {
         if let Some(saved) = eframe::get_value(storage, WORKSPACE_KEY) {
-            self.workspace = workspace::Workspace::from_saved(saved);
+            (self.workspaces, self.workspace) = workspace::Workspaces::from_saved(saved);
         }
     }
 
@@ -1748,6 +1755,7 @@ impl eframe::App for ChimpApp {
         self.update_gif_dialog(&ctx);
         self.update_shading_window(&ctx, modal);
         self.update_symbol_dialog(&ctx);
+        self.update_workspace_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
         self.autosave(&ctx);
@@ -1775,7 +1783,8 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, MASCOT_KEY, &self.mascot.settings);
         eframe::set_value(storage, GIF_KEY, &self.gif_settings);
         if self.save_workspace {
-            eframe::set_value(storage, WORKSPACE_KEY, &self.workspace.to_saved());
+            let saved = self.workspaces.to_saved(&self.workspace);
+            eframe::set_value(storage, WORKSPACE_KEY, &saved);
         }
         eframe::set_value(
             storage,

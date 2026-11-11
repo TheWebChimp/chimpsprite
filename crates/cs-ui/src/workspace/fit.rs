@@ -750,6 +750,10 @@ pub(crate) struct SidePoints {
     /// ellos, nada se limita).
     pub mins: Minima,
     pub bar: f32,
+    /// Lo que toma de entrada (en vez de lo que pide de fábrica) un lado nuevo con exactamente
+    /// estos paneles, como parte de su split: lo pide un workspace de fábrica (la franja del
+    /// timeline y el Preview de Animation, ver `presets::factory`).
+    pub shares: Vec<(Vec<PanelId>, f32)>,
     /// Con qué se acomodaron por última vez.
     last: Option<Pinned>,
 }
@@ -1040,7 +1044,14 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
                         let r = reference(tree, level.other, level.horizontal) + sides.sep / 2.0;
                         r.min(len * 0.45)
                     };
-                    let points = measured(tree, &level).unwrap_or_else(fresh);
+                    let share = sides
+                        .shares
+                        .iter()
+                        .find(|(panels, _)| *panels == side.panels)
+                        .map(|(_, share)| (len * share).round());
+                    let points = share
+                        .or_else(|| measured(tree, &level))
+                        .unwrap_or_else(fresh);
                     sides.set(side, points);
                     points
                 }

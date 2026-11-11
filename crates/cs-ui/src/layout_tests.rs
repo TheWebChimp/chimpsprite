@@ -1350,8 +1350,9 @@ fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
         "the mockup's menu text"
     );
     let menu = h.panel("menu");
+    // Tarea 7 de la fase D: Window, entre View y Help.
     let titles = [
-        "File", "Edit", "Sprite", "Layer", "Frame", "Select", "View", "Help",
+        "File", "Edit", "Sprite", "Layer", "Frame", "Select", "View", "Window", "Help",
     ];
     let rects: Vec<Rect> = titles
         .iter()
@@ -11975,8 +11976,207 @@ fn a_hidden_floating_timeline_comes_back_floating_after_a_restart() {
     assert_eq!(w.leaf_rect(PanelId::Timeline).unwrap(), timeline);
 }
 
+/// La fila del submenú `label` del menú abierto (sin Pixel UI, egui le agrega "⏵" al nombre).
+fn submenu_row(h: &LayoutHarness, label: &str) -> Rect {
+    let plain = format!("{label} ⏵");
+    h.buttons
+        .iter()
+        .find(|(l, _)| *l == label || *l == plain)
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no submenu {label:?} in {:?}", h.buttons))
+}
+
+/// Pasa el puntero por la fila del submenú `label` del menú abierto (así se abre).
+fn open_submenu(h: &mut LayoutHarness, label: &str) {
+    let at = submenu_row(h, label).center();
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    for _ in 0..3 {
+        h.frame();
+    }
+}
+
+/// Escape: cierra el menú abierto.
+fn close_menu(h: &mut LayoutHarness) {
+    h.frame_with(vec![Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+}
+
+/// El rect del nodo de accesibilidad `label` del último frame.
+fn node_rect(h: &LayoutHarness, label: &str) -> Rect {
+    h.nodes
+        .iter()
+        .find(|(l, _)| l == label)
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no {label:?} in {:?}", h.nodes))
+}
+
 #[test]
-fn reset_workspace_goes_back_to_essentials_in_one_step() {
+fn the_window_menu_lists_every_panel_with_a_check_on_the_open_ones() {
+    use crate::panel_registry::PanelId;
+    let panels: Vec<PanelId> = PanelId::ALL
+        .iter()
+        .copied()
+        .filter(|&p| p != PanelId::Canvas)
+        .collect();
+    // 13 (12 en la web, sin Dafont).
+    assert_eq!(
+        panels.len(),
+        if cfg!(target_arch = "wasm32") { 12 } else { 13 }
+    );
+    for view in [pixel_ui(), plain()] {
+        let mut h = LayoutHarness::new(view, true);
+        // Lumen flotando: también tiene su ✓.
+        h.app.workspace.float(PanelId::Lumen, pos2(320.0, 120.0));
+        for _ in 0..2 {
+            h.frame();
+        }
+        open_menu(&mut h, "Window");
+        for &id in &panels {
+            let (_, on) = check(&h, id.label());
+            let open = matches!(
+                id,
+                PanelId::Tools | PanelId::Color | PanelId::Timeline | PanelId::Lumen
+            );
+            assert_eq!(on, open, "{id:?}");
+        }
+        // Y el submenú de los workspaces, arriba de los paneles.
+        let workspace = submenu_row(&h, "Workspace");
+        assert!(workspace.bottom() <= check(&h, "Tools").0.top());
+    }
+}
+
+#[test]
+fn a_panel_from_the_window_menu_is_focused_where_it_is_or_shown_in_its_place() {
+    use crate::panel_registry::PanelId;
+    let click = |h: &mut LayoutHarness, label: &str| {
+        open_menu(h, "Window");
+        h.click(check(h, label).0.center(), PointerButton::Primary);
+        for _ in 0..3 {
+            h.frame();
+        }
+    };
+    let active = |h: &LayoutHarness, id: PanelId| {
+        let (surface, node) = h.app.workspace.leaf_of(id).unwrap();
+        let leaf = h
+            .app
+            .workspace
+            .state_leaf_tabs(surface, node)
+            .expect("a group");
+        leaf.1 == id
+    };
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    for _ in 0..2 {
+        h.frame();
+    }
+    // En la tira: se acopla (como "Dock" del menú de su ícono: con el foco, junto a Color) y
+    // queda a la vista.
+    click(&mut h, "Library");
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Library) && w.strip_of(PanelId::Library).is_none());
+    assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+    assert!(active(&h, PanelId::Library));
+    // Abierto: se enfoca donde está (Color vuelve al frente de su grupo).
+    click(&mut h, "Color");
+    assert!(active(&h, PanelId::Color));
+    assert_eq!(
+        h.app.workspace.leaf_of(PanelId::Library),
+        h.app.workspace.leaf_of(PanelId::Color)
+    );
+    // El timeline apagado: se prende y vuelve a su lugar (debajo del lienzo).
+    h.app.view.timeline = false;
+    for _ in 0..2 {
+        h.frame();
+    }
+    assert!(!h.app.workspace.timeline_below());
+    open_menu(&mut h, "Window");
+    assert!(!check(&h, "Timeline").1);
+    h.click(check(&h, "Timeline").0.center(), PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.view.timeline && h.app.workspace.timeline_below());
+    // El Preview apagado: se prende, flotando en su esquina.
+    click(&mut h, "Preview");
+    assert!(h.app.view.preview && h.app.workspace.floating(PanelId::Preview));
+    // Flotando: su ventana, encima de las demás.
+    h.app.workspace.float(PanelId::Lumen, pos2(300.0, 150.0));
+    h.app.workspace.float(PanelId::Groom, pos2(320.0, 170.0));
+    for _ in 0..3 {
+        h.frame();
+    }
+    let top = |h: &LayoutHarness, id: PanelId| {
+        let (surface, _) = h.app.workspace.leaf_of(id).unwrap();
+        let layer = h.app.workspace.window_layer(surface);
+        h.ctx
+            .memory(|m| m.areas().top_layer_id(egui::Order::Middle))
+            .is_some_and(|l| l == layer)
+    };
+    assert!(top(&h, PanelId::Groom), "the last one floated");
+    click(&mut h, "Lumen");
+    assert!(top(&h, PanelId::Lumen));
+    // Cada panel, una vez.
+    for &id in PanelId::ALL {
+        assert_eq!(h.app.workspace.places(id), 1, "{id:?}");
+    }
+}
+
+#[test]
+fn the_workspace_submenu_switches_to_a_preset_and_back() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    for _ in 0..2 {
+        h.frame();
+    }
+    let pick = |h: &mut LayoutHarness, label: &str| {
+        open_menu(h, "Window");
+        open_submenu(h, "Workspace");
+        h.click(node_rect(h, label).center(), PointerButton::Primary);
+        for _ in 0..3 {
+            h.frame();
+        }
+    };
+    open_menu(&mut h, "Window");
+    open_submenu(&mut h, "Workspace");
+    for name in crate::workspace::FACTORY {
+        node_rect(&h, name);
+    }
+    // Sin workspaces del usuario no hay qué borrar.
+    assert!(
+        h.disabled.iter().any(|l| l == "Delete Workspace…"),
+        "{:?}",
+        h.disabled
+    );
+    h.button("New Workspace…");
+    close_menu(&mut h);
+    pick(&mut h, "Animation");
+    assert_eq!(h.app.workspaces.current(), "Animation");
+    assert!(h.app.view.preview && h.app.workspace.docked(PanelId::Preview));
+    open_menu(&mut h, "Window");
+    open_submenu(&mut h, "Workspace");
+    h.button("Reset Animation");
+    close_menu(&mut h);
+    pick(&mut h, "Essentials");
+    assert_eq!(h.app.workspaces.current(), "Essentials");
+    assert!(!h.app.view.preview && !h.app.workspace.docked(PanelId::Preview));
+    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    // New Workspace… abre su diálogo.
+    open_menu(&mut h, "Window");
+    open_submenu(&mut h, "Workspace");
+    h.click(h.button("New Workspace…").center(), PointerButton::Primary);
+    assert!(matches!(
+        h.app.workspace_dialog,
+        Some(crate::app_actions::WorkspaceDialog::New { .. })
+    ));
+}
+
+#[test]
+fn reset_essentials_goes_back_to_the_factory_layout_in_one_step() {
     use crate::panel_registry::PanelId;
     let mut h = groom_below_color(137.0);
     h.app.workspace.float(PanelId::Lumen, pos2(320.0, 120.0));
@@ -11985,8 +12185,23 @@ fn reset_workspace_goes_back_to_essentials_in_one_step() {
     }
     assert!(h.panel("palette").width() > 137.0, "Groom widens it");
     let undo = h.app.doc.editor.history.done_count();
+    // Tarea 7: Reset se mudó de View a Window → Workspace (con el nombre del de ahora).
     open_menu(&mut h, "View");
-    h.click(h.button("Reset Workspace").center(), PointerButton::Primary);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Reset Workspace"));
+    h.frame_with(vec![Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+    open_menu(&mut h, "Window");
+    open_submenu(&mut h, "Workspace");
+    h.click(
+        h.button("Reset Essentials").center(),
+        PointerButton::Primary,
+    );
     for _ in 0..3 {
         h.frame();
     }

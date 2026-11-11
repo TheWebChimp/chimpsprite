@@ -6,6 +6,7 @@
 use eframe::egui;
 use egui_dock::{DockState, Node, NodePath, Surface, TabIndex, Tree, WindowState};
 
+use super::presets::Shown;
 use super::{NodeIndex, Split, SurfaceIndex, Workspace};
 use crate::dock::Edge;
 use crate::panel_registry::PanelId;
@@ -63,9 +64,41 @@ pub(crate) struct SavedWorkspace {
     pub left: Vec<String>,
     pub top: Vec<String>,
     pub bottom: Vec<String>,
+    /// El nombre del workspace que se está usando (desde la versión 7; sin el campo, Essentials):
+    /// lo de arriba es su acomodo de ahora (ver `presets::Workspaces`).
+    pub current: String,
+    /// Los del usuario (Window → Workspace → New Workspace…), como se crearon: a eso vuelven con
+    /// Reset.
+    pub user: Vec<(String, SavedLayout)>,
+    /// El último acomodo de cada uno de los demás (de fábrica o del usuario) que se dejó: al volver
+    /// a él, vuelve así (Reset lo descarta).
+    pub edited: Vec<(String, SavedLayout)>,
 }
 
-/// La versión de lo que se guarda ahora: 6, con una tira de íconos por orilla (fase D, tarea 6:
+/// El acomodo de un workspace con nombre que no es el de ahora (ver `presets::Workspaces`): lo
+/// mismo que el de [`SavedWorkspace`] (de la misma versión) y si el timeline y el Preview se ven
+/// en él (al elegirlo, `view.timeline` y `view.preview` toman eso).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct SavedLayout {
+    pub state: DockState<String>,
+    pub strip: Vec<String>,
+    pub left: Vec<String>,
+    pub top: Vec<String>,
+    pub bottom: Vec<String>,
+    pub timeline: bool,
+    pub preview: bool,
+}
+
+impl Default for SavedLayout {
+    fn default() -> Self {
+        Workspace::essentials().to_layout(Shown::default())
+    }
+}
+
+/// La versión de lo que se guarda ahora: 7, con los workspaces con nombre (fase D, tarea 7:
+/// `current`, `user` y `edited`; lo de una 6 o anterior es el acomodo de Essentials, cambiado
+/// por el usuario, y no hay otros). La 6, con una tira de íconos por orilla (fase D, tarea 6:
 /// `strip` es la de la derecha y `left`, `top` y `bottom` las demás; en una 5 o anterior solo
 /// había `strip`, la de la derecha). La 5: el árbol de toda la ventana con el lienzo, la
 /// toolbar, el timeline y el Preview (fase D, tarea 5). En la 4 el Preview no iba en el árbol (era
@@ -78,7 +111,7 @@ pub(crate) struct SavedWorkspace {
 /// izquierda; en una 3 o 4, está en la tira. La 1 (y la 0, de antes del campo) es la de la fase C:
 /// la columna derecha sola, sin lienzo; al leerla se le mete el lienzo a la izquierda
 /// ([`Workspace::from_saved`]).
-pub(crate) const SAVED_VERSION: u32 = 6;
+pub(crate) const SAVED_VERSION: u32 = 7;
 
 impl Default for SavedWorkspace {
     fn default() -> Self {
@@ -152,7 +185,46 @@ impl Workspace {
             left: keys(Edge::Left),
             top: keys(Edge::Top),
             bottom: keys(Edge::Bottom),
+            current: String::new(),
+            user: Vec::new(),
+            edited: Vec::new(),
         }
+    }
+
+    /// El acomodo como lo recuerda un workspace con nombre (ver [`SavedLayout`]), con lo que se ve
+    /// (`shown`).
+    pub(crate) fn to_layout(&self, shown: Shown) -> SavedLayout {
+        let saved = self.to_saved();
+        SavedLayout {
+            state: saved.state,
+            strip: saved.strip,
+            left: saved.left,
+            top: saved.top,
+            bottom: saved.bottom,
+            timeline: shown.timeline,
+            preview: shown.preview,
+        }
+    }
+
+    /// El acomodo de `layout` (guardado en la versión `version`), sin confiar en él (ver
+    /// [`Workspace::from_saved`]), y lo que se ve en él.
+    pub(crate) fn from_layout(version: u32, layout: SavedLayout) -> (Workspace, Shown) {
+        let shown = Shown {
+            timeline: layout.timeline,
+            preview: layout.preview,
+        };
+        let saved = SavedWorkspace {
+            version,
+            state: layout.state,
+            strip: layout.strip,
+            left: layout.left,
+            top: layout.top,
+            bottom: layout.bottom,
+            current: String::new(),
+            user: Vec::new(),
+            edited: Vec::new(),
+        };
+        (Workspace::from_saved(saved), shown)
     }
 
     /// El rect del nodo de arriba de la superficie `surface` (lo de adentro de una ventana) en el
@@ -533,7 +605,7 @@ impl Workspace {
 
     /// El foco de vuelta en el grupo de `id` (egui_dock se lo da a lo que parte o quita); si ya no
     /// está, en el de Color.
-    fn refocus(&mut self, id: Option<PanelId>) {
+    pub(super) fn refocus(&mut self, id: Option<PanelId>) {
         let path = id
             .and_then(|id| self.state.find_tab(&id))
             .or_else(|| self.state.find_tab(&PanelId::Color));
@@ -887,6 +959,21 @@ impl Workspace {
         true
     }
 
+    /// [`Workspace::focus`] y, si flota, su ventana encima de las demás (las de egui_dock son
+    /// `egui::Window`, en la capa del medio). Devuelve si estaba en el árbol.
+    pub(crate) fn bring_forward(&mut self, ctx: &egui::Context, id: PanelId) -> bool {
+        if !self.focus(id) {
+            return false;
+        }
+        if let Some(path) = self.state.find_tab(&id)
+            && !path.surface.is_main()
+        {
+            let area = super::skin::window_area_id(path.surface);
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, area));
+        }
+        true
+    }
+
     /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
     /// o más. Las ventanas flotantes la llevan (es su título y de ahí se arrastran), salvo la del
     /// Preview solo (su ventana es la de antes, con su barra de título: ver
@@ -951,7 +1038,7 @@ impl Workspace {
 /// Si un árbol leído se puede usar: la superficie principal primero (y solo ella), y en cada árbol
 /// cada split con sus dos lados y cada nodo colgando de un split; cada ventana, con algún grupo.
 /// egui_dock no revisa nada de eso al leer, y con un árbol así se cae al dibujarlo.
-fn sound<T>(state: &DockState<T>) -> bool {
+pub(super) fn sound<T>(state: &DockState<T>) -> bool {
     let mut surfaces = state.iter_surfaces();
     let main = matches!(surfaces.next(), Some(Surface::Main(tree)) if tree_sound(tree));
     main && surfaces.all(|s| match s {
@@ -1138,6 +1225,7 @@ mod tests {
             left: Vec::new(),
             top: Vec::new(),
             bottom: Vec::new(),
+            ..SavedWorkspace::default()
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
@@ -1172,6 +1260,7 @@ mod tests {
             left: Vec::new(),
             top: Vec::new(),
             bottom: Vec::new(),
+            ..SavedWorkspace::default()
         };
         let w = Workspace::from_saved(saved);
         let root = NodeIndex::root();
@@ -1240,6 +1329,7 @@ mod tests {
             left: Vec::new(),
             top: Vec::new(),
             bottom: Vec::new(),
+            ..SavedWorkspace::default()
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
@@ -1250,11 +1340,11 @@ mod tests {
         assert_eq!(w.places(PanelId::Timeline), 1);
         assert_eq!(w.column_panels(), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
-        // Lo que se guarda ahora es la 6 (tarea 6: con las tiras por orilla), y se lee igual (sin otro
-        // timeline).
+        // Lo que se guarda ahora es la 7 (tarea 7: con los workspaces con nombre), y se lee igual (sin
+        // otro timeline).
         let again = w.to_saved();
         assert_eq!(again.version, SAVED_VERSION);
-        assert_eq!(SAVED_VERSION, 6);
+        assert_eq!(SAVED_VERSION, 7);
         let back = Workspace::from_saved(again);
         assert_eq!(back.state_tabs(), w.state_tabs());
         assert_eq!(back.places(PanelId::Timeline), 1);
@@ -1552,6 +1642,7 @@ mod tests {
             left: Vec::new(),
             top: Vec::new(),
             bottom: Vec::new(),
+            ..SavedWorkspace::default()
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
@@ -1686,6 +1777,7 @@ mod tests {
             left: Vec::new(),
             top: Vec::new(),
             bottom: Vec::new(),
+            ..SavedWorkspace::default()
         };
         assert!(is_essentials(&Workspace::from_saved(saved)));
         // Sin campos: el de fábrica.
@@ -1809,7 +1901,7 @@ mod tests {
         w.sync_panel(PanelId::Preview, true);
         let saved = w.to_saved();
         assert_eq!(saved.version, SAVED_VERSION);
-        assert_eq!(SAVED_VERSION, 6);
+        assert_eq!(SAVED_VERSION, 7);
         let back = Workspace::from_saved(saved);
         assert_eq!(back.places(PanelId::Preview), 0);
         // Acoplada (y oculta), sí: en su lugar.
@@ -1901,7 +1993,7 @@ mod tests {
         w.to_strip_at(PanelId::Lumen, Edge::Top);
         let saved = w.to_saved();
         assert_eq!(saved.version, SAVED_VERSION);
-        assert_eq!(SAVED_VERSION, 6);
+        assert_eq!(SAVED_VERSION, 7);
         let ron = ron::to_string(&saved).unwrap();
         let back = Workspace::from_saved(ron::from_str(&ron).unwrap());
         for edge in Edge::ALL {

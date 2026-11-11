@@ -87,6 +87,7 @@ impl DialogHarness {
             app.update_bake_dialog(&ctx);
             app.update_gif_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
+            app.update_workspace_dialog(&ctx);
             app.update_sheet_dialog(&ctx);
             app.update_expand_dialog(&ctx);
             app.update_iso_dialog(&ctx);
@@ -1852,5 +1853,88 @@ fn iso_box_places_the_box_floating_and_remembers_the_settings() {
         h.settle();
         h.key(Key::Escape);
         assert!(h.app.iso_dialog.is_none(), "pixel_ui {pixel_ui}");
+    }
+}
+
+// --- Window → Workspace (fase D, tarea 7) ---
+
+#[test]
+fn new_workspace_saves_the_layout_under_a_new_name() {
+    use crate::panel_registry::PanelId;
+    for pixel_ui in [false, true] {
+        let mut h = DialogHarness::new(pixel_ui);
+        h.app
+            .workspace
+            .dock(PanelId::Library, crate::workspace::DockTarget::Focused);
+        h.app.open_workspace_dialog(false);
+        h.settle();
+        assert!(h.drew_text("New Workspace"), "{:?}", h.texts);
+        // El campo tiene el foco. El nombre de uno de fábrica: dice por qué y Save no hace nada.
+        h.frame(vec![Event::Text("tiles".into())]);
+        h.settle();
+        assert!(
+            h.drew_text("A workspace with that name already exists"),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+        h.click("Save");
+        assert!(h.app.workspace_dialog.is_some(), "pixel_ui {pixel_ui}");
+        assert!(h.app.workspaces.user_names().is_empty());
+        // Vacío, Save tampoco (y no hace falta decir por qué).
+        let reset = |h: &mut DialogHarness| {
+            if let Some(crate::app_actions::WorkspaceDialog::New { name, focused }) =
+                &mut h.app.workspace_dialog
+            {
+                name.clear();
+                // El clic en Save le quitó el foco al campo: de vuelta a él.
+                *focused = false;
+            }
+            h.settle();
+        };
+        reset(&mut h);
+        assert!(!h.drew_text("A workspace with that name already exists"));
+        h.click("Save");
+        assert!(h.app.workspace_dialog.is_some(), "pixel_ui {pixel_ui}");
+        reset(&mut h);
+        h.frame(vec![Event::Text("Mine".into())]);
+        h.key(Key::Enter);
+        assert!(h.app.workspace_dialog.is_none(), "pixel_ui {pixel_ui}");
+        assert_eq!(h.app.workspaces.user_names(), ["Mine"]);
+        assert_eq!(h.app.workspaces.current(), "Mine");
+        assert!(h.app.workspace.docked(PanelId::Library));
+    }
+}
+
+#[test]
+fn delete_workspace_removes_the_chosen_one() {
+    use crate::workspace::Shown;
+    for pixel_ui in [false, true] {
+        let mut h = DialogHarness::new(pixel_ui);
+        // Sin ninguno que se pueda borrar, no se abre.
+        h.app.open_workspace_dialog(true);
+        assert!(h.app.workspace_dialog.is_none());
+        let w = h.app.workspace.clone();
+        h.app
+            .workspaces
+            .create("Mine", &w, Shown::default())
+            .unwrap();
+        h.app
+            .workspaces
+            .create("Other", &w, Shown::default())
+            .unwrap();
+        h.app.switch_workspace("Animation");
+        h.app.open_workspace_dialog(true);
+        h.settle();
+        assert!(h.drew_text("Delete Workspace"), "{:?}", h.texts);
+        h.click("Other");
+        h.click("Delete");
+        assert!(h.app.workspace_dialog.is_none(), "pixel_ui {pixel_ui}");
+        assert_eq!(h.app.workspaces.user_names(), ["Mine"]);
+        // Cancel no borra nada.
+        h.app.open_workspace_dialog(true);
+        h.settle();
+        h.click("Cancel");
+        assert!(h.app.workspace_dialog.is_none());
+        assert_eq!(h.app.workspaces.user_names(), ["Mine"]);
     }
 }

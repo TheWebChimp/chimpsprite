@@ -114,6 +114,7 @@ impl ChimpApp {
             || self.gif.is_some()
             || self.convert_tilemap.is_some()
             || self.symbol_dialog.is_some()
+            || self.workspace_dialog.is_some()
             || self.export.is_some()
             || self.tiled_export.is_some()
             || self.pending.is_some()

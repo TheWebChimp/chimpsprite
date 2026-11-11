@@ -31,7 +31,8 @@
 //!
 //! Se parte por responsabilidad: [`model`] (las operaciones sobre el acomodo, sus invariantes y
 //! lo que se guarda), [`drop`] (dónde cae un panel que se suelta), [`fit`] (los mínimos y su
-//! ajuste a los splits y a las ventanas) y [`show`] (el `DockArea` y lo que lo rodea).
+//! ajuste a los splits y a las ventanas), [`show`] (el `DockArea` y lo que lo rodea) y [`presets`]
+//! (los workspaces con nombre de Window → Workspace: los de fábrica y los del usuario).
 //!
 //! El marco de las ventanas flotantes se viste con un `ui.scope` alrededor del `DockArea` cuyo
 //! estilo lleva el color marcador (`skin::window_visuals`): funciona porque egui_dock 0.21.1 arma
@@ -41,6 +42,7 @@
 mod drop;
 mod fit;
 mod model;
+mod presets;
 mod show;
 mod skin;
 #[cfg(test)]
@@ -55,6 +57,7 @@ use crate::panel_registry::PanelId;
 
 pub(crate) use drop::{drop_target, paint_drop_zone};
 pub(crate) use model::DockTarget;
+pub(crate) use presets::{FACTORY, Shown, Workspaces};
 pub(crate) use show::show;
 #[cfg(test)]
 pub(crate) use show::{COLLAPSE, MODEL_ELSEWHERE, has_marker};
@@ -135,10 +138,6 @@ impl Workspace {
     }
 
     /// Si `id` está acoplado (en la superficie principal: en cualquier lado del lienzo).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "solo los tests; la columna la mide `show`")
-    )]
     pub(crate) fn docked(&self, id: PanelId) -> bool {
         self.state.find_main_surface_tab(&id).is_some()
     }
@@ -170,6 +169,26 @@ impl Workspace {
             return None;
         }
         ctx.memory(|m| m.area_rect(skin::window_area_id(path.surface)))
+    }
+
+    /// Los paneles del grupo `(surface, node)` y el que está a la vista, si es un grupo.
+    #[cfg(test)]
+    pub(crate) fn state_leaf_tabs(
+        &self,
+        surface: SurfaceIndex,
+        node: NodeIndex,
+    ) -> Option<(Vec<PanelId>, PanelId)> {
+        let leaf = self
+            .state
+            .leaf(egui_dock::NodePath { surface, node })
+            .ok()?;
+        Some((leaf.tabs.clone(), *leaf.tabs.get(leaf.active.0)?))
+    }
+
+    /// La capa de egui de la ventana flotante `surface`.
+    #[cfg(test)]
+    pub(crate) fn window_layer(&self, surface: SurfaceIndex) -> egui::LayerId {
+        egui::LayerId::new(egui::Order::Middle, skin::window_area_id(surface))
     }
 
     /// Si el grupo de `id` va sin barra de pestañas.
