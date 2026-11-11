@@ -650,7 +650,8 @@ impl Workspace {
 
     /// Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`, para capturas): `library-tab`
     /// (Library en el grupo de Color), `split` (Groom debajo de Color), `float` (Lumen flotando),
-    /// `tools-right` (la toolbar a la derecha del lienzo), `tools-float` (la toolbar flotando),
+    /// `tools-right` (la toolbar a la derecha del lienzo), `tools-right-strip` (de ahí, con su «,
+    /// en la tira del lado más cercano: la de la derecha), `tools-float` (la toolbar flotando),
     /// `timeline-right` (el timeline a la derecha del lienzo), `preview-docked` (el Preview
     /// acoplado debajo de Color; se ve con `view.preview`), `left-strip` (la toolbar y Groom en la
     /// tira de la izquierda) o `groom-below` (Groom debajo del lienzo: la tira de la derecha, solo
@@ -661,6 +662,9 @@ impl Workspace {
         let (cs, cn) = w.leaf_of(PanelId::Canvas)?;
         match name {
             "tools-right" => w.dock(PanelId::Tools, DockTarget::Split(cs, cn, Split::Right)),
+            // Antes de dibujarse no hay rects para elegir el lado (ver `group_edge`): la tira de
+            // la derecha, la que le da « una vez dibujada.
+            "tools-right-strip" => w.to_strip_at(PanelId::Tools, Edge::Right),
             "tools-float" => w.float(PanelId::Tools, egui::pos2(320.0, 120.0)),
             "timeline-right" => w.dock(PanelId::Timeline, DockTarget::Split(cs, cn, Split::Right)),
             "library-tab" => w.dock(PanelId::Library, DockTarget::Leaf(surface, node)),
@@ -1642,6 +1646,8 @@ mod tests {
 
     #[test]
     fn the_demo_workspaces_place_their_panel() {
+        let w = Workspace::demo("tools-right-strip").unwrap();
+        assert_eq!(w.strip_of(PanelId::Tools), Some(Edge::Right));
         let w = Workspace::demo("library-tab").unwrap();
         assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
         let w = Workspace::demo("split").unwrap();
