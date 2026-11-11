@@ -633,28 +633,104 @@ fn assert_pinned_essentials(h: &LayoutHarness) {
 /// `the_inside_of_a_panel_does_not_depend_on_where_it_is`; a la izquierda difiere por el divisor
 /// del margen de la columna, por eso no se usa `Edge::Left`).
 fn for_both(view: ViewSettings, body: impl Fn(&mut LayoutHarness)) {
+    for_each_place(crate::panel_registry::PanelId::Color, view, |h, _| body(h));
+}
+
+/// La app con `view` y una pestaña nueva (sin abrirla todavía).
+fn app_with_doc(view: ViewSettings) -> ChimpApp {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
+    app.new_document();
+    app
+}
+
+/// Corre `body` con el panel `id` (Color, el timeline o la toolbar) en Essentials (1200×800, una
+/// pestaña, `view`) y en otro acomodo donde su hoja es del mismo tamaño en otro lugar. A `body` se
+/// le da lo que se corre lo de adentro de la hoja contra Essentials (`shift`: lo que hay que
+/// sumarle a lo medido en Essentials con [`LayoutHarness::at`]); es cero salvo donde lo dice un
+/// margen, escrito aquí:
+///
+/// - Color: `Workspace::solo(Color, Edge::Right)` en 1500×800, la columna del mismo ancho (ver
+///   [`for_both`]): la hoja, 300 más a la derecha.
+/// - El timeline: `Workspace::solo(Timeline, Edge::Bottom)` en una ventana del ancho de su hoja y
+///   100 más alta (ancho×900): de la orilla izquierda y 100 más abajo, con la tira encima de su
+///   punta como en Essentials.
+/// - La toolbar: `Workspace::solo(Tools, Edge::Right)` (1200×800), en la orilla derecha. Ahí su
+///   margen del lado del divisor (el izquierdo) cuenta desde el borde de afuera del divisor
+///   (`show::tools_margin`: el margen menos el divisor menos la línea de egui), así que lo de
+///   adentro va 2 a la izquierda en su hoja con Pixel UI (divisor de 2, sin línea) y 1 sin él
+///   (la línea de 1 punto). Y, exacto (sin `shift`), `solo(Tools, Edge::Left)` con Groom en la
+///   tira de la izquierda: la hoja empieza en esa tira, 26 a la derecha.
+fn for_each_place(
+    id: crate::panel_registry::PanelId,
+    view: ViewSettings,
+    body: impl Fn(&mut LayoutHarness, Vec2),
+) {
     use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     use crate::workspace::Workspace;
-    let app = |view: ViewSettings| {
-        let palettes = PaletteLibrary::new(Box::new(NoPresets));
-        let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
-        app.new_document();
-        app
+    let mut essentials = LayoutHarness::start(app_with_doc(view));
+    let leaf = essentials.leaf(id);
+    eprintln!("{id:?} in Essentials");
+    body(&mut essentials, Vec2::ZERO);
+    let moved = |h: &LayoutHarness, place: &str| {
+        assert_eq!(h.leaf(id).size(), leaf.size(), "{place}");
+        assert_ne!(h.leaf(id).min, leaf.min, "{place}");
+        eprintln!("{id:?} {place}: {:?}", h.leaf(id));
     };
-    let mut essentials = LayoutHarness::start(app(view));
-    let leaf = essentials.leaf(PanelId::Color);
-    let view = ViewSettings {
-        palette_width: Some(essentials.column().width()),
-        ..view
-    };
-    body(&mut essentials);
-    let solo = Workspace::solo(PanelId::Color, Edge::Right);
-    let mut right = LayoutHarness::with_workspace(app(view), solo, vec2(1500.0, 800.0));
-    assert!(!right.app.workspace.docked(PanelId::Tools), "solo");
-    assert_eq!(right.leaf(PanelId::Color).size(), leaf.size());
-    assert_eq!(right.leaf(PanelId::Color).min, leaf.min + vec2(300.0, 0.0));
-    body(&mut right);
+    match id {
+        PanelId::Color => {
+            let view = ViewSettings {
+                palette_width: Some(essentials.column().width()),
+                ..view
+            };
+            let solo = Workspace::solo(PanelId::Color, Edge::Right);
+            let mut right =
+                LayoutHarness::with_workspace(app_with_doc(view), solo, vec2(1500.0, 800.0));
+            assert!(!right.app.workspace.docked(PanelId::Tools), "solo");
+            moved(&right, "right of the canvas");
+            assert_eq!(right.leaf(PanelId::Color).min, leaf.min + vec2(300.0, 0.0));
+            body(&mut right, Vec2::ZERO);
+        }
+        PanelId::Timeline => {
+            let solo = Workspace::solo(PanelId::Timeline, Edge::Bottom);
+            let size = vec2(leaf.width(), 900.0);
+            let mut below = LayoutHarness::with_workspace(app_with_doc(view), solo, size);
+            assert!(!below.app.workspace.docked(PanelId::Tools), "solo");
+            assert!(below.app.workspace.timeline_below());
+            moved(&below, "alone below the canvas");
+            assert_eq!(
+                below.leaf(id).min,
+                pos2(below.screen().left(), leaf.top() + 100.0)
+            );
+            body(&mut below, Vec2::ZERO);
+        }
+        PanelId::Tools => {
+            let solo = Workspace::solo(PanelId::Tools, Edge::Right);
+            let mut right =
+                LayoutHarness::with_workspace(app_with_doc(view), solo, vec2(1200.0, 800.0));
+            assert_eq!(right.app.workspace.tools_side(), Some(false));
+            moved(&right, "right of the canvas");
+            assert_eq!(right.leaf(id).right(), right.screen().right());
+            // El divisor (2) menos la línea de egui (sin Pixel UI, la de 1 punto).
+            let sep = essentials.tools_box().width() - leaf.width();
+            assert_eq!(sep, 2.0, "the divider");
+            let line = if view.pixel_ui { 0.0 } else { 1.0 };
+            body(&mut right, vec2(-(sep - line), 0.0));
+            let mut solo = Workspace::solo(PanelId::Tools, Edge::Left);
+            solo.to_strip_at(PanelId::Groom, Edge::Left);
+            let mut left =
+                LayoutHarness::with_workspace(app_with_doc(view), solo, vec2(1200.0, 800.0));
+            assert_eq!(left.app.workspace.tools_side(), Some(true));
+            moved(&left, "left of the canvas, after the left strip");
+            assert_eq!(
+                left.leaf(id).min,
+                pos2(left.panel("dock_left").right(), leaf.top())
+            );
+            body(&mut left, Vec2::ZERO);
+        }
+        _ => panic!("{id:?}: no other place to measure it in"),
+    }
 }
 
 #[test]
@@ -13098,9 +13174,10 @@ fn dragging_a_divider_can_not_push_the_canvas_below_its_minimum() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     groom_below_the_canvas(&mut h);
     let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
-    // El divisor entre el lienzo y Groom, hasta casi arriba de la ventana.
+    // El divisor entre el lienzo y Groom, hasta casi arriba de la ventana (7 debajo de la barra de
+    // opciones).
     let from = pos2(canvas.center().x, canvas.bottom() + 1.0);
-    let to = pos2(from.x, 70.0);
+    let to = pos2(from.x, h.panel("tool_options").bottom() + 7.0);
     let press = |pos, pressed| Event::PointerButton {
         pos,
         button: PointerButton::Primary,
@@ -13173,56 +13250,66 @@ fn resizing_the_window_never_draws_the_canvas_below_its_minimum() {
 fn with_essentials_the_toolbar_is_a_leaf_where_its_panel_was() {
     use crate::panel_registry::PanelId;
     // Con Pixel UI (1200×800): el panel de antes iba de 0,63 a 37,780. Ahora es la hoja de Tools
-    // (0..35) y su divisor (35..37, que no se ve); el lienzo empieza donde empezaba.
+    // (0..35) y su divisor (35..37, que no se ve); el lienzo empieza donde empezaba. Las hojas, la
+    // tira y las barras las fija `essentials_at_1200_by_800`; aquí, lo que se mide contra ellas
+    // (origen de la hoja de Tools (0, 63); del lienzo, (37, 63)).
     let h = LayoutHarness::new(pixel_ui(), true);
     let w = &h.app.workspace;
     assert!(w.docked(PanelId::Tools) && !w.strip().contains(&PanelId::Tools));
+    assert_pinned_essentials(&h);
+    // El panel de antes: la hoja y su divisor, hasta la hoja del lienzo.
     assert_eq!(
         h.tools_box(),
-        Rect::from_min_max(pos2(0.0, 63.0), pos2(37.0, 780.0))
+        h.leaf(PanelId::Tools)
+            .with_max_x(h.leaf(PanelId::Canvas).left())
     );
     assert_eq!(
-        w.leaf_rect(PanelId::Tools),
-        Some(Rect::from_min_max(pos2(0.0, 63.0), pos2(35.0, 780.0)))
+        h.at(PanelId::Canvas, h.canvas.unwrap()),
+        Rect::from_min_max(pos2(3.0, 8.0), pos2(868.0, 519.0))
     );
-    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), 37.0);
-    assert_eq!(
-        h.canvas,
-        Some(Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0)))
-    );
-    // Los botones, donde estaban (los de la caja y los dos colores debajo).
-    for (label, rect) in [
-        ("Rectangular Marquee", (7.0, 70.0, 30.0, 92.0)),
-        ("Move", (7.0, 312.0, 30.0, 334.0)),
-        ("Artboard", (7.0, 334.0, 30.0, 357.0)),
-        ("Primary color", (8.0, 366.0, 29.0, 387.0)),
-        ("Secondary color", (8.0, 388.0, 29.0, 409.0)),
-    ] {
-        let (x0, y0, x1, y1) = rect;
-        assert_eq!(
-            h.button(label),
-            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
-            "{label}"
-        );
-    }
-    // Sin Pixel UI: la barra con nombres, de 184 con su línea, y sus botones donde estaban.
+    // Los botones, donde estaban (los de la caja y los dos colores debajo), en su hoja: aquí y en
+    // otros acomodos (`for_each_place`, con lo que corre su margen).
+    for_each_place(PanelId::Tools, pixel_ui(), |h, shift| {
+        for (label, rect) in [
+            ("Rectangular Marquee", (7.0, 7.0, 30.0, 29.0)),
+            ("Move", (7.0, 249.0, 30.0, 271.0)),
+            ("Artboard", (7.0, 271.0, 30.0, 294.0)),
+            ("Primary color", (8.0, 303.0, 29.0, 324.0)),
+            ("Secondary color", (8.0, 325.0, 29.0, 346.0)),
+        ] {
+            let (x0, y0, x1, y1) = rect;
+            assert_eq!(
+                h.at(PanelId::Tools, h.button(label)),
+                Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)).translate(shift),
+                "{label}"
+            );
+        }
+    });
+    // Sin Pixel UI: la barra con nombres, de 184 con su línea (hasta la barra de estado; el lienzo
+    // empieza donde termina), y sus botones donde estaban (origen de la hoja: (0, 78), fijado en
+    // `essentials_at_1200_by_800_plain`, que es este acomodo).
     let h = LayoutHarness::editor();
     assert_eq!(
         h.tools_box(),
-        Rect::from_min_max(pos2(0.0, 78.0), pos2(184.0, h.panel("status").top()))
+        h.leaf(PanelId::Tools)
+            .with_max_x(h.leaf(PanelId::Canvas).left())
     );
-    assert_eq!(h.canvas.unwrap().left(), 184.0);
-    for (label, rect) in [
-        ("🔲 Rectangular Marquee ", (8.0, 119.0, 153.0, 143.0)),
-        ("🗑 Eraser ", (8.0, 200.0, 175.0, 224.0)),
-    ] {
-        let (x0, y0, x1, y1) = rect;
-        assert_eq!(
-            h.button(label),
-            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
-            "{label}"
-        );
-    }
+    assert_eq!(h.tools_box().width(), crate::pixel_ui::TOOLBAR_WIDTH_PLAIN);
+    assert_eq!(h.tools_box().bottom(), h.panel("status").top());
+    assert_eq!(h.canvas.unwrap().left(), h.tools_box().right());
+    for_each_place(PanelId::Tools, plain(), |h, shift| {
+        for (label, rect) in [
+            ("🔲 Rectangular Marquee ", (8.0, 41.0, 153.0, 65.0)),
+            ("🗑 Eraser ", (8.0, 122.0, 175.0, 146.0)),
+        ] {
+            let (x0, y0, x1, y1) = rect;
+            assert_eq!(
+                h.at(PanelId::Tools, h.button(label)),
+                Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)).translate(shift),
+                "{label}"
+            );
+        }
+    });
 }
 
 #[test]
@@ -13232,8 +13319,8 @@ fn the_toolbars_divider_is_not_dragged_and_has_no_resize_cursor() {
         let mut h = LayoutHarness::new(view, true);
         let tools = h.tools_box();
         let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
-        // El centro del divisor: un punto antes del borde del panel de antes.
-        let at = pos2(tools.right() - 1.0, 400.0);
+        // El centro del divisor: un punto antes del borde del panel de antes, a media altura.
+        let at = pos2(tools.right() - 1.0, tools.center().y);
         h.frame_with(vec![Event::PointerMoved(at)]);
         h.frame();
         assert_ne!(h.cursor, egui::CursorIcon::ResizeHorizontal);
@@ -13250,6 +13337,7 @@ fn the_toolbar_moved_right_of_the_canvas_stays_there_and_the_canvas_reaches_the_
     use crate::workspace::{DockTarget, Split};
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let column = h.column();
+    let docked = h.tools_box();
     let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
     h.app
         .workspace
@@ -13262,10 +13350,11 @@ fn the_toolbar_moved_right_of_the_canvas_stays_there_and_the_canvas_reaches_the_
     let tools = h.tools_box();
     let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
     // El lienzo se ensancha hacia la izquierda, hasta la orilla.
-    assert_eq!(canvas.left(), 0.0, "{canvas:?}");
-    // La toolbar, a su derecha, del mismo ancho que antes; la columna no se movió.
+    assert_eq!(canvas.left(), h.screen().left(), "{canvas:?}");
+    // La toolbar, a su derecha, del mismo ancho que antes (su hoja y su divisor, como a la
+    // izquierda); la columna no se movió.
     assert_eq!(tools.left(), canvas.right(), "{tools:?} {canvas:?}");
-    assert_eq!(tools.width(), 37.0, "{tools:?}");
+    assert_eq!(tools.width(), docked.width(), "{tools:?}");
     assert_eq!(tools.right(), column.left());
     assert_eq!(h.column(), column);
     assert!(tools.contains_rect(h.button("Rectangular Marquee")));
@@ -13300,7 +13389,7 @@ fn closing_the_toolbar_sends_it_to_the_strip_and_its_button_opens_it() {
     );
     assert_eq!(w.places(PanelId::Tools), 1);
     let strip = h.panel("dock_left");
-    assert_eq!(strip.left(), 0.0);
+    assert_eq!(strip.left(), h.screen().left());
     assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), strip.right());
     assert_eq!(buttons_in(&h, "Tools", h.panel("dock_left")), 1);
     assert!(!h.buttons.iter().any(|(l, _)| l == "Rectangular Marquee"));
@@ -13319,7 +13408,10 @@ fn the_toolbar_floats_in_a_window_of_its_width() {
     }
     let w = &h.app.workspace;
     assert!(w.floating(PanelId::Tools));
-    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), 0.0);
+    assert_eq!(
+        w.leaf_rect(PanelId::Canvas).unwrap().left(),
+        h.screen().left()
+    );
     let tools = w.leaf_rect(PanelId::Tools).unwrap();
     assert!(tools.contains_rect(h.button("Rectangular Marquee")));
     // Del ancho de la toolbar o, si es más, del que pide su pestaña de título (la ventana no se
@@ -13472,87 +13564,90 @@ fn with_essentials_the_timeline_is_a_leaf_below_the_canvas_where_its_panel_was()
     // Con Pixel UI (1200×800): el panel de abajo de antes iba de 37,590 a 911,780 (con la tira a
     // su derecha, de alto completo). Ahora es la hoja del timeline (37..937, con la tira encima de
     // su punta derecha) debajo del divisor (588..590, que no se ve: es el aire de abajo del
-    // lienzo); el lienzo y los botones, donde estaban.
+    // lienzo); el lienzo y los botones, donde estaban. Las hojas (la del timeline desde (37, 590),
+    // la del lienzo desde (37, 63)), la tira y las barras las fija `essentials_at_1200_by_800`.
     let h = LayoutHarness::new(pixel_ui(), true);
     let w = &h.app.workspace;
     assert!(w.docked(PanelId::Timeline) && w.timeline_below());
-    assert_eq!(
-        w.leaf_rect(PanelId::Timeline),
-        Some(Rect::from_min_max(pos2(37.0, 590.0), pos2(937.0, 780.0)))
-    );
-    assert_eq!(
-        w.leaf_rect(PanelId::Canvas),
-        Some(Rect::from_min_max(pos2(37.0, 63.0), pos2(937.0, 588.0)))
-    );
+    assert_pinned_essentials(&h);
+    // El panel de antes: la hoja hasta la tira.
     assert_eq!(
         h.timeline_box(),
-        Rect::from_min_max(pos2(37.0, 590.0), pos2(911.0, 780.0))
+        h.leaf(PanelId::Timeline).with_max_x(h.panel("dock").left())
     );
     assert_eq!(
-        h.canvas,
-        Some(Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0)))
+        h.at(PanelId::Canvas, h.canvas.unwrap()),
+        Rect::from_min_max(pos2(3.0, 8.0), pos2(868.0, 519.0))
     );
-    assert_eq!(
-        h.panel("dock"),
-        Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
-    );
-    for (label, rect) in [
-        ("First frame", (43.0, 596.0, 68.0, 613.0)),
-        ("Play", (91.0, 596.0, 116.0, 613.0)),
-        ("New tilemap layer", (301.0, 596.0, 326.0, 613.0)),
-        ("Longer frame", (662.0, 596.0, 677.0, 612.0)),
-        ("Add Layer Mask", (141.0, 631.0, 152.0, 640.0)),
-    ] {
-        let (x0, y0, x1, y1) = rect;
-        assert_eq!(
-            h.button(label),
-            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
-            "{label}"
-        );
-    }
-    // En reposo, el divisor no se ve (ni su línea grabada ni un marcador): encima, el fondo.
+    // Lo de adentro, en su hoja: aquí y solo debajo del lienzo en otra ventana (`for_each_place`).
     let background = h.app.pixel.skin().unwrap().colors().background;
-    for y in [588.5, 589.5] {
-        for x in [37.5, 400.0, 910.5] {
-            assert_eq!(top_color(&h, pos2(x, y)), Some(background), "{x},{y}");
+    for_each_place(PanelId::Timeline, pixel_ui(), |h, _| {
+        for (label, rect) in [
+            ("First frame", (6.0, 6.0, 31.0, 23.0)),
+            ("Play", (54.0, 6.0, 79.0, 23.0)),
+            ("New tilemap layer", (264.0, 6.0, 289.0, 23.0)),
+            ("Longer frame", (625.0, 6.0, 640.0, 22.0)),
+            ("Add Layer Mask", (104.0, 41.0, 115.0, 50.0)),
+        ] {
+            let (x0, y0, x1, y1) = rect;
+            assert_eq!(
+                h.at(PanelId::Timeline, h.button(label)),
+                Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
+                "{label}"
+            );
         }
-    }
+        // En reposo, el divisor (los 2 puntos encima de la hoja) no se ve (ni su línea grabada ni
+        // un marcador): encima, el fondo. En su punta izquierda, en medio y junto a la tira.
+        let (leaf, dock) = (h.leaf(PanelId::Timeline), h.panel("dock"));
+        for y in [leaf.top() - 1.5, leaf.top() - 0.5] {
+            for x in [leaf.left() + 0.5, leaf.center().x, dock.left() - 0.5] {
+                assert_eq!(top_color(h, pos2(x, y)), Some(background), "{x},{y}");
+            }
+        }
+    });
     // Sin Pixel UI: el panel de antes iba de 184,587 a 912,777, con su línea de 1 punto arriba y
     // los botones 3 puntos abajo; la hoja empieza 2 puntos después (el divisor es esa línea y un
-    // punto del margen).
+    // punto del margen). Las hojas (la del timeline desde (184, 589)), la tira y la barra de
+    // estado las fija `essentials_at_1200_by_800_plain` (es este acomodo).
     let h = LayoutHarness::editor();
     let w = &h.app.workspace;
     assert!(w.timeline_below());
-    assert_eq!(h.panel("status").top(), 777.0);
-    assert_eq!(
-        w.leaf_rect(PanelId::Timeline),
-        Some(Rect::from_min_max(pos2(184.0, 589.0), pos2(937.0, 777.0)))
-    );
+    let (leaf, dock) = (h.leaf(PanelId::Timeline), h.panel("dock"));
+    assert_eq!(leaf.bottom(), h.panel("status").top());
     assert_eq!(
         h.timeline_box(),
-        Rect::from_min_max(pos2(184.0, 587.0), pos2(912.0, 777.0))
+        leaf.with_min_y(leaf.top() - 2.0).with_max_x(dock.left())
     );
     assert_eq!(
         h.canvas,
-        Some(Rect::from_min_max(pos2(184.0, 78.0), pos2(912.0, 587.0)))
+        Some(h.leaf(PanelId::Canvas).with_max_x(dock.left()))
     );
-    assert_eq!(
-        h.panel("dock"),
-        Rect::from_min_max(pos2(912.0, 78.0), pos2(938.0, 777.0))
-    );
-    assert_eq!(h.button("⏮").min, pos2(192.0, 590.0));
-    let frame = h.button("+ Frame").min;
-    assert_eq!(frame, pos2(376.843_75, 590.0));
-    // La línea de egui arriba del timeline, a lo ancho del panel de antes (una sola).
-    let lines: Vec<Rect> = h
-        .separator_lines_in(Rect::from_min_max(pos2(184.0, 586.0), pos2(912.0, 590.0)))
-        .into_iter()
-        .filter(|r| r.height() == 0.0)
-        .collect();
-    assert_eq!(
-        lines,
-        vec![Rect::from_min_max(pos2(184.0, 587.5), pos2(912.0, 587.5))]
-    );
+    assert_eq!(h.canvas.unwrap().bottom(), h.timeline_box().top());
+    for_each_place(PanelId::Timeline, plain(), |h, _| {
+        assert_eq!(h.at(PanelId::Timeline, h.button("⏮")).min, pos2(8.0, 1.0));
+        let frame = h.at(PanelId::Timeline, h.button("+ Frame")).min;
+        assert_eq!(frame, pos2(192.843_75, 1.0));
+        // La línea de egui arriba del timeline (en el divisor), a lo ancho del panel de antes
+        // (hasta la tira): una sola.
+        let (leaf, dock) = (h.leaf(PanelId::Timeline), h.panel("dock"));
+        let area = Rect::from_min_max(
+            pos2(leaf.left(), leaf.top() - 3.0),
+            pos2(dock.left(), leaf.top() + 1.0),
+        );
+        let lines: Vec<Rect> = h
+            .separator_lines_in(area)
+            .into_iter()
+            .filter(|r| r.height() == 0.0)
+            .map(|r| h.at(PanelId::Timeline, r))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![Rect::from_min_max(
+                pos2(0.0, -1.5),
+                pos2(dock.left() - leaf.left(), -1.5)
+            )]
+        );
+    });
 }
 
 #[test]
@@ -13560,23 +13655,23 @@ fn the_view_timeline_toggle_hides_its_leaf_and_brings_it_back_in_its_place() {
     use crate::panel_registry::PanelId;
     use crate::workspace::{DockTarget, Split};
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let (leaf, panel, canvas) = (
+    let (leaf, panel, canvas, dock) = (
         h.app.workspace.leaf_rect(PanelId::Timeline),
         h.timeline_box(),
         h.canvas,
+        h.panel("dock"),
     );
-    // El botón de la tira lo apaga: sin su hoja, el lienzo llega hasta abajo; la tira, igual.
+    // El botón de la tira lo apaga: sin su hoja, el lienzo llega hasta abajo (la barra de estado;
+    // su caja, con su aire de abajo: el margen de 5 y el borde de 3); la tira, igual.
     h.click(h.button("Timeline").center(), PointerButton::Primary);
     assert!(!h.app.view.timeline);
     let w = &h.app.workspace;
     assert!(!w.docked(PanelId::Timeline) && !w.floating(PanelId::Timeline));
     assert!(!h.app.drawn_this_frame(PanelId::Timeline));
-    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().bottom(), 780.0);
-    assert_eq!(h.canvas.unwrap().bottom(), 780.0 - 5.0 - 3.0);
-    assert_eq!(
-        h.panel("dock"),
-        Rect::from_min_max(pos2(911.0, 63.0), pos2(937.0, 780.0))
-    );
+    let status = h.panel("status").top();
+    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().bottom(), status);
+    assert_eq!(h.canvas.unwrap().bottom(), status - 5.0 - 3.0);
+    assert_eq!(h.panel("dock"), dock);
     // Y lo prende de vuelta, donde estaba.
     h.click(h.button("Timeline").center(), PointerButton::Primary);
     assert!(h.app.view.timeline);
@@ -13652,7 +13747,7 @@ fn the_timeline_moved_right_of_the_canvas_docks_there() {
     // derecha (no a la del timeline) y la columna donde estaba.
     assert!(timeline.left() > canvas.right(), "{timeline:?} {canvas:?}");
     assert_eq!(timeline.y_range(), canvas.y_range());
-    assert_eq!(canvas.bottom(), 780.0);
+    assert_eq!(canvas.bottom(), h.panel("status").top());
     assert_eq!(h.panel("dock").right(), canvas.right());
     assert_eq!(h.panel("dock").y_range(), canvas.y_range());
     assert_eq!(h.column(), column);
@@ -13673,18 +13768,18 @@ fn dragging_the_timeline_divider_keeps_its_height_as_a_preference() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     assert_eq!(h.app.view.timeline_height, None);
-    // El divisor: el cursor de cambiar el alto, como el borde del panel de antes.
-    let at = pos2(400.0, 589.0);
+    // El divisor (el punto de encima de la hoja): el cursor de cambiar el alto, como el borde del
+    // panel de antes.
+    let panel = h.timeline_box();
+    let at = pos2(panel.center().x, h.leaf(PanelId::Timeline).top() - 1.0);
     h.frame_with(vec![Event::PointerMoved(at)]);
     h.frame();
     assert_eq!(h.cursor, egui::CursorIcon::ResizeVertical);
     h.drag(at, at - vec2(0.0, 50.0));
     h.frame();
+    // 50 más alto (de 190, el de fábrica, a 240), con lo de abajo donde estaba.
     assert_eq!(h.app.view.timeline_height, Some(240.0));
-    assert_eq!(
-        h.timeline_box(),
-        Rect::from_min_max(pos2(37.0, 540.0), pos2(911.0, 780.0))
-    );
+    assert_eq!(h.timeline_box(), panel.with_min_y(panel.top() - 50.0));
     // Oculto y de vuelta, del mismo alto; en una ventana más baja, también.
     h.app.view.timeline = false;
     h.frame();
@@ -13760,49 +13855,62 @@ fn with_the_preview_on_essentials_floats_it_where_its_window_was() {
     // Fase D, tarea 5: el Preview es un panel del árbol que flota (una ventana de egui_dock) donde
     // estaba su ventana propia, con el marco y la barra del diseño: las medidas de antes (la
     // esquina de abajo a la derecha a 48 de la de la pantalla).
+    // La ventana, en su esquina (en 1200×800, de 946,582 a 1152,752); lo de adentro, en su hoja
+    // (el grupo de adentro del marco: 2 adentro de él, desde 948,584), aquí y en una ventana más
+    // chica (la esquina, y con ella el Preview, en otro lugar).
     use crate::panel_registry::PanelId;
-    let h = with_the_preview(pixel_ui());
-    assert!(
-        h.app.workspace.floating(PanelId::Preview),
-        "a floating panel"
-    );
-    assert_eq!(
-        dialog_frame(&h),
-        Some(Rect::from_min_max(pos2(946.0, 582.0), pos2(1152.0, 752.0)))
-    );
-    assert_eq!(
-        h.drawn("preview.grip"),
-        vec![Rect::from_min_max(pos2(1139.0, 739.0), pos2(1152.0, 752.0))]
-    );
-    let window = dialog_frame(&h).unwrap();
-    assert_eq!(
-        node_in(&h, "Play", window),
-        Rect::from_min_max(pos2(950.0, 584.0), pos2(959.0, 593.0))
-    );
-    assert_eq!(
-        node_in(&h, "Center", window),
-        Rect::from_min_max(pos2(960.0, 584.0), pos2(969.0, 593.0))
-    );
-    assert_eq!(
-        node_in(&h, "Close", window),
-        Rect::from_min_max(pos2(1141.0, 585.0), pos2(1150.0, 594.0))
-    );
-    let title = h
-        .text_rects
-        .iter()
-        .find(|(t, _, _)| t == "Preview")
-        .map(|(_, r, _)| *r);
-    assert_eq!(
-        title,
-        Some(Rect::from_min_max(pos2(950.0, 581.5), pos2(984.0, 595.5)))
-    );
-    // Sin el marco de las ventanas del workspace (`menu.side`) ni marcadores sin cambiar.
-    assert!(h.drawn("menu.side").is_empty());
-    assert!(
-        !h.shapes
+    let mut h = with_the_preview(pixel_ui());
+    for size in [vec2(1200.0, 800.0), vec2(1000.0, 700.0)] {
+        h.size = size;
+        for _ in 0..3 {
+            h.frame();
+        }
+        assert!(
+            h.app.workspace.floating(PanelId::Preview),
+            "a floating panel"
+        );
+        let window = h.window(PanelId::Preview);
+        assert_eq!(dialog_frame(&h), Some(window), "{size:?}");
+        assert_eq!(window.max, h.screen().max + crate::preview::OFFSET);
+        assert_eq!(window.size(), vec2(206.0, 170.0));
+        assert_eq!(h.leaf(PanelId::Preview), window.shrink(2.0));
+        let at = |r: Rect| h.at(PanelId::Preview, r);
+        assert_eq!(
+            h.drawn("preview.grip")
+                .into_iter()
+                .map(at)
+                .collect::<Vec<_>>(),
+            vec![Rect::from_min_max(pos2(191.0, 155.0), pos2(204.0, 168.0))]
+        );
+        assert_eq!(
+            at(node_in(&h, "Play", window)),
+            Rect::from_min_max(pos2(2.0, 0.0), pos2(11.0, 9.0))
+        );
+        assert_eq!(
+            at(node_in(&h, "Center", window)),
+            Rect::from_min_max(pos2(12.0, 0.0), pos2(21.0, 9.0))
+        );
+        assert_eq!(
+            at(node_in(&h, "Close", window)),
+            Rect::from_min_max(pos2(193.0, 1.0), pos2(202.0, 10.0))
+        );
+        let title = h
+            .text_rects
             .iter()
-            .any(|c| crate::workspace::has_marker(&c.shape))
-    );
+            .find(|(t, _, _)| t == "Preview")
+            .map(|(_, r, _)| at(*r));
+        assert_eq!(
+            title,
+            Some(Rect::from_min_max(pos2(2.0, -2.5), pos2(36.0, 11.5)))
+        );
+        // Sin el marco de las ventanas del workspace (`menu.side`) ni marcadores sin cambiar.
+        assert!(h.drawn("menu.side").is_empty());
+        assert!(
+            !h.shapes
+                .iter()
+                .any(|c| crate::workspace::has_marker(&c.shape))
+        );
+    }
 }
 
 #[test]
@@ -13815,7 +13923,8 @@ fn the_floating_preview_follows_the_corner_of_the_window_until_it_is_moved() {
         h.frame();
     }
     let frame = dialog_frame(&h).unwrap();
-    assert_eq!(frame.max, pos2(1000.0 - 48.0, 700.0 - 48.0));
+    assert_eq!(frame.max, h.screen().max + crate::preview::OFFSET);
+    assert_eq!(crate::preview::OFFSET, vec2(-48.0, -48.0));
     assert_eq!(frame.size(), Vec2::new(206.0, 170.0));
     // Arrastrada de su barra de título (entre el título y la ○), 30 a la izquierda y 20 arriba.
     let at = pos2(frame.center().x, frame.top() + 9.0);
@@ -13873,19 +13982,22 @@ fn without_pixel_ui_the_preview_floats_in_its_egui_window_where_it_was() {
     // Sin Pixel UI, la `egui::Window` de antes (en una ventana de egui_dock sin pestañas): en el
     // mismo lugar y con las mismas medidas, sacadas de una sonda sobre 8a62e16 (la esquina de
     // abajo a la derecha a 48 de la de la pantalla, del ancho de fábrica de una `egui::Window`).
+    // En 1200×800 la ventana va de 812,539 a 1152,752 y su hoja (lo de adentro de la
+    // `egui::Window`, con su barra de título), desde 819,546: lo de adentro se mide en ella.
     use crate::panel_registry::PanelId;
     let mut h = with_the_preview(plain());
     assert!(h.app.workspace.floating(PanelId::Preview));
-    let window = Rect::from_min_max(pos2(812.0, 539.0), pos2(1152.0, 752.0));
-    assert_eq!(
-        h.app.workspace.window_rect(&h.ctx, PanelId::Preview),
-        Some(window)
-    );
+    let window = h.window(PanelId::Preview);
+    assert_eq!(window.max, h.screen().max + crate::preview::OFFSET);
+    assert_eq!(window.size(), vec2(340.0, 213.0));
+    let leaf = h.leaf(PanelId::Preview);
+    assert_eq!(leaf.min, window.min + vec2(7.0, 7.0));
+    let at = |r: Rect| h.at(PanelId::Preview, r);
     let rects = painted_rects(&h);
     // El marco de la ventana y, arriba, el de su barra de título (sin las esquinas de abajo: su
-    // borde de abajo es la línea que la separa).
+    // borde de abajo es la línea que la separa), de 35 de alto.
     assert!(rects.iter().any(|(r, _)| r.rect == window));
-    let bar = Rect::from_min_max(pos2(812.0, 539.0), pos2(1152.0, 574.0));
+    let bar = window.with_max_y(window.top() + 35.0);
     let bar = rects
         .iter()
         .find(|(r, _)| {
@@ -13904,33 +14016,35 @@ fn without_pixel_ui_the_preview_floats_in_its_egui_window_where_it_was() {
         .text_rects
         .iter()
         .filter(|(t, _, _)| t == "Preview")
-        .map(|(_, r, _)| *r)
+        .map(|(_, r, _)| at(*r))
         .collect();
     assert_eq!(
         titles,
         vec![Rect::from_min_max(
-            pos2(935.65625, 546.0),
-            pos2(999.625, 567.0)
+            pos2(116.656_25, 0.0),
+            pos2(180.625, 21.0)
         )]
     );
     assert_eq!(
-        node_in(&h, "Close window", window),
-        Rect::from_min_max(pos2(1127.625, 549.5), pos2(1141.625, 563.5))
+        at(node_in(&h, "Close window", window)),
+        Rect::from_min_max(pos2(308.625, 3.5), pos2(322.625, 17.5))
     );
     // "Play" y la vista de 192×144.
     assert_eq!(
-        node_in(&h, "Play", window),
-        Rect::from_min_max(pos2(819.0, 580.0), pos2(850.78125, 598.0))
+        at(node_in(&h, "Play", window)),
+        Rect::from_min_max(pos2(0.0, 34.0), pos2(31.781_25, 52.0))
     );
+    let view = preview_view(&h, window).expect("the view");
     assert_eq!(
-        preview_view(&h, window),
-        Some(Rect::from_min_max(pos2(819.0, 601.0), pos2(1011.0, 745.0)))
+        at(view),
+        Rect::from_min_max(pos2(0.0, 55.0), pos2(192.0, 199.0))
     );
-    // La agarradera: la esquina de la vista (9×9).
-    h.frame_with(vec![Event::PointerMoved(pos2(1006.0, 740.0))]);
+    // La agarradera: la esquina de la vista (9×9): adentro de ella sí, 6 más a la izquierda no.
+    let grip = view.max - vec2(5.0, 5.0);
+    h.frame_with(vec![Event::PointerMoved(grip)]);
     h.frame();
     assert_eq!(h.cursor, egui::CursorIcon::ResizeNwSe);
-    h.frame_with(vec![Event::PointerMoved(pos2(1000.0, 740.0))]);
+    h.frame_with(vec![Event::PointerMoved(grip - vec2(6.0, 0.0))]);
     h.frame();
     assert_ne!(h.cursor, egui::CursorIcon::ResizeNwSe);
 }
@@ -13940,10 +14054,20 @@ fn the_preview_shows_up_at_its_corner_from_its_first_visible_frame() {
     // Prendido, su ventana se ve en su esquina desde el primer frame en que se ve (no en el lugar
     // de fábrica de egui_dock): del tamaño de la de antes desde el principio. El primer frame de
     // un área nueva de egui es una pasada de medir (no se ve; egui la acomoda con su tamaño de
-    // fábrica de área).
-    let corner_title = Rect::from_min_max(pos2(935.65625, 546.0), pos2(999.625, 567.0));
-    let corner_dialog = Rect::from_min_max(pos2(946.0, 582.0), pos2(1152.0, 752.0));
-    let corner_grip = Rect::from_min_max(pos2(1139.0, 739.0), pos2(1152.0, 752.0));
+    // fábrica de área). Su esquina: donde queda después (lo que miden, en ella,
+    // `with_the_preview_on_essentials_floats_it_where_its_window_was` y
+    // `without_pixel_ui_the_preview_floats_in_its_egui_window_where_it_was`).
+    let title_of = |h: &LayoutHarness| {
+        h.text_rects
+            .iter()
+            .find(|(t, _, _)| t == "Preview")
+            .map(|(_, r, _)| *r)
+    };
+    let settled = with_the_preview(plain());
+    let corner_title = title_of(&settled).expect("its title");
+    let settled = with_the_preview(pixel_ui());
+    let corner_dialog = dialog_frame(&settled).expect("its window");
+    let corner_grip = settled.drawn("preview.grip")[0];
     for view in [plain(), pixel_ui()] {
         let mut h = LayoutHarness::new(view, true);
         h.app.doc.editor.insert_empty_frame();
@@ -13962,12 +14086,7 @@ fn the_preview_shows_up_at_its_corner_from_its_first_visible_frame() {
                 );
                 (dialog_frame(&h), corner_dialog)
             } else {
-                let title = h
-                    .text_rects
-                    .iter()
-                    .find(|(t, _, _)| t == "Preview")
-                    .map(|(_, r, _)| *r);
-                (title, corner_title)
+                (title_of(&h), corner_title)
             };
             if let Some(drawn) = drawn {
                 assert_eq!(drawn, expected, "pixel={pixel}, frame {k}");
@@ -14171,12 +14290,14 @@ fn the_preview_toggle_takes_it_out_of_the_tree_and_back_where_it_was() {
     for _ in 0..2 {
         h.frame();
     }
-    h.app.workspace.float(PanelId::Preview, pos2(300.0, 200.0));
+    // (Dónde se pone la ventana: una entrada, no una medida.)
+    let to = pos2(300.0, 200.0);
+    h.app.workspace.float(PanelId::Preview, to);
     for _ in 0..4 {
         h.frame();
     }
     let moved = dialog_frame(&h).unwrap();
-    assert_eq!(moved.min, pos2(300.0, 200.0));
+    assert_eq!(moved.min, to);
     h.click(h.button("Preview").center(), PointerButton::Primary);
     h.frame();
     assert_eq!(h.app.workspace.places(PanelId::Preview), 0);
@@ -14223,7 +14344,7 @@ fn a_group_against_the_left_edge_collapses_to_a_left_strip_with_its_icons_and_fl
         h.frame();
     }
     let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
-    assert_eq!(leaf.left(), 0.0);
+    assert_eq!(leaf.left(), h.screen().left());
     // Su « (va solo: aparece desde su franja de agarre).
     h.frame_with(vec![Event::PointerMoved(pos2(
         leaf.center().x,
@@ -14244,7 +14365,7 @@ fn a_group_against_the_left_edge_collapses_to_a_left_strip_with_its_icons_and_fl
     // La tira, en la orilla izquierda, del alto de la de la derecha, con su ícono; la toolbar
     // (y lo demás) a su derecha.
     let strip = h.panel("dock_left");
-    assert_eq!(strip.left(), 0.0);
+    assert_eq!(strip.left(), h.screen().left());
     assert_eq!(strip.width(), crate::dock::WIDTH);
     assert_eq!(strip.y_range(), h.panel("dock").y_range());
     assert_eq!(buttons_in(&h, "Groom", h.panel("dock_left")), 1);
@@ -14279,17 +14400,26 @@ fn with_essentials_no_other_strip_shows_and_an_emptied_one_takes_no_room() {
             "{id}"
         );
     }
-    // Lo de siempre (1200×800, Pixel UI).
-    let canvas = Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0));
-    let tools = Rect::from_min_max(pos2(0.0, 63.0), pos2(37.0, 780.0));
-    assert_eq!(h.canvas, Some(canvas));
-    assert_eq!(h.tools_box(), tools);
+    // Lo de siempre (1200×800, Pixel UI: lo de `essentials_at_1200_by_800`), y el lienzo y la
+    // toolbar como ahí.
+    assert_pinned_essentials(&h);
+    let canvas = h.canvas.unwrap();
+    assert_eq!(
+        h.at(PanelId::Canvas, canvas),
+        Rect::from_min_max(pos2(3.0, 8.0), pos2(868.0, 519.0))
+    );
+    let tools = h.tools_box();
+    assert_eq!(
+        tools,
+        h.leaf(PanelId::Tools)
+            .with_max_x(h.leaf(PanelId::Canvas).left())
+    );
     // La toolbar a la tira de la izquierda y de vuelta (con "Dock"): la tira vacía no ocupa nada.
     h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
     for _ in 0..3 {
         h.frame();
     }
-    assert_eq!(h.panel("dock_left").left(), 0.0);
+    assert_eq!(h.panel("dock_left").left(), h.screen().left());
     h.app.workspace.dock_from_strip(PanelId::Tools);
     for _ in 0..3 {
         h.frame();
@@ -14591,7 +14721,7 @@ fn closing_a_tab_sends_it_to_the_strip_of_the_nearest_edge() {
     // La de arriba, en su orilla: debajo de la barra de opciones.
     let top = h.panel("dock_top");
     assert_eq!(top.height(), crate::dock::WIDTH);
-    assert_eq!(top.top(), 63.0);
+    assert_eq!(top.top(), h.panel("tool_options").bottom());
     assert_eq!(buttons_in(&h, "Lumen", h.panel("dock_top")), 1);
     // Su flyout, debajo de su botón.
     let button = h.button("Lumen");
