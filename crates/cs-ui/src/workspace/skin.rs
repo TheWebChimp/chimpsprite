@@ -780,8 +780,9 @@ pub(super) fn plan_bars(
 /// Las pestañas del kit sobre las de egui_dock, en su misma capa: por cada grupo con barra (ver
 /// [`TabBar`]), la línea grabada cortada debajo de la activa y las pestañas que se ven, con su
 /// nombre como entra (la activa al final, tapa a sus vecinas; las flechas las pone
-/// `show::tab_arrows`); la que se arrastra, además, como fantasma bajo el puntero. En los grupos sin barra
-/// (`hidden`), la franja de arriba resaltada con el puntero encima, y su fantasma al arrastrarla.
+/// `show::tab_arrows`); la que se arrastra, además, como fantasma bajo el puntero. En los grupos
+/// sin barra (`hidden`), la franja de arriba resaltada con el puntero encima, y su fantasma al
+/// arrastrarla.
 pub(super) fn paint_tabs(
     ui: &egui::Ui,
     skin: &Skin,

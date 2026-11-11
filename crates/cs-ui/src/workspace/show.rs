@@ -190,7 +190,8 @@ impl TabViewer for Viewer<'_> {
         {
             let rect = egui::Rect::from_min_size(ui.max_rect().min - window.inset, window.size);
             // El primer frame de su ventana es la pasada de medir de egui (su área, en otro lugar):
-            // egui_dock arma el cuerpo con `Ui::new`, que no la hereda; lo de adentro, tampoco se ve.
+            // egui_dock arma el cuerpo con `Ui::new`, que no la hereda; lo de adentro, tampoco se
+            // ve.
             if window.measuring {
                 ui.set_invisible();
             }
@@ -785,8 +786,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         }
         bar.multiply_opacity(painter.opacity());
         // De su barra de título se mueve (como su ventana de antes): un widget encima de la ventana
-        // de egui_dock, debajo de la franja de agarre de su grupo (la de arriba, de la que se lleva a
-        // acoplar), que con el radio de egui se quedaría también con lo de abajo de ella. Los
+        // de egui_dock, debajo de la franja de agarre de su grupo (la de arriba, de la que se lleva
+        // a acoplar), que con el radio de egui se quedaría también con lo de abajo de ella. Los
         // controles de la barra, registrados después, le ganan.
         let top = rect.top() + frame_top + skin::GRAB_STRIP;
         let title = egui::Rect::from_x_y_ranges(
@@ -1245,8 +1246,8 @@ fn cover_timeline_divider(ui: &mut egui::Ui, skin: Option<&Skin>, divider: egui:
 }
 
 /// Los mínimos `m` con los de los paneles pegados al divisor izquierdo de la columna derecha
-/// (`beside`) un divisor (`sep`) más angostos: su margen izquierdo cuenta desde la línea, como en el
-/// panel derecho de antes (ver `Viewer::tab_style_override`), así que la columna mínima mide lo
+/// (`beside`) un divisor (`sep`) más angostos: su margen izquierdo cuenta desde la línea, como en
+/// el panel derecho de antes (ver `Viewer::tab_style_override`), así que la columna mínima mide lo
 /// mismo que el panel mínimo de antes.
 fn beside_minima(mut m: Minima, beside: &[PanelId], sep: f32) -> Minima {
     for id in beside {
@@ -1326,7 +1327,8 @@ fn collapse_buttons(
     let dragging = ctx.dragged_id().is_some() && ctx.input(|i| i.pointer.is_decidedly_dragging());
     let size = egui::Vec2::splat(kit::tabs::ARROW_SIZE);
     let mut pressed = None;
-    // La toolbar sola en su ventana (con Pixel UI) también lleva el suyo (ver `Workspace::bare_tools`).
+    // La toolbar sola en su ventana (con Pixel UI) también lleva el suyo (ver
+    // `Workspace::bare_tools`).
     let tools_window = w.bare_tools();
     let main_layer = ui.layer_id();
     for (path, leaf) in w.state.iter_leaves() {
@@ -1611,8 +1613,8 @@ fn tab_arrows(
     moved
 }
 
-/// Con un diálogo modal, lo de las ventanas flotantes que se agarraría (ver el modal en
-/// [`show`]): egui_dock las arma con su propia `egui::Window`, que no hereda lo apagado del `Ui` del
+/// Con un diálogo modal, lo de las ventanas flotantes que se agarraría (ver el modal en [`show`]):
+/// egui_dock las arma con su propia `egui::Window`, que no hereda lo apagado del `Ui` del
 /// `DockArea`, así que encima de lo suyo, en su capa, va un widget que se queda con el puntero sin
 /// hacer nada (registrado después, le gana a lo de debajo). En una ventana con Color o con el
 /// Preview (que un diálogo no apaga), solo lo que la mueve, la cambia de tamaño, la parte o la
@@ -2566,6 +2568,40 @@ mod tests {
     }
 
     #[test]
+    fn without_pixel_ui_the_close_button_sends_the_panel_to_the_strip_of_its_edge() {
+        // La × de egui_dock (sin Pixel UI): como la del kit, a la tira de la orilla del grupo.
+        let mut app = test_app();
+        app.view.pixel_ui = false;
+        let (s, n) = app.workspace.leaf_of(PanelId::Canvas).unwrap();
+        app.workspace.dock(
+            PanelId::Groom,
+            DockTarget::Split(s, n, egui_dock::Split::Left),
+        );
+        let (s, n) = app.workspace.leaf_of(PanelId::Groom).unwrap();
+        app.workspace.dock(PanelId::Library, DockTarget::Leaf(s, n));
+        let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+        app.workspace.dock(PanelId::Slices, DockTarget::Leaf(s, n));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let out = frames_in(&ctx, &mut app, SIZE);
+        assert!(app.pixel.skin().is_none());
+        for (id, want) in [
+            (PanelId::Library, Edge::Left),
+            (PanelId::Slices, Edge::Right),
+        ] {
+            assert_eq!(app.workspace.edge_of(id), Some(want), "{id:?}");
+            let out = if id == PanelId::Library {
+                out.clone()
+            } else {
+                frames_in(&ctx, &mut app, SIZE)
+            };
+            close_tab(&ctx, &mut app, &out, SIZE, id);
+            frames_in(&ctx, &mut app, SIZE);
+            assert_eq!(app.workspace.strip_of(id), Some(want), "{id:?}");
+        }
+    }
+
+    #[test]
     fn the_toolbar_and_the_timeline_below_are_claimed_by_the_workspace() {
         // Una instancia por panel por frame: también la toolbar y el timeline de debajo del
         // lienzo (sus ramas propias del `Viewer`) se reservan para el workspace.
@@ -2689,6 +2725,9 @@ mod tests {
             let before = buttons_in(&out, window);
             assert!(!before.is_empty(), "the toolbar's buttons");
             let offset = tabs_offset(&ctx, &app, PanelId::Library);
+            assert_eq!(offset.is_some(), pixel, "the kit's bar only with Pixel UI");
+            // Lo corrido de la barra en egui_dock (con Pixel UI, lo pone el kit): en los dos modos.
+            let scroll = leaf_scroll(&app, PanelId::Library);
             frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(at)], SIZE);
             let down = wheel(egui::MouseWheelUnit::Line, -2.0, Default::default());
             frame_in(&ctx, &mut app, vec![down], SIZE);
@@ -2703,7 +2742,69 @@ mod tests {
                 offset,
                 "pixel {pixel}: the tabs below do not page"
             );
+            assert_eq!(
+                leaf_scroll(&app, PanelId::Library),
+                scroll,
+                "pixel {pixel}: the tabs below do not scroll"
+            );
         }
+    }
+
+    /// Lo corrido de la barra de pestañas del grupo de `id` (`LeafNode::scroll` de egui_dock).
+    fn leaf_scroll(app: &ChimpApp, id: PanelId) -> f32 {
+        let (surface, node) = app.workspace.leaf_of(id).unwrap();
+        let path = NodePath { surface, node };
+        app.workspace.state.leaf(path).unwrap().scroll
+    }
+
+    #[test]
+    fn the_wheel_pages_the_overflowing_bar_of_a_floating_window() {
+        let mut app = test_app();
+        app.workspace
+            .float(PanelId::Library, egui::pos2(320.0, 120.0));
+        let (s, n) = app.workspace.leaf_of(PanelId::Library).unwrap();
+        for id in [
+            PanelId::Slices,
+            PanelId::Artboards,
+            PanelId::Lospec,
+            PanelId::Groom,
+            PanelId::Lumen,
+            PanelId::Model,
+            PanelId::Font,
+        ] {
+            app.workspace.dock(id, DockTarget::Leaf(s, n));
+        }
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        frames_in(&ctx, &mut app, SIZE);
+        let (s, _) = app.workspace.leaf_of(PanelId::Library).unwrap();
+        let height = app
+            .workspace
+            .window_rect(&ctx, PanelId::Library)
+            .unwrap()
+            .height();
+        app.workspace
+            .state
+            .get_window_state_mut(s)
+            .unwrap()
+            .set_size(egui::vec2(260.0, height));
+        let out = frames_in(&ctx, &mut app, SIZE);
+        assert!(node_rect(&out, "Next tabs").is_some(), "the bar overflows");
+        let (s, n) = app.workspace.leaf_of(PanelId::Library).unwrap();
+        let path = NodePath {
+            surface: s,
+            node: n,
+        };
+        app.workspace.state.leaf_mut(path).unwrap().active = egui_dock::TabIndex(0);
+        frames_in(&ctx, &mut app, SIZE);
+        assert_eq!(tabs_offset(&ctx, &app, PanelId::Library), Some(0));
+        let bar = leaf(&app, PanelId::Library);
+        let at = egui::pos2(bar.left() + 20.0, bar.top() + 6.0);
+        frame_in(&ctx, &mut app, vec![egui::Event::PointerMoved(at)], SIZE);
+        let down = wheel(egui::MouseWheelUnit::Line, -1.0, Default::default());
+        frame_in(&ctx, &mut app, vec![down], SIZE);
+        frames_in(&ctx, &mut app, SIZE);
+        assert_eq!(tabs_offset(&ctx, &app, PanelId::Library), Some(1));
     }
 
     #[test]

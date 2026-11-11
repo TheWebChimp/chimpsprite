@@ -305,7 +305,6 @@ mod tests {
     use egui_dock::{DockState, NodePath};
 
     use super::*;
-    use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     use crate::workspace::model::{SAVED_VERSION, sound};
     use crate::workspace::test_util::{frames, test_app};
@@ -376,12 +375,8 @@ mod tests {
 
     #[test]
     fn essentials_is_todays_layout() {
-        let w = factory(ESSENTIALS).unwrap();
-        let today = Workspace::essentials();
-        assert_eq!(w.state_tabs(), today.state_tabs());
-        for edge in Edge::ALL {
-            assert_eq!(w.strip_at(edge), today.strip_at(edge), "{edge:?}");
-        }
+        // `factory(ESSENTIALS)` es `Workspace::essentials()` (el de hoy, con sus rects medidos en
+        // los tests de layout); aquí, lo que se ve y que dejarlo y volver no lo cambia.
         assert_eq!(
             factory_shown(ESSENTIALS),
             Shown {
@@ -389,9 +384,9 @@ mod tests {
                 preview: false
             }
         );
+        let today = factory(ESSENTIALS).unwrap();
         let want = essentials_rects(&drawn(today, Shown::default()));
         assert!(want.iter().all(Option::is_some), "{want:?}");
-        assert_eq!(essentials_rects(&drawn(w, Shown::default())), want);
         // Dejado y vuelto a elegir (sin cambios): se ve igual.
         let mut app = drawn(Workspace::essentials(), Shown::default());
         let mut ws = Workspaces::default();
@@ -622,6 +617,43 @@ mod tests {
         assert_eq!(ws.current(), ESSENTIALS);
         assert!(w.timeline_below());
         assert_eq!(w.places(PanelId::Timeline), 1);
+    }
+
+    #[test]
+    fn a_broken_layout_of_a_user_workspace_reads_as_essentials() {
+        // Como un acomodo dejado roto (ver abajo), pero el de cómo se creó uno del usuario: el
+        // nombre se queda y su acomodo es Essentials (al elegirlo y con Reset), sin tronar.
+        let mut broken = mine().to_layout(Shown::default());
+        broken.state.main_surface_mut()[NodeIndex(2)] = egui_dock::Node::Empty;
+        let mut saved = mine().to_saved();
+        saved.user = vec![("Mine".into(), broken)];
+        let (mut ws, mut w) = Workspaces::from_saved(saved);
+        assert_eq!(ws.user_names(), ["Mine"]);
+        assert!(w.docked(PanelId::Groom), "the current layout stays");
+        ws.switch("Mine", &mut w, Shown::default()).unwrap();
+        assert_eq!(w.state_tabs(), Workspace::essentials().state_tabs());
+        assert!(sound(&w.state));
+        ws.reset(&mut w);
+        assert_eq!(w.state_tabs(), Workspace::essentials().state_tabs());
+    }
+
+    #[test]
+    fn an_anchored_preview_comes_back_to_its_corner_after_switching_away_and_back() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.view.preview = true;
+        frames(&ctx, &mut app);
+        assert!(app.workspace.preview_anchored);
+        let corner = app.workspace.window_rect(&ctx, PanelId::Preview).unwrap();
+        app.switch_workspace("Tiles");
+        frames(&ctx, &mut app);
+        assert!(!app.view.preview, "Tiles has it off");
+        app.switch_workspace(ESSENTIALS);
+        frames(&ctx, &mut app);
+        assert!(app.view.preview);
+        let w = &app.workspace;
+        assert!(w.floating(PanelId::Preview) && w.preview_anchored);
+        assert_eq!(w.window_rect(&ctx, PanelId::Preview), Some(corner));
     }
 
     #[test]

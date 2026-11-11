@@ -175,7 +175,8 @@ impl Workspace {
     }
 
     /// Le da a cada grupo de la superficie principal su rect dentro de `rect`, como lo haría
-    /// [`show`] (sin el ancho de los divisores): para probar [`drop_target`] sin dibujar.
+    /// [`show`](fn@super::show) (sin el ancho de los divisores): para probar [`drop_target`] sin
+    /// dibujar.
     #[cfg(test)]
     pub(crate) fn layout_for_test(&mut self, rect: egui::Rect) {
         fn place(tree: &mut Tree<PanelId>, node: NodeIndex, rect: egui::Rect) {

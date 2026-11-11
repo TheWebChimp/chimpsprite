@@ -220,11 +220,12 @@ impl Workspace {
     }
 
     /// La ventana del Preview flotando: solo en ella (`bare`: lo que mide su ventana de antes, la
-    /// del diseño o la `egui::Window`), de ese tamaño cada frame (como su ventana de antes, no se agranda de los
-    /// bordes: lo hace su agarradera); en su esquina ([`Workspace::preview_anchored`]), con la
-    /// esquina de abajo a la derecha a `preview::OFFSET` de la de la pantalla (lo que hacía el ancla
-    /// de su ventana de antes, con el tamaño de la ventana) hasta que se la arrastra. Acoplado, ya
-    /// no va en su esquina. Devuelve su ventana si va en su esquina.
+    /// del diseño o la `egui::Window`), de ese tamaño cada frame (como su ventana de antes, no se
+    /// agranda de los bordes: lo hace su agarradera); en su esquina
+    /// ([`Workspace::preview_anchored`]), con la esquina de abajo a la derecha a `preview::OFFSET`
+    /// de la de la pantalla (lo que hacía el ancla de su ventana de antes, con el tamaño de la
+    /// ventana) hasta que se la arrastra. Acoplado, ya no va en su esquina. Devuelve su ventana si
+    /// va en su esquina.
     pub(super) fn place_preview(
         &mut self,
         ctx: &egui::Context,
@@ -293,7 +294,7 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 /// timeline, el mínimo de su ficha (sin margen: su hoja va de borde a borde). El Preview, el alto
 /// de su modo (`preview::min_height`) con el margen. Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
-/// scroll, la barra (así los acomoda [`Viewer`]).
+/// scroll, la barra (así los acomoda el `Viewer` de `show`).
 pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
     let margin = 2.0 * f32::from(dock::FLYOUT_MARGIN);
     PanelId::ALL
@@ -431,9 +432,9 @@ fn node_min_fixed(
 
 /// La fracción de un split que mide `len` (a lo ancho o a lo alto) para que cada lado tenga al
 /// menos su mínimo (`a` y `b`, más medio divisor `sep`): la misma si ya alcanza; si no, la del
-/// borde de ese mínimo. Si no alcanza para los dos, el lado que no se desplaza (`keep`: `Some(true)`
-/// el primero, `Some(false)` el segundo) se queda con su mínimo y el otro, con lo que sobra (lo
-/// suyo va con scroll); si los dos o ninguno se desplazan, en proporción a sus mínimos.
+/// borde de ese mínimo. Si no alcanza para los dos, el lado que no se desplaza (`keep`:
+/// `Some(true)` el primero, `Some(false)` el segundo) se queda con su mínimo y el otro, con lo que
+/// sobra (lo suyo va con scroll); si los dos o ninguno se desplazan, en proporción a sus mínimos.
 fn fit_fraction(len: f32, fraction: f32, a: f32, b: f32, sep: f32, keep: Option<bool>) -> f32 {
     if len <= 0.0 || !len.is_finite() {
         return fraction;
@@ -514,8 +515,8 @@ pub(super) fn fit_splits(state: &mut DockState<PanelId>, m: &Minima, sep: f32, b
                         _ => None,
                     }
                 };
-                // A lo alto, si el lado del lienzo no cabe entero con el otro, se queda con lo que no
-                // se desplaza (lo de un panel con scroll cede antes que el timeline de al lado).
+                // A lo alto, si el lado del lienzo no cabe entero con el otro, se queda con lo que
+                // no se desplaza (lo de un panel con scroll cede antes que el timeline de al lado).
                 if !horizontal && a + b + sep > len {
                     if has_canvas(tree, node.left()) {
                         a = node_min_fixed(tree, node.left(), m, sep, bar).y;

@@ -12177,6 +12177,18 @@ fn a_panel_from_the_window_menu_is_focused_where_it_is_or_shown_in_its_place() {
 }
 
 #[test]
+fn in_a_model_tab_the_window_menu_checks_the_3d_panel() {
+    use crate::panel_registry::PanelId;
+    // En la pestaña de un modelo el 3D lo muestra su panel fijo: está abierto (con su ✓), aunque
+    // su ícono siga en la tira.
+    let mut h = with_model_tab();
+    assert!(h.app.workspace.strip_of(PanelId::Model).is_some());
+    open_menu(&mut h, "Window");
+    assert!(check(&h, PanelId::Model.label()).1);
+    assert!(!check(&h, PanelId::Library.label()).1);
+}
+
+#[test]
 fn a_hidden_panel_or_a_floating_model_from_the_window_menu_also_comes_forward() {
     use crate::panel_registry::PanelId;
     use crate::workspace::DockTarget;
@@ -12727,6 +12739,28 @@ fn shrinking_the_window_and_growing_it_back_keeps_the_sides_points() {
 /// Lo mínimo de la hoja del lienzo en el último frame.
 fn canvas_min(h: &LayoutHarness) -> Vec2 {
     h.app.canvas_area_min()
+}
+
+#[test]
+fn in_a_model_tab_the_canvas_leaf_keeps_room_for_the_fixed_3d_panel() {
+    use crate::panel_registry::{CANVAS_MIN_HEIGHT, CANVAS_MIN_WIDTH, PanelId};
+    use crate::workspace::{DockTarget, Split};
+    let mut h = with_model_tab();
+    let side = crate::dock::fixed_panel_width(crate::model_panel::REFERENCE_WIDTH);
+    let min = vec2(CANVAS_MIN_WIDTH + side, CANVAS_MIN_HEIGHT);
+    assert_eq!(canvas_min(&h), min);
+    // Con Groom a su izquierda y una ventana angosta: el lienzo y el panel 3D, enteros.
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Groom, DockTarget::Split(s, n, Split::Left));
+    h.size = vec2(760.0, 600.0);
+    for _ in 0..4 {
+        h.frame();
+    }
+    let leaf = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+    assert!(leaf.width() >= min.x, "{leaf:?} vs {min:?}");
+    assert!(leaf.height() >= min.y, "{leaf:?} vs {min:?}");
 }
 
 /// Groom debajo del lienzo (`V[Canvas / Groom]` a la izquierda de la columna).

@@ -10,7 +10,7 @@
 //!     separadas por `timeline.button.sep`, con el ícono `timeline.icon.*` de 21×11 adentro.
 //!   - Onion skin: el botón (`timeline.icon.onion` apagado; prendido, la cebolla entera
 //!     `timeline.icon.onion.on`) y, a 4, `timeline.onion_range`: frames antes ◂ | después ▸.
-//!   - "Opacity" − [0..255] +, el combo del modo de mezcla y el reloj − [ms] + de la duración:
+//!   - "Opacity" − [0..255] +, el combo del modo de mezcla y el reloj − \[ms\] + de la duración:
 //!     el stepper del UI kit (`kit::stepper`); el select del UI kit (`kit::select`);
 //!     `timeline.icon.clock`.
 //! - **Línea de abajo de la barra:** `timeline.divider`, con sus uniones a la caja.
@@ -603,7 +603,7 @@ fn onion_range(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2) {
     }
 }
 
-/// − [campo] +: el stepper del UI kit (`kit::stepper`: sus botones con estados y su campo) con
+/// − \[campo\] +: el stepper del UI kit (`kit::stepper`: sus botones con estados y su campo) con
 /// la esquina en `origin`. Devuelve el − (con su respuesta), el rect del campo y el +; el número
 /// lo pone quien llama.
 fn stepper(
@@ -744,8 +744,8 @@ fn duration_ink(ui: &Ui, ms: u16) -> f32 {
     ink(ui, &ms.to_string()) + UNIT_GAP + ink(ui, UNIT)
 }
 
-/// El reloj y − [ms] +: la duración de los frames elegidos. Como la opacidad: lo que se arrastra o
-/// se escribe se confirma al soltar; − y + la cambian de a 10 ms (de a 100 con Shift).
+/// El reloj y − \[ms\] +: la duración de los frames elegidos. Como la opacidad: lo que se arrastra
+/// o se escribe se confirma al soltar; − y + la cambian de a 10 ms (de a 100 con Shift).
 fn duration(
     ui: &mut Ui,
     editor: &mut Editor,

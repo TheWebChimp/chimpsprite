@@ -268,8 +268,8 @@ impl Workspace {
         if !sound(&saved.state) {
             return essentials("its dock tree is malformed");
         }
-        // La toolbar de antes de la versión 3, el timeline de antes de la 4 y el Preview de antes de
-        // la 5 no pueden venir en el árbol (no eran de él).
+        // La toolbar de antes de la versión 3, el timeline de antes de la 4 y el Preview de antes
+        // de la 5 no pueden venir en el árbol (no eran de él).
         let in_tree = |id: PanelId| {
             let ours = (matches!(id, PanelId::Canvas | PanelId::Color)
                 || Workspace::goes_to_strip(id))
@@ -632,7 +632,7 @@ impl Workspace {
         }
     }
 
-    /// Lo que queda en `app.workspace` mientras [`show`] dibuja los paneles.
+    /// Lo que queda en `app.workspace` mientras [`show`](fn@super::show) dibuja los paneles.
     pub(super) fn placeholder() -> Workspace {
         Workspace {
             lent: true,
@@ -863,14 +863,14 @@ impl Workspace {
     }
 
     /// La orilla de la ventana del grupo `(surface, node)`: la que toca (bajando de la raíz, cada
-    /// split a lo ancho o a lo alto de su lado), primero a los lados (izquierda o derecha) y después
-    /// arriba o abajo; si toca las dos de un eje (o ninguna), cuenta el otro. Un grupo alto (más
-    /// alto que ancho) que solo toca arriba o abajo, sin tocar ningún lado (p. ej. la toolbar a la
-    /// derecha del lienzo), va al lado más cercano (ledger D6: su tira es la de ese lado, y "Dock"
-    /// desde ella lo regresa junto al lienzo de ese lado). Un grupo que no toca ninguna (entre
-    /// otros) o una ventana flotante, la más cercana a él en el último frame (en empate, también
-    /// los lados primero). Sin rects (antes de dibujarse): la de arriba o abajo que toque, si no,
-    /// la derecha.
+    /// split a lo ancho o a lo alto de su lado), primero a los lados (izquierda o derecha) y
+    /// después arriba o abajo; si toca las dos de un eje (o ninguna), cuenta el otro. Un grupo alto
+    /// (más alto que ancho) que solo toca arriba o abajo, sin tocar ningún lado (p. ej. la toolbar
+    /// a la derecha del lienzo), va al lado más cercano (ledger D6: su tira es la de ese lado, y
+    /// "Dock" desde ella lo regresa junto al lienzo de ese lado). Un grupo que no toca ninguna
+    /// (entre otros) o una ventana flotante, la más cercana a él en el último frame (en empate,
+    /// también los lados primero). Sin rects (antes de dibujarse): la de arriba o abajo que toque,
+    /// si no, la derecha.
     pub(crate) fn group_edge(&self, surface: SurfaceIndex, node: NodeIndex) -> Edge {
         let area = self.root_rect(SurfaceIndex::main());
         let rect = self
@@ -1025,12 +1025,12 @@ impl Workspace {
         true
     }
 
-    /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos
-    /// o más. Las ventanas flotantes la llevan (es su título y de ahí se arrastran), salvo la del
+    /// La barra de pestañas de cada grupo acoplado: sin ella con un solo panel, con ella con dos o
+    /// más. Las ventanas flotantes la llevan (es su título y de ahí se arrastran), salvo la del
     /// Preview solo (su ventana es la de antes, con su barra de título: ver
-    /// [`Workspace::bare_preview`]) y, con Pixel UI, la de la toolbar sola: va del ancho de su caja,
-    /// con la franja de agarre de un grupo solo (ver [`Workspace::bare_tools`]). Devuelve si alguna
-    /// cambió.
+    /// [`Workspace::bare_preview`]) y, con Pixel UI, la de la toolbar sola: va del ancho de su
+    /// caja, con la franja de agarre de un grupo solo (ver [`Workspace::bare_tools`]). Devuelve si
+    /// alguna cambió.
     pub(crate) fn refresh_tab_bars(&mut self) -> bool {
         let bare = self.bare_preview();
         let tools = self.bare_tools();
@@ -1391,8 +1391,8 @@ mod tests {
         assert_eq!(w.places(PanelId::Timeline), 1);
         assert_eq!(w.column_panels(), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
-        // Lo que se guarda ahora es la 7 (tarea 7: con los workspaces con nombre), y se lee igual (sin
-        // otro timeline).
+        // Lo que se guarda ahora es la 7 (tarea 7: con los workspaces con nombre), y se lee igual
+        // (sin otro timeline).
         let again = w.to_saved();
         assert_eq!(again.version, SAVED_VERSION);
         assert_eq!(SAVED_VERSION, 7);
@@ -1409,7 +1409,8 @@ mod tests {
 
     #[test]
     fn hiding_the_timeline_takes_it_out_and_showing_it_puts_it_back_where_it_was() {
-        // Debajo del lienzo (Essentials): sin él, el lienzo llega abajo; de vuelta, igual que antes.
+        // Debajo del lienzo (Essentials): sin él, el lienzo llega abajo; de vuelta, igual que
+        // antes.
         let mut w = Workspace::essentials();
         let before = w.state_tabs();
         w.sync_timeline(false);

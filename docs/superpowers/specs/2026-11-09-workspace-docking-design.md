@@ -278,7 +278,8 @@ egui_taffy y solo `workspace` conoce egui_dock.
      Animation (timeline alto y preview acoplado), Tiles (Slices y Artboards abiertos) y Fonts
      (FontForge acoplado). Del usuario: New Workspace… / Delete…. Menú Window nuevo con la lista
      de paneles (✓ los abiertos), el submenú Workspace y Reset (se muda de View). Lo guardado pasa
-     a la versión 2 y el acomodo de la fase C (versión 1) se migra solo.
+     a la versión 2 y el acomodo de la fase C (versión 1) se migra solo. (Al final quedó en la
+     **versión 7**: cada tarea que cambió lo guardado subió una; ver "Fase D HECHA".)
   5. **Pendientes de la fase C:** el modal bloquea divisores y pestañas; flechas del kit para
      pestañas desbordadas; tests de barrido de anchos en todos los paneles; medir el costo al
      arrastrar divisores. El resto de la lista "Para la fase D" de arriba, según quepa en el plan.
@@ -317,15 +318,17 @@ egui_taffy y solo `workspace` conoce egui_dock.
        5700G, Windows 11: con Pixel UI media 1.22 ms (mediana 1.22, p95 1.70, máx 2.02); sin él,
        media 0.99 ms (p95 1.37, máx 1.88). En debug, ~16 ms. Incluye la pasada de más cuando un
        frame se descarta.
-  **Fase D HECHA** (rama `workspace-docking-d`, 8 tareas, cada una con su revisión):
+  **Fase D HECHA** (rama `workspace-docking-d`, 9 tareas, cada una con su revisión, más una ronda
+  final de arreglos de la revisión de toda la rama):
   1. **`workspace.rs` partido** en `workspace/{mod, model, drop, fit, show, skin}` (más
      `presets` en la tarea 7 y `test_util` solo de tests), sin cambios de comportamiento. Solo
      `workspace/` toca `egui_dock`.
   2. **Un `DockState` para toda la ventana** con el lienzo como hoja protegida (`PanelId::Canvas`):
      `tidy_canvas`, `stop_dragging`, `pin_sides` (los lados quedan en puntos; el lienzo absorbe los
      cambios de la ventana y nunca baja de su mínimo, ni al arrastrar un divisor ni al achicar la
-     ventana), doble clic en un divisor del lienzo = volver a lo automático, sin franja de agarre
-     en el lienzo.
+     ventana), el doble clic en un divisor del lienzo no lo mueve (egui_dock lo pondría a la
+     mitad: se deshace; un arrastre que cae justo en la mitad sí cuenta), sin franja de agarre en
+     el lienzo.
   3. **Toolbar al árbol** (izquierda, con su divisor; flyout con scroll en ventanas bajas).
   4. **Timeline al árbol** (debajo del lienzo; apagarlo y volverlo a prender lo regresa a su lugar
      y a su pestaña; una flotante oculta vuelve flotante tras reiniciar).
@@ -386,9 +389,10 @@ egui_taffy y solo `workspace` conoce egui_dock.
         Artboards abiertos; Fonts con FontForge.
   - [ ] **Menú Window:** ✓ de los paneles abiertos; elegir uno cerrado lo abre, uno abierto lo
         enfoca (subiéndolo si flota); Preview y Model en la pestaña de un modelo.
-  - [ ] **Una tira por orilla:** colapsar grupos con « en cada lado; clic en un ícono abre el
-        flyout hacia el lado correcto; clic derecho Dock/Float; arrastrar un ícono entre tiras
-        (hoy soltarlo sobre otra tira no lo mueve a ella: cae donde caería en el árbol).
+  - [ ] **Una tira por orilla:** colapsar grupos con « en cada lado (la toolbar a la derecha del
+        lienzo va a la tira de la derecha); clic en un ícono abre el flyout hacia el lado
+        correcto; clic derecho Dock/Float; arrastrar un ícono y soltarlo sobre otra tira lo pasa a
+        ella.
   - [ ] **More Panels:** con la tira corta (ventana baja o Groom debajo del lienzo) el botón »
         abre el menú y elegir un panel abre su flyout anclado al botón.
   - [ ] **Pestañas desbordadas:** las flechas del kit y la rueda sobre la barra (de una en una,
@@ -410,19 +414,17 @@ egui_taffy y solo `workspace` conoce egui_dock.
     la app real: solo miden su panel; llevan un comentario que lo dice).
   - Timeline: que su fila de botones se parta en anchos de 64 a 126; Lospec: filas de resultados a
     `forms` (cierra el tramo de 364 a 600).
-  - Minors anotados en la bitácora: el 40 % de Animation puede volver a imponerse tras deshacer y
-    rehacer un lado; Window → Model / Timeline / Preview mostrados flotando no se suben al frente;
-    el campo de New Workspace pierde el foco con un Enter inválido; reglas del barrido (la holgura
-    Button-en-Button debería limitarse a Model/"Cube"; el tramo medio punto de Lospec silencia
-    todos sus controles); el test de la rueda en ventana flotante no prueba nada sin Pixel UI y
-    falta uno positivo de paginar la barra de una ventana; `Frozen::restore(None)` deja el foco por
-    árbol; el resto de la rueda por barra no se borra; `app_for` de Lospec sin `cfg` de wasm;
-    helpers duplicados (`click_menu`/`context_menu`, `edge_tab_shapes` Izquierda vs Arriba/Abajo);
-    soltar un ícono de tira sobre otra tira para moverlo; la zona de soltado "lienzo entero" incluye
-    el timeline.
-  - Pendientes de interacción real: flotante de la toolbar más ancha con el mouse; una pestaña
-    arrastrada que cae exactamente en el 0.5 de un divisor cuenta como doble clic (1 pt de lag);
-    íconos `icon.tools` / `icon.color` sin pieza del skin (la tira usa su texto).
+  - Minors anotados en la bitácora: `Frozen::restore(None)` deja el foco por árbol; la zona de
+    soltado "lienzo entero" incluye el timeline; mientras se arrastra un ícono sobre otra tira no
+    se resalta nada (al soltarlo sí pasa a ella). (Los demás de esta lista se arreglaron en la
+    ronda final: el 40 % de Animation se usa una vez, Window enfoca también lo oculto y el 3D
+    flotando, el foco de New Workspace, las reglas del barrido, los tests de la rueda, el resto de
+    la rueda, los helpers duplicados y soltar un ícono sobre otra tira.)
+  - **Partir `show.rs`** (~3 000 líneas): el modal (`Frozen`, `hold_windows`, `modal_shields`), las
+    pestañas (rueda, flechas, cierres, `dropped_past_last`) y las cubiertas y los cruces, cada uno
+    en su módulo.
+  - Pendientes de interacción real: flotante de la toolbar más ancha con el mouse; íconos
+    `icon.tools` / `icon.color` sin pieza del skin (la tira usa su texto).
 - **E. Tests de layout reescritos:** medir dentro de cada panel y en el preset Essentials, no en
   posiciones absolutas de la ventana.
 

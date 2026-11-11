@@ -1,4 +1,4 @@
-//! El stepper (mockup de componentes, frame 9, x 301, y 256 y x 380, y 276): − [número] + en 17
+//! El stepper (mockup de componentes, frame 9, x 301, y 256 y x 380, y 276): − \[número\] + en 17
 //! filas, como un campo.
 //!
 //! - Los botones: `stepper.left` y `stepper.right` (15×17, con la columna (136,110,106) que los

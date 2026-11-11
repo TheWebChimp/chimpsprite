@@ -245,7 +245,8 @@ impl ChimpApp {
             NewFrame => editor.duplicate_frame(),
             OnionSkin => editor.onion_enabled = !editor.onion_enabled,
             Extras => self.view.extras = !self.view.extras,
-            // Su hoja sale del árbol del workspace y vuelve a su lugar (`Workspace::sync_timeline`).
+            // Su hoja sale del árbol del workspace y vuelve a su lugar
+            // (`Workspace::sync_timeline`).
             Timeline => self.view.timeline = !self.view.timeline,
             FullScreen => {
                 if !cfg!(target_arch = "wasm32") {
@@ -409,7 +410,7 @@ impl ChimpApp {
         self.view.preview = shown.preview;
     }
 
-    /// Window → Workspace → Reset <nombre>: el de ahora vuelve a su versión de fábrica (o, uno del
+    /// Window → Workspace → Reset "Nombre": el de ahora vuelve a su versión de fábrica (o, uno del
     /// usuario, a como se creó). El ancho elegido de la columna derecha se queda (es del usuario,
     /// como lo demás de la vista): sin los paneles acoplados que la ensanchaban, vuelve a él. Es de
     /// la app, no del documento: sin deshacer.
@@ -418,7 +419,7 @@ impl ChimpApp {
         self.show_shown(shown);
     }
 
-    /// Window → Workspace → <nombre>: el acomodo de ahora se queda con el workspace que se deja y
+    /// Window → Workspace → "Nombre": el acomodo de ahora se queda con el workspace que se deja y
     /// llega el de `name` como se dejó (o, si nunca se cambió, el de fábrica o como se creó).
     pub(crate) fn switch_workspace(&mut self, name: &str) {
         let shown = self.shown();

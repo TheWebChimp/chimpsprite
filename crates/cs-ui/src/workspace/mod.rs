@@ -1,38 +1,39 @@
 //! El workspace: dónde está cada panel. Cada uno vive en un solo lugar: en la tira de íconos (el
 //! dock de hoy), acoplado en la superficie principal (un grupo de pestañas en el árbol de
-//! egui_dock) o flotando en una ventana. [`show`] muestra el `DockArea` con la piel pixel art (ver
-//! `skin`) y hospeda cada panel con [`ChimpApp::draw_panel`].
+//! egui_dock) o flotando en una ventana. [`show()`] muestra el `DockArea` con la piel pixel art
+//! (ver `skin`) y hospeda cada panel con [`ChimpApp::draw_panel`](crate::ChimpApp::draw_panel).
 //!
 //! Fase D (diseño aprobado el 2026-11-11, después del spike `proto_workspace_d`): **un solo árbol
-//! para toda el área central** (entre la barra de opciones, la toolbar y la barra de estado), con
-//! el **lienzo como hoja protegida** (`PanelId::Canvas`: no se cierra, no se arrastra, no recibe
-//! pestañas y está siempre una vez, en la superficie principal; ver `fit::tidy_canvas`). Lo que lo
-//! rodea va en puntos (`fit::pin_sides`): al cambiar la ventana, el lienzo absorbe la diferencia.
-//! La columna derecha de la fase C es ahora el lado derecho del lienzo ([`Workspace::column`]);
-//! su ancho sigue siendo la preferencia del usuario (`view.palette_width`). La toolbar y el
-//! timeline son hojas del árbol (tareas 3 y 4), y el Preview también (tarea 5: de fábrica flota
-//! en la esquina de abajo a la derecha, como su ventana de antes, y su ventana es la de antes: con
-//! Pixel UI la del diseño, sin él la `egui::Window`). Ocultos (el timeline y el Preview se prenden y se apagan), salen del árbol y
-//! vuelven a su lugar ([`Workspace::sync_panel`]). Hay una tira de íconos por orilla (tarea 6,
-//! [`Workspace::strip_at`]): la de la derecha va a la derecha del lienzo (y del timeline, si va justo
-//! debajo de él), encima de su hoja; las otras tres, en su orilla, fuera del árbol (vacías no
+//! para toda el área central** (entre la barra de opciones y la barra de estado; la toolbar va en
+//! él), con el **lienzo como hoja protegida** (`PanelId::Canvas`: no se cierra, no se arrastra, no
+//! recibe pestañas y está siempre una vez, en la superficie principal; ver `fit::tidy_canvas`). Lo
+//! que lo rodea va en puntos (`fit::pin_sides`): al cambiar la ventana, el lienzo absorbe la
+//! diferencia. La columna derecha de la fase C es ahora el lado derecho del lienzo
+//! ([`Workspace::column`]); su ancho sigue siendo la preferencia del usuario
+//! (`view.palette_width`). La toolbar y el timeline son hojas del árbol (tareas 3 y 4), y el
+//! Preview también (tarea 5: de fábrica flota en la esquina de abajo a la derecha, como su ventana
+//! de antes, y su ventana es la de antes: con Pixel UI la del diseño, sin él la `egui::Window`).
+//! Ocultos (el timeline y el Preview se prenden y se apagan), salen del árbol y vuelven a su lugar
+//! ([`Workspace::sync_panel`]). Hay una tira de íconos por orilla (tarea 6,
+//! [`Workspace::strip_at`]): la de la derecha va a la derecha del lienzo (y del timeline, si va
+//! justo debajo de él), encima de su hoja; las otras tres, en su orilla, fuera del árbol (vacías no
 //! ocupan nada). La dibuja `show` (ver `show::show`); « de un grupo manda sus paneles a la de su
 //! orilla y cerrar una pestaña, a la de la orilla más cercana ([`Workspace::group_edge`]). Cada
 //! panel se dibuja en un solo anfitrión por frame (ver `ChimpApp::claim_panel`).
 //!
 //! Decisión del usuario (2026-11-10): un grupo acoplado con **un solo panel no lleva barra de
 //! pestañas** (se ve como hoy); al pasar el puntero por su borde de arriba se resalta una franja
-//! delgada para agarrarlo. Con dos o más, la barra con las pestañas del kit. Las ventanas
-//! flotantes siempre llevan su barra: es su título y de ahí se arrastran. Salvo una: el Preview
-//! solo en su ventana lleva la suya de antes (con su barra de título: de ahí se mueve y, con Pixel
-//! UI, de su franja de arriba se lleva a acoplar, como un grupo solo; ver `show::PreviewWindow`).
+//! delgada para agarrarlo. Con dos o más, la barra con las pestañas del kit. Las ventanas flotantes
+//! siempre llevan su barra: es su título y de ahí se arrastran. Salvo una: el Preview solo en su
+//! ventana lleva la suya de antes (con su barra de título: de ahí se mueve y, con Pixel UI, de su
+//! franja de arriba se lleva a acoplar, como un grupo solo; ver `show::PreviewWindow`).
 //!
 //! Solo este módulo usa egui_dock.
 //!
-//! Se parte por responsabilidad: [`model`] (las operaciones sobre el acomodo, sus invariantes y
-//! lo que se guarda), [`drop`] (dónde cae un panel que se suelta), [`fit`] (los mínimos y su
-//! ajuste a los splits y a las ventanas), [`show`] (el `DockArea` y lo que lo rodea) y [`presets`]
-//! (los workspaces con nombre de Window → Workspace: los de fábrica y los del usuario).
+//! Se parte por responsabilidad: [`model`] (las operaciones sobre el acomodo, sus invariantes y lo
+//! que se guarda), [`drop`](mod@drop) (dónde cae un panel que se suelta), [`fit`] (los mínimos y su
+//! ajuste a los splits y a las ventanas), [`show`](mod@show) (el `DockArea` y lo que lo rodea) y
+//! [`presets`] (los workspaces con nombre de Window → Workspace: los de fábrica y los del usuario).
 //!
 //! El marco de las ventanas flotantes se viste con un `ui.scope` alrededor del `DockArea` cuyo
 //! estilo lleva el color marcador (`skin::window_visuals`): funciona porque egui_dock 0.21.1 arma
@@ -66,14 +67,14 @@ pub(crate) use show::{COLLAPSE, MODEL_ELSEWHERE, has_marker};
 #[derive(Clone, Debug)]
 pub(crate) struct Workspace {
     state: DockState<PanelId>,
-    /// Los paneles de la tira de íconos de cada orilla (por `Edge::index`; la de la derecha es la de
-    /// siempre), cada una en el orden de `PanelId::ALL`.
+    /// Los paneles de la tira de íconos de cada orilla (por `Edge::index`; la de la derecha es la
+    /// de siempre), cada una en el orden de `PanelId::ALL`.
     strips: [Vec<PanelId>; 4],
     /// Con Pixel UI (lo pone `show` cada frame): la toolbar sola en su ventana va sin barra de
     /// pestañas, con la franja de agarre (ver [`Workspace::refresh_tab_bars`]). Sin él no hay
     /// franja, así que lleva su pestaña.
     pixel: bool,
-    /// Es el que queda en `app.workspace` mientras [`show`] tiene prestado el de verdad (los
+    /// Es el que queda en `app.workspace` mientras [`show()`] tiene prestado el de verdad (los
     /// paneles se dibujan con la app entera): cambiarlo no serviría de nada.
     lent: bool,
     /// Las ventanas de un acomodo leído y el rect que tenía lo de adentro de cada una (ver
