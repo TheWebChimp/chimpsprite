@@ -254,6 +254,32 @@ egui_taffy y solo `workspace` conoce egui_dock.
     tapar la barra de estado; reordenar/restaurar paneles faltantes en "tidy".
 - **D. El resto al árbol:** toolbar, timeline y preview; workspaces de fábrica y del usuario; menú
   Window. Al final, Essentials se ve igual que hoy.
+
+  **Diseño aprobado (2026-11-11), después del spike** (rama `proto-workspace-d`, ejemplo
+  `crates/cs-ui/examples/proto_workspace_d.rs` y sus notas `PROTO_WORKSPACE_D_NOTES.md`): el usuario
+  eligió **un solo `DockState` para toda la ventana** (variante 1) sobre un árbol por orilla.
+  1. **Un árbol para toda la ventana.** El `DockState` abarca el área entre la barra de opciones y
+     la barra de estado. El **lienzo** es una hoja protegida al centro (`PanelId::Canvas`, no se
+     cierra, no se arrastra, no recibe pestañas, siempre existe una vez): `tidy_canvas` lo arregla
+     el mismo frame si algo cae dentro (lo parte al lado del cuadrante), `stop_dragging` corta su
+     arrastre, `separator.extra = 0`, `pin_sides` deja los lados en puntos (el lienzo absorbe los
+     cambios de tamaño de la ventana) y la zona de destino "lienzo entero" se repinta como la mitad
+     que de verdad queda. Se quita la suposición "superficie principal = columna derecha" de todo
+     `workspace` y el archivo se parte en `model`, `drop`, `fit` y `show`.
+  2. **Toolbar, timeline y preview en el árbol.** Toolbar a la izquierda y timeline abajo (como
+     hoy). Preview flota por defecto (como hoy); acoplado, sus controles (play/pausa, centrar)
+     viven dentro de su contenido y cerrarlo detiene la reproducción. En la pestaña de un modelo,
+     una instancia por `PanelId` por frame (generaliza lo de 3D).
+  3. **Tiras de íconos por orilla.** Cualquier grupo pegado a una orilla de la ventana se colapsa
+     a íconos con «, en la tira de esa orilla.
+  4. **Workspaces con nombre y menú Window.** De fábrica: Essentials (idéntico a hoy, 0 px),
+     Animation (timeline alto y preview acoplado), Tiles (Slices y Artboards abiertos) y Fonts
+     (FontForge acoplado). Del usuario: New Workspace… / Delete…. Menú Window nuevo con la lista
+     de paneles (✓ los abiertos), el submenú Workspace y Reset (se muda de View). Lo guardado pasa
+     a la versión 2 y el acomodo de la fase C (versión 1) se migra solo.
+  5. **Pendientes de la fase C:** el modal bloquea divisores y pestañas; flechas del kit para
+     pestañas desbordadas; tests de barrido de anchos en todos los paneles; medir el costo al
+     arrastrar divisores. El resto de la lista "Para la fase D" de arriba, según quepa en el plan.
 - **E. Tests de layout reescritos:** medir dentro de cada panel y en el preset Essentials, no en
   posiciones absolutas de la ventana.
 
