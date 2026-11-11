@@ -50,6 +50,57 @@ impl Workspace {
         (rect.is_positive() && rect.is_finite()).then_some(rect)
     }
 
+    /// De qué lado del lienzo va la toolbar sola, si es un lado del lienzo a lo ancho (ver
+    /// [`tools_level`]): `Some(true)` a su izquierda, `Some(false)` a su derecha. Así va del ancho
+    /// de su caja (`SidePoints::toolbar`), su divisor no se arrastra ni se ve, y su margen de ese
+    /// lado cuenta desde el divisor (ver `show`).
+    pub(super) fn tools_side(&self) -> Option<bool> {
+        let tree = self.state.main_surface();
+        chain(tree)
+            .into_iter()
+            .find(|level| tools_level(tree, level))
+            .map(|level| level.first)
+    }
+
+    /// El divisor entre la toolbar y el lado del lienzo (ver [`Workspace::tools_side`]) en el
+    /// último frame: donde lo pinta egui_dock (`show_separator`, a puntos enteros).
+    pub(super) fn tools_divider(&self, sep: f32) -> Option<egui::Rect> {
+        let tree = self.state.main_surface();
+        let level = chain(tree)
+            .into_iter()
+            .find(|level| tools_level(tree, level))?;
+        let (rect, f) = split_of(tree, level.parent)?;
+        let mid = rect.left() + rect.width() * f;
+        let divider =
+            egui::Rect::from_x_y_ranges(mid - sep / 2.0..=mid + sep / 2.0, rect.y_range());
+        (divider.is_positive() && divider.is_finite()).then_some(divider)
+    }
+
+    /// El rect de la toolbar en el último frame: el de su grupo y, si es un lado del lienzo, con su
+    /// divisor (el rect que tenía el panel izquierdo de antes, `"tools"`, con su borde).
+    #[cfg(test)]
+    pub(crate) fn tools_rect(&self) -> Option<egui::Rect> {
+        let leaf = self.leaf_rect(PanelId::Tools)?;
+        let tree = self.state.main_surface();
+        let Some(level) = chain(tree)
+            .into_iter()
+            .find(|level| tools_level(tree, level))
+        else {
+            return Some(leaf);
+        };
+        let canvas_side = if level.first {
+            level.parent.right()
+        } else {
+            level.parent.left()
+        };
+        let canvas_side = tree[canvas_side].rect()?;
+        Some(if level.first {
+            leaf.with_max_x(canvas_side.left())
+        } else {
+            leaf.with_min_x(canvas_side.right())
+        })
+    }
+
     /// Los paneles de la columna derecha (ver [`Workspace::column`]).
     pub(crate) fn column_panels(&self) -> Vec<PanelId> {
         let tree = self.state.main_surface();
@@ -85,15 +136,27 @@ impl Workspace {
 
     /// Las ventanas que se acaban de abrir, en la esquina que se les pidió: egui no siempre la
     /// respeta en el primer frame de la ventana (el spike lo vio con una soltada en 528,132 que
-    /// quedó en 350,100), así que se le vuelve a pedir unos frames ([`NEW_WINDOW_FRAMES`]).
+    /// quedó en 350,100), así que se le vuelve a pedir unos frames ([`NEW_WINDOW_FRAMES`]). A la
+    /// toolbar, también su ancho (el de su caja, `SidePoints::toolbar`): egui tampoco respeta el
+    /// tamaño del primer frame y la dejaba del ancho de fábrica de sus ventanas.
     pub(super) fn place_new_windows(&mut self) {
         let state = &mut self.state;
+        let toolbar = self.sides.toolbar;
         self.placing.retain_mut(|(id, at, frames)| {
             if let Some(path) = state.find_tab(id)
                 && !path.surface.is_main()
                 && let Some(window) = state.get_window_state_mut(path.surface)
             {
                 window.set_position(*at);
+                if *id == PanelId::Tools
+                    && let Some(width) = toolbar
+                {
+                    let height = PanelId::Tools
+                        .spec()
+                        .min_height
+                        .max(super::model::FLOAT_HEIGHT);
+                    window.set_size(egui::vec2(width, height));
+                }
             }
             *frames = frames.saturating_sub(1);
             *frames > 0
@@ -136,7 +199,8 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 
 /// Lo mínimo de cada panel en un grupo del workspace, con el margen de su cuerpo. Color, lo que
 /// pide su panel con Pixel UI (el ancho de su fila más ancha y el alto del editor entero con la
-/// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). El lienzo, el `min_width`
+/// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). La toolbar, su ancho (el de
+/// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo, el `min_width`
 /// de su ficha (sin margen: su hoja va de borde a borde). Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
 /// scroll, la barra (así los acomoda [`Viewer`]).
@@ -151,6 +215,8 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                     crate::color_panel::panel_min_height(ui, skin),
                 ),
                 (PanelId::Color, None) => egui::Vec2::ZERO,
+                // La toolbar lleva su margen en su ancho (ver `toolbar_width`).
+                (PanelId::Tools, _) => egui::vec2(toolbar_width(skin), 0.0),
                 // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
                 // que lleva su hoja, ver `ChimpApp::canvas_area_min`).
                 (PanelId::Canvas, _) => egui::vec2(id.spec().min_width, id.spec().min_height),
@@ -171,6 +237,12 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
             (id, min)
         })
         .collect()
+}
+
+/// El ancho de la toolbar: con Pixel UI, su caja con el margen a cada lado (sale del skin); sin
+/// él, el de la barra con nombres. Es lo que medía el panel izquierdo de antes.
+pub(super) fn toolbar_width(skin: Option<&Skin>) -> f32 {
+    skin.map_or(pixel_ui::TOOLBAR_WIDTH_PLAIN, pixel_ui::toolbar_width)
 }
 
 /// Lo que ocupan un divisor y una barra de pestañas con el estilo de `show`.
@@ -501,6 +573,10 @@ pub(crate) struct SidePoints {
     /// Lo que mide la columna derecha (ver [`Workspace::column`]): la pide el anfitrión (de
     /// `view.palette_width`); sin ella, como los demás lados.
     pub column: Option<f32>,
+    /// El ancho de la toolbar (ver [`toolbar_width`]): lo da el anfitrión. Su lado del lienzo
+    /// (ver [`Workspace::tools_side`]) mide eso hasta el borde de su divisor, siempre (no se
+    /// arrastra); sin él, como los demás lados.
+    pub toolbar: Option<f32>,
     /// El ancho de los divisores (el lado del lienzo de cada split empieza medio divisor después
     /// de su centro).
     pub sep: f32,
@@ -509,8 +585,9 @@ pub(crate) struct SidePoints {
     /// ellos, nada se limita).
     pub mins: Minima,
     pub bar: f32,
-    /// Con qué se acomodaron por última vez: el área, la forma del árbol y la columna.
-    last: Option<(egui::Rect, Shape, Option<f32>)>,
+    /// Con qué se acomodaron por última vez: el área, la forma del árbol, la columna y la
+    /// toolbar.
+    last: Option<(egui::Rect, Shape, Option<f32>, Option<f32>)>,
 }
 
 impl SidePoints {
@@ -577,7 +654,17 @@ struct Level {
     column: bool,
 }
 
-/// Los splits del camino de la raíz al lienzo de `tree`, de arriba abajo.
+/// Si el lado `level` del lienzo es la toolbar sola, a lo ancho (a la izquierda o a la derecha
+/// del lienzo): ese lado va del ancho de su caja y su divisor no se arrastra (ver
+/// [`Workspace::tools_side`]).
+fn tools_level(tree: &Tree<PanelId>, level: &Level) -> bool {
+    level.horizontal
+        && level.other.0 < tree.len()
+        && matches!(&tree[level.other], Node::Leaf(leaf) if leaf.tabs == [PanelId::Tools])
+}
+
+/// Los splits del camino de la raíz al lienzo de `tree`, de arriba abajo. La columna derecha es
+/// el primer lado derecho a lo ancho que no es la toolbar sola.
 fn chain(tree: &Tree<PanelId>) -> Vec<Level> {
     let Some((canvas, _)) = tree.find_tab(&PanelId::Canvas) else {
         return Vec::new();
@@ -598,15 +685,16 @@ fn chain(tree: &Tree<PanelId>) -> Vec<Level> {
                 _ => return None,
             };
             let first = child.is_right();
-            let is_column = horizontal && !first && !column;
-            column |= is_column;
-            Some(Level {
+            let mut level = Level {
                 parent,
                 other: if first { parent.left() } else { parent.right() },
                 horizontal,
                 first,
-                column: is_column,
-            })
+                column: false,
+            };
+            level.column = horizontal && !first && !column && !tools_level(tree, &level);
+            column |= level.column;
+            Some(level)
         })
         .collect()
 }
@@ -641,6 +729,7 @@ fn reference(tree: &Tree<PanelId>, node: NodeIndex, horizontal: bool) -> f32 {
         }
         match id {
             PanelId::Color => crate::color_panel::DEFAULT_WIDTH,
+            PanelId::Tools => spec.reference_width,
             _ => {
                 let bar = match spec.body {
                     Body::Fit | Body::Tall => pixel_ui::SCROLL_BAR,
@@ -698,15 +787,16 @@ fn measured(tree: &Tree<PanelId>, level: &Level) -> Option<f32> {
 /// comería el arrastre de un divisor y lo que `fit_splits` ajusta.
 pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides: &mut SidePoints) {
     let tree = state.main_surface_mut();
-    let now = (area, shape(tree), sides.column);
-    let same_column = |a: Option<f32>, b: Option<f32>| match (a, b) {
+    let now = (area, shape(tree), sides.column, sides.toolbar);
+    let same = |a: Option<f32>, b: Option<f32>| match (a, b) {
         (Some(a), Some(b)) => (a - b).abs() < 0.01,
         (a, b) => a == b,
     };
-    if let Some((area, shape, column)) = &sides.last
+    if let Some((area, shape, column, toolbar)) = &sides.last
         && *area == now.0
         && *shape == now.1
-        && same_column(*column, now.2)
+        && same(*column, now.2)
+        && same(*toolbar, now.3)
     {
         return;
     }
@@ -727,8 +817,13 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             panels: panels_of(tree, level.other),
         };
         alive.push(side.clone());
-        let points = match (level.column, sides.column) {
-            (true, Some(points)) => points,
+        let toolbar = sides
+            .toolbar
+            .filter(|_| tools_level(tree, &level))
+            .map(|width| width - sides.sep / 2.0);
+        let points = match (level.column, sides.column, toolbar) {
+            (_, _, Some(points)) => points,
+            (true, Some(points), _) => points,
             _ => match sides.get(&side) {
                 Some(points) => points,
                 None => {
@@ -789,7 +884,9 @@ pub(super) fn fractions(state: &DockState<PanelId>) -> Fractions {
 /// es lo que ese lado mide de ahí en adelante, sin quitarle al lienzo su mínimo. Devuelve lo nuevo
 /// de la columna derecha, si fue la suya (el anfitrión lo guarda como su preferencia).
 ///
-/// El doble clic en un divisor (egui_dock lo pone a la mitad) no es una elección: se deshace.
+/// El doble clic en un divisor (egui_dock lo pone a la mitad) no es una elección: se deshace. El
+/// divisor de la toolbar (ver [`Workspace::tools_side`]) no se arrastra (el anfitrión lo tapa):
+/// si algo lo movió, también se deshace.
 pub(super) fn record_sides(
     state: &mut DockState<PanelId>,
     before: &Fractions,
@@ -810,7 +907,7 @@ pub(super) fn record_sides(
         if was == f {
             continue;
         }
-        if f == 0.5 {
+        if f == 0.5 || tools_level(tree, &level) {
             if let Node::Horizontal(s) | Node::Vertical(s) = &mut tree[level.parent] {
                 s.fraction = was;
             }
@@ -883,7 +980,7 @@ mod tests {
             (egui::pos2(390.0, 40.0), Split::Above),
             (egui::pos2(390.0, 560.0), Split::Below),
         ] {
-            let mut w = Workspace::essentials();
+            let mut w = without_the_toolbar();
             laid_out(&mut w, area);
             // Lo que hace egui_dock al soltar Library en el centro del lienzo: su pestaña.
             let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
@@ -973,9 +1070,18 @@ mod tests {
         leaf.parent().unwrap()
     }
 
+    /// Essentials sin la toolbar (en la tira): `H[Canvas | Color]`, lo de la tarea 2. Estos tests
+    /// miden los lados que no son la toolbar (la suya va aparte: ver
+    /// `the_toolbar_side_is_the_toolbars_width_and_its_divider_does_not_move`).
+    fn without_the_toolbar() -> Workspace {
+        let mut w = Workspace::essentials();
+        w.to_strip(PanelId::Tools);
+        w
+    }
+
     /// Groom a la izquierda del lienzo y Color a su derecha: `H[H[Groom | Canvas] | Color]`.
     fn groom_left_of_the_canvas() -> Workspace {
-        let mut w = Workspace::essentials();
+        let mut w = without_the_toolbar();
         let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
         w.dock(PanelId::Groom, DockTarget::Split(s, n, Split::Left));
         w
@@ -1120,6 +1226,47 @@ mod tests {
             Node::Horizontal(s) => assert_eq!(s.fraction, was),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn the_toolbar_side_is_the_toolbars_width_and_its_divider_does_not_move() {
+        // Essentials: `H[Tools | H[Canvas | Color]]`, la toolbar de 37 con un divisor de 2: su
+        // lado mide 36 (hasta el centro del divisor) en cualquier ventana.
+        let mut w = Workspace::essentials();
+        let mut sides = SidePoints {
+            toolbar: Some(37.0),
+            sep: 2.0,
+            ..Default::default()
+        };
+        let root = NodeIndex::root();
+        for width in [1000.0, 700.0, 1300.0] {
+            pin_sides(&mut w.state, area(width), &mut sides);
+            laid_out(&mut w, area(width));
+            assert!((left_points(&w, root) - 36.0).abs() < 1e-3, "{width}");
+        }
+        // Con otro skin (otra caja), de lo que diga el anfitrión.
+        sides.toolbar = Some(45.0);
+        pin_sides(&mut w.state, area(1300.0), &mut sides);
+        laid_out(&mut w, area(1300.0));
+        assert!((left_points(&w, root) - 44.0).abs() < 1e-3);
+        // Si su divisor se movió (egui_dock), se deshace y no se guarda.
+        let before = fractions(&w.state);
+        let was = match &w.state.main_surface()[root] {
+            Node::Horizontal(s) => s.fraction,
+            other => panic!("{other:?}"),
+        };
+        if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[root] {
+            s.fraction += 0.1;
+        }
+        assert_eq!(record_sides(&mut w.state, &before, &mut sides), None);
+        match &w.state.main_surface()[root] {
+            Node::Horizontal(s) => assert_eq!(s.fraction, was),
+            other => panic!("{other:?}"),
+        }
+        // La toolbar en un grupo con otro panel ya no es "la toolbar sola": un lado como los demás.
+        let (s, n) = w.leaf_of(PanelId::Tools).unwrap();
+        w.dock(PanelId::Library, DockTarget::Leaf(s, n));
+        assert_eq!(w.tools_side(), None);
     }
 
     #[test]

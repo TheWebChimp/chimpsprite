@@ -1410,15 +1410,9 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
-        use crate::app_panels::{PanelAction, PanelCtx};
+        use crate::app_panels::PanelAction;
         use crate::panel_registry::PanelId;
         self.begin_panel_frame();
-        // Cómo se hospedan las regiones fijas: apagadas con un diálogo abierto; ninguna es Lospec,
-        // así que el fondo no importa (los paneles del workspace los hospeda `workspace::show`).
-        let fixed = PanelCtx {
-            modal,
-            bottom: None,
-        };
         // El skin compartido: el contenido de cada región toma prestada la app entera
         // (`draw_panel`) mientras su panel se dibuja con el skin.
         let shared_skin = self.pixel.shared_skin();
@@ -1441,7 +1435,6 @@ impl ChimpApp {
                 });
             });
         }
-        // La toolbar antes que el workspace: va a todo el alto, hasta la barra de estado.
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
         self.doc.canvas.background = canvas::background_for(skin);
         // Con Pixel UI, las reglas del mockup.
@@ -1452,42 +1445,10 @@ impl ChimpApp {
         self.doc.canvas.pixel_ui = skin.is_some();
         self.doc.canvas.cursors = skin.map(pixel_cursors::CursorSet::from_skin);
         self.doc.canvas.symmetry_color = skin.map(|s| s.colors().symmetry);
-        let (width, frame) = match skin {
-            // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
-            // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la
-            // barra de opciones.
-            Some(skin) => {
-                let margin = egui::Margin {
-                    left: pixel_ui::TOOLBAR_MARGIN,
-                    right: pixel_ui::TOOLBAR_MARGIN,
-                    top: pixel_ui::TOOLBAR_TOP_MARGIN,
-                    bottom: 2,
-                };
-                (
-                    pixel_ui::toolbar_width(skin),
-                    egui::Frame::side_top_panel(ui.style()).inner_margin(margin),
-                )
-            }
-            // Sin Pixel UI, la barra con nombres.
-            None => (
-                pixel_ui::TOOLBAR_WIDTH_PLAIN,
-                egui::Frame::side_top_panel(ui.style()),
-            ),
-        };
-        egui::Panel::left("tools")
-            .resizable(false)
-            .exact_size(width)
-            .frame(frame)
-            .show_separator_line(skin.is_none())
-            .show(ui, |ui| {
-                // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
-                // El scroll es del anfitrión; lo que apaga el modal, de `draw_panel` (adentro).
-                panels::tools_scroll_area().show(ui, |ui| {
-                    self.draw_panel(ui, PanelId::Tools, &fixed);
-                });
-            });
-        // El resto del área es del workspace (fase D): un árbol con el lienzo al centro y Color
-        // acoplado a su derecha (la columna de antes); lo que piden sus paneles lo aplica
+        // El resto del área es del workspace (fase D): un árbol con el lienzo al centro, la
+        // toolbar a su izquierda (el panel izquierdo de antes, con su scroll y sus márgenes: ver
+        // `workspace::show`) y Color acoplado a su derecha (la columna de antes); lo que piden sus
+        // paneles lo aplica
         // `workspace::show` al final, con la app entera. Con un diálogo abierto, la paleta sigue
         // viva: solo se apagan sus menús y la instancia (lo decide el panel); los demás paneles
         // acoplados se apagan.

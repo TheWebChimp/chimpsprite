@@ -408,7 +408,8 @@ impl ChimpApp {
     }
 
     /// El panel `id` flotando junto a su botón del dock (`anchor`), con el ancho y el cuerpo de
-    /// su ficha; con un diálogo modal abierto (`modal`), apagado. Lo que pide se aplica al final.
+    /// su ficha (la toolbar, del ancho de su caja); con un diálogo modal abierto (`modal`),
+    /// apagado. Lo que pide se aplica al final.
     pub(crate) fn panel_flyout(
         &mut self,
         ctx: &egui::Context,
@@ -417,10 +418,10 @@ impl ChimpApp {
         modal: bool,
     ) {
         let spec = id.spec();
-        if !matches!(spec.host, Host::Flyout) {
+        if !matches!(spec.host, Host::Flyout | Host::Tree) {
             debug_assert!(
                 false,
-                "{id:?} no es un panel flotante (su host no es Flyout)"
+                "{id:?} no es un panel flotante (su host no es Flyout ni Tree)"
             );
             return;
         }
@@ -435,7 +436,14 @@ impl ChimpApp {
         };
         let mut action = None;
         let contents = |ui: &mut egui::Ui| action = self.draw_panel(ui, id, &panel);
-        let width = spec.reference_width;
+        let width = match (id, skin) {
+            // La caja de la toolbar (sin su margen: el flyout pone el suyo).
+            (PanelId::Tools, Some(skin)) => {
+                crate::pixel_ui::toolbar_width(skin)
+                    - 2.0 * f32::from(crate::pixel_ui::TOOLBAR_MARGIN)
+            }
+            _ => spec.reference_width,
+        };
         match body {
             Body::Fixed => dock::flyout_fixed(ctx, id, anchor, skin, width, contents),
             Body::Fit | Body::Tall => {

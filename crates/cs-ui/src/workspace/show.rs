@@ -1,8 +1,9 @@
 //! El workspace en pantalla: [`show`] arma el `DockArea` con la piel en toda el área central,
-//! hospeda cada panel ([`Viewer`]; el lienzo, con `ChimpApp::canvas_area`) y pega lo que va encima
-//! de egui_dock (las pestañas y la × del kit, la franja de agarre y el botón « de cada grupo).
-//! También lleva el ancho de la columna derecha: la preferencia del usuario
-//! (`view.palette_width`), el que tomó sola ([`host_width`]) y el arrastre de su divisor.
+//! hospeda cada panel ([`Viewer`]; el lienzo, con `ChimpApp::canvas_area`; la toolbar, con su
+//! scroll y sus márgenes de siempre) y pega lo que va encima de egui_dock (las pestañas y la × del
+//! kit, la franja de agarre y el botón « de cada grupo, y el divisor de la toolbar tapado: ver
+//! [`cover_tools_divider`]). También lleva el ancho de la columna derecha: la preferencia del
+//! usuario (`view.palette_width`), el que tomó sola ([`host_width`]) y el arrastre de su divisor.
 
 use std::collections::HashMap;
 
@@ -11,15 +12,15 @@ use egui_dock::{DockArea, DockState, TabViewer};
 
 use super::drop::{dragged_tab, tab_drag_released};
 use super::fit::{
-    block_canvas_drag, chrome, fit_splits, fit_windows, fractions, half, minima, pin_sides,
-    quadrant, record_sides, tidy_canvas,
+    Minima, block_canvas_drag, chrome, fit_splits, fit_windows, fractions, half, minima, pin_sides,
+    quadrant, record_sides, tidy_canvas, toolbar_width,
 };
 use super::{NodeIndex, SurfaceIndex, Workspace, dock_id, skin};
 use crate::app_panels::{PanelAction, PanelCtx};
 use crate::panel_registry::{Body, PanelId};
 use crate::skin::Skin;
 use crate::{CanvasArea, ChimpApp};
-use crate::{dock, kit, pixel_ui};
+use crate::{dock, kit, panels, pixel_ui};
 
 /// Lo que dice la pestaña del panel 3D (acoplado o flotando) en la pestaña de un modelo, donde lo
 /// hospeda su panel fijo (`"model_panel"`).
@@ -35,9 +36,14 @@ struct Viewer<'a> {
     skinned: bool,
     /// El ancho de la pestaña del kit de cada panel.
     widths: &'a HashMap<PanelId, f32>,
-    /// El margen de cada panel en su grupo: el del panel derecho de hoy para Color, el de los
-    /// paneles del dock para los demás.
+    /// El margen de cada panel en su grupo: el del panel derecho de hoy para Color, el del panel
+    /// izquierdo de hoy para la toolbar (ver [`tools_margin`]), el de los paneles del dock para
+    /// los demás.
     color_margin: egui::Margin,
+    tools_margin: egui::Margin,
+    /// Si la toolbar flota: su scroll se encoge a lo ancho (en una ventana, uno que ocupa todo lo
+    /// que hay la haría crecer a lo ancho de fábrica de egui).
+    tools_floating: bool,
     /// Los paneles pegados al divisor izquierdo de la columna derecha y el ancho del divisor: su
     /// margen izquierdo cuenta desde la línea, como en el panel derecho de antes (la línea era su
     /// borde, por dentro del panel).
@@ -91,6 +97,23 @@ impl TabViewer for Viewer<'_> {
             let app = &mut *self.app;
             let area = app.canvas_area(ui, self.modal, &self.strip, &mut self.actions);
             self.canvas = Some(area);
+            return;
+        }
+        // La toolbar: lo de adentro del panel izquierdo de antes (su scroll; el margen se lo pone
+        // `tab_style_override`). Lo que apaga el modal, `draw_panel`.
+        if id == PanelId::Tools {
+            let panel = PanelCtx {
+                modal: self.modal,
+                bottom: None,
+            };
+            let app = &mut *self.app;
+            let mut area = panels::tools_scroll_area();
+            if self.tools_floating {
+                area = area.auto_shrink([true, false]);
+            }
+            area.show(ui, |ui| {
+                app.draw_panel(ui, id, &panel);
+            });
             return;
         }
         // Una instancia por panel por frame (su estado y los ids de `forms` son globales): en la
@@ -171,6 +194,7 @@ impl TabViewer for Viewer<'_> {
             // El lienzo, de borde a borde (sus márgenes son los del `CentralPanel` de antes).
             PanelId::Canvas => egui::Margin::ZERO,
             PanelId::Color => self.color_margin,
+            PanelId::Tools => self.tools_margin,
             _ => egui::Margin::same(dock::FLYOUT_MARGIN),
         };
         if self.beside.contains(tab) {
@@ -261,8 +285,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     // El mínimo del lienzo es lo que lleva su hoja este frame (la tira o el panel 3D fijo, el
     // timeline): ningún lado se lo quita (ver `fit_splits` y `pin_sides`).
     let canvas_min = app.canvas_area_min(&ctx);
-    let mut m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
-    m.insert(PanelId::Canvas, canvas_min);
+    let m = workspace_minima(ui, skin, &workspace, sep, canvas_min);
     // La columna derecha: del ancho elegido (o el que tomó sola), nunca menos que su mínimo (con su
     // divisor, que es la línea que el panel derecho tenía de borde). Se pide en puntos al centro
     // del divisor.
@@ -277,6 +300,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     workspace.sides.bar = bar;
     workspace.sides.mins = m.clone();
     workspace.sides.column = Some(column_width - sep / 2.0);
+    // La toolbar, del ancho de su caja (la del skin), como el panel izquierdo de antes.
+    workspace.sides.toolbar = Some(toolbar_width(skin));
     let area = ui.available_rect_before_wrap();
     // El `DockArea`, en puntos enteros (egui_dock solo ajusta a píxel físico), en todo el área.
     let dock_rect =
@@ -310,6 +335,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         skinned: skin.is_some(),
         widths: &widths,
         color_margin: egui::Frame::side_top_panel(ui.style()).inner_margin,
+        tools_margin: tools_margin(ui.style(), skin, workspace.tools_side(), sep),
+        tools_floating: workspace.floating(PanelId::Tools),
         beside: workspace.beside_column(),
         sep,
         strip: workspace.strip.clone(),
@@ -344,6 +371,20 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .show_inside(ui, &mut viewer);
     }
     ui.advance_cursor_after_rect(area);
+    // El divisor de la toolbar sola junto al lienzo: ni se ve ni se arrastra.
+    let tools_divider = workspace.tools_side().zip(workspace.tools_divider(sep));
+    if let Some((first, divider)) = tools_divider {
+        let leaf = workspace
+            .leaf_of(PanelId::Tools)
+            .and_then(|(surface, node)| {
+                workspace
+                    .state
+                    .leaf(egui_dock::NodePath { surface, node })
+                    .ok()
+            })
+            .map_or(divider, |leaf| leaf.rect);
+        cover_tools_divider(ui, skin, (leaf, divider), first, area.bottom());
+    }
     let Viewer {
         app,
         actions,
@@ -394,7 +435,14 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         closed.extend(close_marks(ui, &workspace.state, &hits, modal));
         // La línea de arriba de cada divisor vertical que llega a la barra de opciones cruza su
         // brillo (como los separadores de la barra y el borde del panel derecho de antes).
-        paint_crossings(ui, skin, &workspace.state, dock_rect, sep);
+        paint_crossings(
+            ui,
+            skin,
+            &workspace.state,
+            dock_rect,
+            sep,
+            tools_divider.map(|(_, d)| d),
+        );
     }
     // La franja de agarre del lienzo no es para agarrarlo: sin la mano encima.
     if let Some(path) = workspace.state.find_tab(&PanelId::Canvas)
@@ -462,8 +510,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         ctx.request_discard("workspace layout changed");
     }
     // Cada split con sus lados en su mínimo, y a puntos enteros, para el frame siguiente.
-    let mut m = beside_minima(minima(ui, skin), &workspace.beside_column(), sep);
-    m.insert(PanelId::Canvas, canvas_min);
+    let m = workspace_minima(ui, skin, &workspace, sep, canvas_min);
     fit_splits(&mut workspace.state, &m, sep, bar);
     fit_windows(&ctx, &mut workspace, &m, sep, bar);
     skin::snap(&ctx, &mut workspace.state);
@@ -475,11 +522,118 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     canvas
 }
 
+/// Lo mínimo de cada panel en su grupo de `w` (ver [`minima`]): el lienzo, lo que lleva su hoja
+/// este frame (`canvas`); los pegados al divisor de la columna derecha y la toolbar junto al
+/// lienzo, un divisor (`sep`) menos (su margen de ese lado cuenta desde la línea).
+fn workspace_minima(
+    ui: &egui::Ui,
+    skin: Option<&Skin>,
+    w: &Workspace,
+    sep: f32,
+    canvas: egui::Vec2,
+) -> Minima {
+    let mut m = beside_minima(minima(ui, skin), &w.beside_column(), sep);
+    m.insert(PanelId::Canvas, canvas);
+    if w.tools_side().is_some()
+        && let Some(min) = m.get_mut(&PanelId::Tools)
+    {
+        min.x = (min.x - sep).max(0.0);
+    }
+    m
+}
+
+/// El margen de la toolbar en su grupo: el del panel izquierdo de antes (con Pixel UI, el aire
+/// del mockup alrededor de su caja; sin él, el de los paneles de egui). Si va sola junto al lienzo
+/// (`side`, ver `Workspace::tools_side`), del lado del divisor cuenta desde su borde de afuera: el
+/// divisor (`sep`) está donde el panel tenía su aire (con Pixel UI) o su línea de 1 punto (sin
+/// él), así lo de adentro queda donde estaba.
+fn tools_margin(
+    style: &egui::Style,
+    skin: Option<&Skin>,
+    side: Option<bool>,
+    sep: f32,
+) -> egui::Margin {
+    let (mut margin, line) = match skin {
+        Some(_) => (
+            egui::Margin {
+                left: pixel_ui::TOOLBAR_MARGIN,
+                right: pixel_ui::TOOLBAR_MARGIN,
+                top: pixel_ui::TOOLBAR_TOP_MARGIN,
+                bottom: 2,
+            },
+            0.0,
+        ),
+        None => (
+            egui::Frame::side_top_panel(style).inner_margin,
+            style.visuals.widgets.noninteractive.bg_stroke.width.round(),
+        ),
+    };
+    let less = (sep - line).max(0.0) as i8;
+    match side {
+        Some(true) => margin.right = (margin.right - less).max(0),
+        Some(false) => margin.left = (margin.left - less).max(0),
+        None => {}
+    }
+    margin
+}
+
+/// El divisor entre la toolbar sola y el lado del lienzo (`divider`; `first`: la toolbar a la
+/// izquierda) se ve como el borde del panel izquierdo de antes: con Pixel UI, nada (el fondo, como
+/// el aire que había); sin él, el fondo y la línea de 1 punto de egui del lado del lienzo. Y no se
+/// arrastra: encima de su zona va un widget que se queda con el puntero (registrado después que
+/// el divisor de egui_dock, le gana; sin el cursor de cambiar el tamaño). Su lado mide siempre el
+/// ancho de la toolbar (`pin_sides`).
+///
+/// El `DockArea` va a puntos enteros y el área puede terminar en medio punto (sin Pixel UI, la
+/// barra de estado): el panel de antes llegaba hasta `bottom`, así que lo de debajo de la toolbar
+/// (`leaf`) y de su divisor hasta ahí también lleva su fondo (y su línea).
+fn cover_tools_divider(
+    ui: &mut egui::Ui,
+    skin: Option<&Skin>,
+    (leaf, divider): (egui::Rect, egui::Rect),
+    first: bool,
+    bottom: f32,
+) {
+    let ppp = ui.ctx().pixels_per_point();
+    // Donde lo pinta egui_dock (`show_separator`): a píxel físico.
+    let x = |v: f32| (v * ppp).round() / ppp;
+    let bottom = bottom.max(divider.bottom());
+    let rect = egui::Rect::from_x_y_ranges(
+        x(divider.left())..=x(divider.right()),
+        divider.top()..=bottom,
+    );
+    ui.painter().rect_filled(rect, 0.0, ui.visuals().panel_fill);
+    if bottom > divider.bottom() {
+        let below = egui::Rect::from_x_y_ranges(
+            x(leaf.left().min(divider.left()))..=x(leaf.right().max(divider.right())),
+            divider.bottom()..=bottom,
+        );
+        ui.painter()
+            .rect_filled(below, 0.0, ui.visuals().panel_fill);
+    }
+    if skin.is_none() {
+        // Como `egui::Panel` con `show_separator_line`: la línea en el borde de afuera del panel.
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        let at = if first {
+            rect.right() - stroke.width / 2.0
+        } else {
+            rect.left() + stroke.width / 2.0
+        };
+        ui.painter().vline(at, rect.y_range(), stroke);
+    }
+    let zone = divider.expand2(egui::vec2(skin::SEPARATOR_EXTRA / 2.0, 0.0));
+    let _ = ui.interact(
+        zone,
+        egui::Id::new("workspace_tools_divider"),
+        egui::Sense::click_and_drag(),
+    );
+}
+
 /// Los mínimos `m` con los de los paneles pegados al divisor izquierdo de la columna derecha
 /// (`beside`) un divisor (`sep`) más angostos: su margen izquierdo cuenta desde la línea, como en el
 /// panel derecho de antes (ver `Viewer::tab_style_override`), así que la columna mínima mide lo
 /// mismo que el panel mínimo de antes.
-fn beside_minima(mut m: super::fit::Minima, beside: &[PanelId], sep: f32) -> super::fit::Minima {
+fn beside_minima(mut m: Minima, beside: &[PanelId], sep: f32) -> Minima {
     for id in beside {
         if let Some(min) = m.get_mut(id) {
             min.x = (min.x - sep).max(0.0);
@@ -490,13 +644,15 @@ fn beside_minima(mut m: super::fit::Minima, beside: &[PanelId], sep: f32) -> sup
 
 /// La línea oscura de cada divisor vertical de la superficie principal que llega arriba del
 /// `DockArea` (`area`), un punto más arriba: cruza el brillo de la línea de la barra de opciones
-/// (como el borde del panel derecho de antes).
+/// (como el borde del panel derecho de antes). El de la toolbar (`quiet`) no: no se ve (el panel
+/// izquierdo de antes no tenía línea).
 fn paint_crossings(
     ui: &egui::Ui,
     skin: &Skin,
     state: &DockState<PanelId>,
     area: egui::Rect,
     sep: f32,
+    quiet: Option<egui::Rect>,
 ) {
     let ppp = ui.ctx().pixels_per_point();
     for node in state.main_surface().iter() {
@@ -509,6 +665,9 @@ fn paint_crossings(
         // Donde la pinta egui_dock (`show_separator`): su borde izquierdo, a píxel físico.
         let mid = split.rect.left() + split.rect.width() * split.fraction;
         let left = ((mid - sep / 2.0) * ppp).round() / ppp;
+        if quiet.is_some_and(|q| (q.center().x - mid).abs() < 0.5) {
+            continue;
+        }
         let cross =
             egui::Rect::from_min_size(egui::pos2(left, area.top() - 1.0), egui::vec2(1.0, 1.0));
         ui.painter().add(egui::Shape::rect_filled(
@@ -563,7 +722,10 @@ fn collapse_buttons(
         }
         // En la barra de pestañas, en el lugar que ella le deja a la derecha (`COLLAPSE_ROOM`);
         // sin barra, a la izquierda de la barra de scroll del panel (no encima de ella).
-        let right = if leaf.tab_bar_hidden {
+        let right = if leaf.tabs == [PanelId::Tools] {
+            // La toolbar no lleva barra de scroll del kit a la derecha: en la punta.
+            leaf.rect.right() - 1.0
+        } else if leaf.tab_bar_hidden {
             leaf.rect.right() - f32::from(dock::FLYOUT_MARGIN) - pixel_ui::SCROLL_BAR - 1.0
         } else {
             leaf.rect.right() - 1.0

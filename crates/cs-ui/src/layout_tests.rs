@@ -320,6 +320,8 @@ impl LayoutHarness {
     /// Fase D: la columna derecha (`"palette"`) ya no es un `egui::Panel` sino el lado derecho del
     /// lienzo en el árbol del workspace; su rect equivalente (con la línea que la separa del
     /// lienzo, que es su divisor) es `Workspace::column_rect`, el mismo que tenía el panel.
+    /// Tarea 3: la toolbar (`"tools"`) es una hoja más; su rect equivalente (con el divisor que
+    /// la separa del lienzo, donde el panel tenía su borde) es `Workspace::tools_rect`.
     fn panel(&self, id: &str) -> Rect {
         if id == "palette" {
             return self
@@ -327,6 +329,13 @@ impl LayoutHarness {
                 .workspace
                 .column_rect()
                 .unwrap_or_else(|| panic!("no right column"));
+        }
+        if id == "tools" {
+            return self
+                .app
+                .workspace
+                .tools_rect()
+                .unwrap_or_else(|| panic!("no toolbar in the workspace"));
         }
         PanelState::load(&self.ctx, egui::Id::new(id))
             .unwrap_or_else(|| panic!("no panel {id:?}"))
@@ -12072,10 +12081,11 @@ fn dragging_a_docked_tab_with_egui_docks_own_drag_splits_or_floats_it_once() {
         h.frame();
         h.frame();
         let w = &h.app.workspace;
-        // Fase D: el lienzo también está en el árbol (una vez).
+        // Fase D: el lienzo y la toolbar también están en el árbol (una vez).
         for &id in crate::panel_registry::PanelId::ALL {
             let expected = usize::from(
-                PanelId::DOCK.contains(&id) || matches!(id, PanelId::Color | PanelId::Canvas),
+                PanelId::DOCK.contains(&id)
+                    || matches!(id, PanelId::Color | PanelId::Canvas | PanelId::Tools),
             );
             assert_eq!(w.places(id), expected, "canvas {to_canvas}: {id:?}");
         }
@@ -12371,4 +12381,156 @@ fn resizing_the_window_never_draws_the_canvas_below_its_minimum() {
             assert_canvas_area_whole(&h, &format!("below {below}, {size:?}"));
         }
     }
+}
+
+// --- Fase D, tarea 3: la toolbar es un panel del árbol ---
+
+#[test]
+fn with_essentials_the_toolbar_is_a_leaf_where_its_panel_was() {
+    use crate::panel_registry::PanelId;
+    // Con Pixel UI (1200×800): el panel de antes iba de 0,63 a 37,780. Ahora es la hoja de Tools
+    // (0..35) y su divisor (35..37, que no se ve); el lienzo empieza donde empezaba.
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Tools) && !w.strip().contains(&PanelId::Tools));
+    assert_eq!(
+        h.panel("tools"),
+        Rect::from_min_max(pos2(0.0, 63.0), pos2(37.0, 780.0))
+    );
+    assert_eq!(
+        w.leaf_rect(PanelId::Tools),
+        Some(Rect::from_min_max(pos2(0.0, 63.0), pos2(35.0, 780.0)))
+    );
+    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), 37.0);
+    assert_eq!(
+        h.canvas,
+        Some(Rect::from_min_max(pos2(40.0, 71.0), pos2(905.0, 582.0)))
+    );
+    // Los botones, donde estaban (los de la caja y los dos colores debajo).
+    for (label, rect) in [
+        ("Rectangular Marquee", (7.0, 70.0, 30.0, 92.0)),
+        ("Move", (7.0, 312.0, 30.0, 334.0)),
+        ("Artboard", (7.0, 334.0, 30.0, 357.0)),
+        ("Primary color", (8.0, 366.0, 29.0, 387.0)),
+        ("Secondary color", (8.0, 388.0, 29.0, 409.0)),
+    ] {
+        let (x0, y0, x1, y1) = rect;
+        assert_eq!(
+            h.button(label),
+            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
+            "{label}"
+        );
+    }
+    // Sin Pixel UI: la barra con nombres, de 184 con su línea, y sus botones donde estaban.
+    let h = LayoutHarness::editor();
+    assert_eq!(
+        h.panel("tools"),
+        Rect::from_min_max(pos2(0.0, 78.0), pos2(184.0, h.panel("status").top()))
+    );
+    assert_eq!(h.canvas.unwrap().left(), 184.0);
+    for (label, rect) in [
+        ("🔲 Rectangular Marquee ", (8.0, 119.0, 153.0, 143.0)),
+        ("🗑 Eraser ", (8.0, 200.0, 175.0, 224.0)),
+    ] {
+        let (x0, y0, x1, y1) = rect;
+        assert_eq!(
+            h.button(label),
+            Rect::from_min_max(pos2(x0, y0), pos2(x1, y1)),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn the_toolbars_divider_is_not_dragged_and_has_no_resize_cursor() {
+    use crate::panel_registry::PanelId;
+    for view in [pixel_ui(), plain()] {
+        let mut h = LayoutHarness::new(view, true);
+        let tools = h.panel("tools");
+        let canvas = h.app.workspace.leaf_rect(PanelId::Canvas).unwrap();
+        // El centro del divisor: un punto antes del borde del panel de antes.
+        let at = pos2(tools.right() - 1.0, 400.0);
+        h.frame_with(vec![Event::PointerMoved(at)]);
+        h.frame();
+        assert_ne!(h.cursor, egui::CursorIcon::ResizeHorizontal);
+        h.drag(at, at + vec2(80.0, 0.0));
+        h.frame();
+        assert_eq!(h.panel("tools"), tools);
+        assert_eq!(h.app.workspace.leaf_rect(PanelId::Canvas), Some(canvas));
+    }
+}
+
+#[test]
+fn the_toolbar_moved_right_of_the_canvas_stays_there_and_the_canvas_reaches_the_left_edge() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::{DockTarget, Split};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let column = h.panel("palette");
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Canvas).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Tools, DockTarget::Split(s, n, Split::Right));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Tools));
+    let tools = h.panel("tools");
+    let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+    // El lienzo se ensancha hacia la izquierda, hasta la orilla.
+    assert_eq!(canvas.left(), 0.0, "{canvas:?}");
+    // La toolbar, a su derecha, del mismo ancho que antes; la columna no se movió.
+    assert_eq!(tools.left(), canvas.right(), "{tools:?} {canvas:?}");
+    assert_eq!(tools.width(), 37.0, "{tools:?}");
+    assert_eq!(tools.right(), column.left());
+    assert_eq!(h.panel("palette"), column);
+    assert!(tools.contains_rect(h.button("Rectangular Marquee")));
+    // Sigue ahí frame tras frame.
+    h.frame();
+    assert_eq!(h.panel("tools"), tools);
+}
+
+#[test]
+fn closing_the_toolbar_sends_it_to_the_strip_and_its_button_opens_it() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // Desde el « de su franja de arriba (va sola, sin barra de pestañas).
+    let leaf = h.app.workspace.leaf_rect(PanelId::Tools).unwrap();
+    h.frame_with(vec![Event::PointerMoved(pos2(
+        leaf.center().x,
+        leaf.top() + 1.0,
+    ))]);
+    h.frame();
+    let collapse = h.button("Collapse to Icons");
+    assert!(leaf.contains_rect(collapse), "{collapse:?} in {leaf:?}");
+    h.click(collapse.center(), PointerButton::Primary);
+    let w = &h.app.workspace;
+    assert!(!w.docked(PanelId::Tools) && !w.floating(PanelId::Tools));
+    // Hasta la tarea 6 (tiras por orilla) va a la tira de la derecha, arriba de todo.
+    assert_eq!(w.strip().first(), Some(&PanelId::Tools));
+    assert_eq!(w.places(PanelId::Tools), 1);
+    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), 0.0);
+    assert_eq!(buttons_in(&h, "Tools", "dock"), 1);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Rectangular Marquee"));
+    // Su botón abre la toolbar flotando junto a él.
+    h.click(h.button("Tools").center(), PointerButton::Primary);
+    assert!(h.buttons.iter().any(|(l, _)| l == "Rectangular Marquee"));
+}
+
+#[test]
+fn the_toolbar_floats_in_a_window_of_its_width() {
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.float(PanelId::Tools, pos2(320.0, 120.0));
+    for _ in 0..4 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    assert!(w.floating(PanelId::Tools));
+    assert_eq!(w.leaf_rect(PanelId::Canvas).unwrap().left(), 0.0);
+    let tools = w.leaf_rect(PanelId::Tools).unwrap();
+    assert!(tools.contains_rect(h.button("Rectangular Marquee")));
+    // Del ancho de la toolbar o, si es más, del que pide su pestaña de título (la ventana no se
+    // angosta más que su barra de pestañas: 92), no del de la barra con nombres (184).
+    assert!(tools.width() <= 100.0, "{tools:?}");
 }

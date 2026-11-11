@@ -229,13 +229,15 @@ mod tests {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 50.0), egui::pos2(right, 650.0));
         let mut sides = super::super::fit::SidePoints::default();
         sides.column = Some(column);
+        // La toolbar de Pixel UI (0..37) a la izquierda del lienzo.
+        sides.toolbar = Some(37.0);
         super::super::fit::pin_sides(&mut w.state, area, &mut sides);
         w.layout_for_test(area); // da a las hojas su rect como lo haría show()
     }
 
     #[test]
     fn the_drop_target_is_a_tab_in_the_middle_a_split_at_the_edge_and_a_window_outside() {
-        // El lienzo de 0 a 1000; Color, de 1000 a 1220.
+        // La toolbar de 0 a 37, el lienzo de 37 a 1000; Color, de 1000 a 1220.
         let mut w = Workspace::essentials();
         laid_out(&mut w, 1220.0, 220.0);
         let (s, n) = w.leaf_of(PanelId::Color).unwrap();

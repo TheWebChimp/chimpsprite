@@ -79,7 +79,7 @@ pub(super) const GRAB_STRIP: f32 = 3.0;
 /// Lo que la zona de un divisor crece más allá de su línea (la mitad de cada lado). egui_dock
 /// registra los divisores después de los grupos: lo que alcanzan le gana a la franja de agarre del
 /// grupo de abajo. Con 1 (medio punto por lado) le dejan 2.5 de los 3 puntos a la franja.
-const SEPARATOR_EXTRA: f32 = 1.0;
+pub(super) const SEPARATOR_EXTRA: f32 = 1.0;
 /// El marco de las ventanas flotantes y de la zona de destino (el de los paneles del dock).
 const FLYOUT: &str = "menu.side";
 /// El relleno de la zona de destino (la franja rosa de las listas, a media luz).

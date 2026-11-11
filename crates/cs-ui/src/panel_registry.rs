@@ -18,8 +18,9 @@ pub(crate) enum Body {
 /// Dónde vive un panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Host {
-    /// La columna fija de la izquierda (las herramientas).
-    Left,
+    /// Un panel del árbol del workspace que no es del dock (la toolbar): acoplado, flotando o en
+    /// la tira (ahí su botón abre su flyout, como los del dock).
+    Tree,
     /// La columna fija de la derecha (el color).
     Right,
     /// La franja de abajo (el timeline).
@@ -46,7 +47,8 @@ pub enum PanelId {
     /// El lienzo: la hoja protegida al centro del workspace (no se cierra, no se arrastra, no
     /// recibe pestañas y existe siempre una vez, en la superficie principal).
     Canvas,
-    /// La barra de herramientas.
+    /// La barra de herramientas: un panel del árbol (fase D), a la izquierda del lienzo en
+    /// Essentials.
     Tools,
     /// El editor de color y la paleta.
     Color,
@@ -193,10 +195,12 @@ impl PanelId {
                 title: "Tools",
                 icon: "icon.tools",
                 plain: "✎",
+                // Sin Pixel UI; con él, el ancho real sale del skin (`pixel_ui::toolbar_width`,
+                // ver `workspace::fit::minima`), como el mínimo de Color.
                 reference_width: crate::pixel_ui::TOOLBAR_WIDTH_PLAIN,
                 min_width: crate::pixel_ui::TOOLBAR_WIDTH_PLAIN,
-                closable: false,
-                host: Host::Left,
+                closable: true,
+                host: Host::Tree,
                 body: Body::Fixed,
                 min_height: 0.0,
             },
@@ -469,7 +473,8 @@ mod tests {
         assert!(matches!(PanelId::Canvas.spec().host, Host::Center));
         assert!(!PanelId::Canvas.spec().closable);
         assert_eq!(PanelId::Canvas.key(), "canvas");
-        assert!(matches!(PanelId::Tools.spec().host, Host::Left));
+        assert!(matches!(PanelId::Tools.spec().host, Host::Tree));
+        assert!(PanelId::Tools.spec().closable);
         assert!(matches!(PanelId::Color.spec().host, Host::Right));
         assert!(matches!(PanelId::Timeline.spec().host, Host::Bottom));
         assert!(matches!(PanelId::Preview.spec().host, Host::Window));

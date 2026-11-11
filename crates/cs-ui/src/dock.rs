@@ -254,13 +254,14 @@ pub fn show(
         | DockPanel::Lumen
         | DockPanel::Library
         | DockPanel::Font
-        | DockPanel::Model => out.app_panel = Some((panel, anchor)),
+        | DockPanel::Model
+        // La toolbar cerrada (hasta que haya tiras por orilla, va en esta).
+        | DockPanel::Tools => out.app_panel = Some((panel, anchor)),
         #[cfg(not(target_arch = "wasm32"))]
         DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
-        // Los que no son botones del dock (no están en `PanelId::DOCK`) nunca llegan a la tira:
-        // el botón « de un grupo deja a Color donde está (`Workspace::goes_to_strip`).
+        // Los demás nunca llegan a la tira: el botón « de un grupo deja a Color donde está
+        // (`Workspace::goes_to_strip`).
         DockPanel::Canvas
-        | DockPanel::Tools
         | DockPanel::Color
         | DockPanel::Timeline
         | DockPanel::Preview => {}

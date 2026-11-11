@@ -43,10 +43,12 @@ pub(crate) struct SavedWorkspace {
     pub strip: Vec<String>,
 }
 
-/// La versión de lo que se guarda ahora: 2, el árbol de toda la ventana con el lienzo (fase D).
-/// La 1 (y la 0, de antes del campo) es la de la fase C: la columna derecha sola, sin lienzo; al
-/// leerla se le mete el lienzo a la izquierda ([`Workspace::from_saved`]).
-pub(crate) const SAVED_VERSION: u32 = 2;
+/// La versión de lo que se guarda ahora: 3, el árbol de toda la ventana con el lienzo y la
+/// toolbar (fase D, tarea 3). En la 2 la toolbar no iba en el árbol (era el panel fijo de la
+/// izquierda): una toolbar que no está en el árbol de una 2 va a su izquierda; en una 3, está en
+/// la tira. La 1 (y la 0, de antes del campo) es la de la fase C: la columna derecha sola, sin
+/// lienzo; al leerla se le mete el lienzo a la izquierda ([`Workspace::from_saved`]).
+pub(crate) const SAVED_VERSION: u32 = 3;
 
 impl Default for SavedWorkspace {
     fn default() -> Self {
@@ -55,15 +57,15 @@ impl Default for SavedWorkspace {
 }
 
 impl Workspace {
-    /// El acomodo de fábrica: el lienzo y, a su derecha, Color acoplado solo (`H[Canvas |
-    /// Color]`, la columna derecha con el ancho de `view.palette_width`), y los paneles del dock
-    /// en la tira, en su orden. El foco, en el grupo de Color (ahí se acopla lo de la tira).
+    /// El acomodo de fábrica: la toolbar a la izquierda del lienzo (del ancho de su caja) y, a su
+    /// derecha, Color acoplado solo (`H[Tools | H[Canvas | Color]]`, la columna derecha con el
+    /// ancho de `view.palette_width`), y los paneles del dock en la tira, en su orden. El foco, en
+    /// el grupo de Color (ahí se acopla lo de la tira).
     pub(crate) fn essentials() -> Workspace {
         let mut state = DockState::new(vec![PanelId::Canvas]);
-        let [_, color] =
-            state
-                .main_surface_mut()
-                .split_right(NodeIndex::root(), 0.5, vec![PanelId::Color]);
+        let tree = state.main_surface_mut();
+        let [canvas, _] = tree.split_left(NodeIndex::root(), 0.5, vec![PanelId::Tools]);
+        let [_, color] = tree.split_right(canvas, 0.5, vec![PanelId::Color]);
         state.set_focused_node_and_surface(NodePath {
             surface: SurfaceIndex::main(),
             node: color,
@@ -109,8 +111,9 @@ impl Workspace {
     /// Essentials.
     ///
     /// Lo de la fase C (versión 1, o 0 sin el campo) es la columna derecha sola: se le mete el
-    /// lienzo a la izquierda (su ancho es `view.palette_width`, que no cambia). Y el lienzo queda
-    /// una vez, solo y en la superficie principal (ver `fit::tidy_canvas`).
+    /// lienzo a la izquierda (su ancho es `view.palette_width`, que no cambia). Lo de antes de la
+    /// versión 3 no tiene la toolbar (era un panel fijo): va a la izquierda de todo, como estaba.
+    /// Y el lienzo queda una vez, solo y en la superficie principal (ver `fit::tidy_canvas`).
     pub(crate) fn from_saved(saved: SavedWorkspace) -> Workspace {
         let essentials = |why: &str| {
             log::warn!("discarding the saved workspace: {why}");
@@ -119,8 +122,10 @@ impl Workspace {
         if !sound(&saved.state) {
             return essentials("its dock tree is malformed");
         }
+        // La toolbar de antes de la versión 3 no puede venir en el árbol (no era de él).
         let in_tree = |id: PanelId| {
-            matches!(id, PanelId::Canvas | PanelId::Color) || Workspace::goes_to_strip(id)
+            (matches!(id, PanelId::Canvas | PanelId::Color) || Workspace::goes_to_strip(id))
+                && (saved.version >= 3 || id != PanelId::Tools)
         };
         let mut state: DockState<Option<PanelId>> = saved
             .state
@@ -154,6 +159,16 @@ impl Workspace {
                 *main = Tree::new(vec![PanelId::Canvas]);
             } else {
                 main.split_left(NodeIndex::root(), 0.5, vec![PanelId::Canvas]);
+            }
+        }
+        // Antes de la 3, la toolbar era el panel fijo de la izquierda: a la izquierda de todo (su
+        // ancho lo pone `pin_sides`).
+        if saved.version < 3 {
+            let main = state.main_surface_mut();
+            if main.num_tabs() == 0 {
+                *main = Tree::new(vec![PanelId::Tools]);
+            } else {
+                main.split_left(NodeIndex::root(), 0.5, vec![PanelId::Tools]);
             }
         }
         super::fit::tidy_canvas(&mut state, None);
@@ -226,10 +241,10 @@ impl Workspace {
             .filter(|(s, _)| !s.is_main())
             .filter_map(|(s, _)| w.root_rect(s).map(|r| (s, r)))
             .collect();
-        w.strip = PanelId::DOCK
+        w.strip = PanelId::ALL
             .iter()
             .copied()
-            .filter(|p| w.state.find_tab(p).is_none())
+            .filter(|&p| Workspace::goes_to_strip(p) && w.state.find_tab(&p).is_none())
             .collect();
         w
     }
@@ -251,12 +266,16 @@ impl Workspace {
     }
 
     /// Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`, para capturas): `library-tab`
-    /// (Library en el grupo de Color), `split` (Groom debajo de Color) o `float` (Lumen
-    /// flotando). `None` si no es ninguno de esos.
+    /// (Library en el grupo de Color), `split` (Groom debajo de Color), `float` (Lumen flotando),
+    /// `tools-right` (la toolbar a la derecha del lienzo) o `tools-float` (la toolbar flotando).
+    /// `None` si no es ninguno de esos.
     pub(crate) fn demo(name: &str) -> Option<Workspace> {
         let mut w = Workspace::essentials();
         let (surface, node) = w.leaf_of(PanelId::Color)?;
+        let (cs, cn) = w.leaf_of(PanelId::Canvas)?;
         match name {
+            "tools-right" => w.dock(PanelId::Tools, DockTarget::Split(cs, cn, Split::Right)),
+            "tools-float" => w.float(PanelId::Tools, egui::pos2(320.0, 120.0)),
             "library-tab" => w.dock(PanelId::Library, DockTarget::Leaf(surface, node)),
             "split" => w.dock(
                 PanelId::Groom,
@@ -341,14 +360,14 @@ impl Workspace {
             .is_ok_and(|leaf| leaf.tabs.contains(&PanelId::Canvas))
     }
 
-    /// `id` al grupo con el foco de la superficie principal; si el foco es del lienzo (un clic en
-    /// él se lo da) o de nadie, al primer grupo que no sea el lienzo; sin ninguno, a la derecha
-    /// del lienzo.
+    /// `id` al grupo con el foco de la superficie principal; si el foco es del lienzo o de la
+    /// toolbar sola (un clic en ellos se lo da) o de nadie, al primer grupo que no sea ninguno de
+    /// esos (ver [`takes_focused`]); sin ninguno, a la derecha del lienzo.
     fn push_focused(&mut self, id: PanelId) {
         if let Some(path) = self.state.focused_leaf()
             && path.surface.is_main()
-            && !self.is_canvas_leaf(path.surface, path.node)
             && let Ok(leaf) = self.state.leaf_mut(path)
+            && takes_focused(&leaf.tabs)
         {
             leaf.append_tab(id);
             return;
@@ -363,7 +382,17 @@ impl Workspace {
         }
         self.take(id);
         let spec = id.spec();
-        let size = egui::vec2(spec.reference_width, spec.min_height.max(FLOAT_HEIGHT));
+        // La toolbar, del ancho de su caja (el que dio el anfitrión, con el skin; antes del primer
+        // frame, el del skin de respaldo). Si es poco (sin Pixel UI), `fit_windows` la agranda a
+        // su mínimo; más ancha, nunca se angostaría.
+        let width = match (id, self.sides.toolbar) {
+            (PanelId::Tools, Some(toolbar)) => toolbar,
+            (PanelId::Tools, None) => {
+                crate::pixel_ui::toolbar_width(&crate::skin::Skin::fallback())
+            }
+            _ => spec.reference_width,
+        };
+        let size = egui::vec2(width, spec.min_height.max(FLOAT_HEIGHT));
         let surface = self.state.add_window(vec![id]);
         if let Some(window) = self.state.get_window_state_mut(surface) {
             window.set_position(at.round());
@@ -397,10 +426,11 @@ impl Workspace {
             .unwrap_or_default()
     }
 
-    /// Si `id` puede ir a la tira: los del dock, que tienen un flyout que su botón abre. Color no
-    /// (su botón no abriría nada): se queda acoplado o flotando.
+    /// Si `id` puede ir a la tira: los del dock y la toolbar, que tienen un flyout que su botón
+    /// abre. Color no (su botón no abriría nada): se queda acoplado o flotando. La toolbar va a la
+    /// tira de la derecha hasta que haya una por orilla (tarea 6).
     pub(crate) fn goes_to_strip(id: PanelId) -> bool {
-        PanelId::DOCK.contains(&id)
+        id == PanelId::Tools || PanelId::DOCK.contains(&id)
     }
 
     /// Si el botón « del grupo `(surface, node)` mandaría algo a la tira.
@@ -490,16 +520,23 @@ fn first_leaf<T>(tree: &Tree<T>) -> Option<NodeIndex> {
     (0..tree.len()).map(NodeIndex).find(|&n| tree[n].is_leaf())
 }
 
-/// El primer grupo de `tree` (por índice) que no es el del lienzo.
+/// Si a un grupo con `tabs` va lo que se acopla "con el foco": no al del lienzo (no recibe
+/// pestañas) ni al de la toolbar sola (con otra pestaña dejaría de verse como hoy).
+fn takes_focused(tabs: &[PanelId]) -> bool {
+    !tabs.contains(&PanelId::Canvas) && tabs != [PanelId::Tools]
+}
+
+/// El primer grupo de `tree` (por índice) que no es el del lienzo ni el de la toolbar sola.
 fn first_panel_leaf(tree: &Tree<PanelId>) -> Option<NodeIndex> {
     (0..tree.len()).map(NodeIndex).find(|&n| match &tree[n] {
-        Node::Leaf(leaf) => !leaf.tabs.contains(&PanelId::Canvas),
+        Node::Leaf(leaf) => takes_focused(&leaf.tabs),
         _ => false,
     })
 }
 
-/// `id` en el primer grupo de la superficie principal que no sea el del lienzo; sin ninguno, en
-/// uno nuevo a la derecha del lienzo (o, sin lienzo, en la superficie principal).
+/// `id` en el primer grupo de la superficie principal que no sea el del lienzo (ni el de la
+/// toolbar sola); sin ninguno, en uno nuevo a la derecha del lienzo (o, sin lienzo, en la
+/// superficie principal).
 fn push_beside_canvas(state: &mut DockState<PanelId>, id: PanelId) {
     let main = state.main_surface_mut();
     if let Some(n) = first_panel_leaf(main)
@@ -530,6 +567,99 @@ mod tests {
         let w = Workspace::essentials();
         assert!(w.docked(PanelId::Color));
         assert_eq!(w.strip(), PanelId::DOCK);
+    }
+
+    /// Los paneles del grupo `n` de la superficie principal de `w` (falla si no es un grupo).
+    fn leaf_tabs(w: &Workspace, n: NodeIndex) -> Vec<PanelId> {
+        match &w.state.main_surface()[n] {
+            Node::Leaf(leaf) => leaf.tabs.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn essentials_has_the_toolbar_left_of_the_canvas() {
+        // `H[Tools | H[Canvas | Color]]`: la toolbar es un lado del lienzo; la columna, Color.
+        let w = Workspace::essentials();
+        let root = NodeIndex::root();
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Canvas]);
+        assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
+        assert_eq!(w.tools_side(), Some(true));
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert_eq!(w.places(PanelId::Tools), 1);
+    }
+
+    #[test]
+    fn the_toolbar_goes_to_the_strip_and_stays_there_when_read_back() {
+        let mut w = Workspace::essentials();
+        w.to_strip(PanelId::Tools);
+        assert!(!w.docked(PanelId::Tools) && !w.floating(PanelId::Tools));
+        assert_eq!(w.strip().first(), Some(&PanelId::Tools));
+        assert_eq!(w.places(PanelId::Tools), 1);
+        assert_eq!(w.tools_side(), None);
+        // Guardado (versión 3) y leído: sigue en la tira (no se vuelve a meter a la izquierda).
+        let back = Workspace::from_saved(w.to_saved());
+        assert!(!back.docked(PanelId::Tools));
+        assert_eq!(back.strip().first(), Some(&PanelId::Tools));
+        assert_eq!(back.places(PanelId::Tools), 1);
+        // De la tira, a la derecha del lienzo: ahí es su lado (de su ancho), no la columna.
+        let mut w = back;
+        let (s, n) = w.leaf_of(PanelId::Canvas).unwrap();
+        w.dock(PanelId::Tools, DockTarget::Split(s, n, Split::Right));
+        assert_eq!(w.tools_side(), Some(false));
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert!(!w.strip().contains(&PanelId::Tools));
+        // Con Color flotando, la toolbar a la derecha del lienzo tampoco es la columna.
+        w.float(PanelId::Color, egui::pos2(100.0, 100.0));
+        assert_eq!(w.tools_side(), Some(false));
+        assert_eq!(w.column(), None);
+    }
+
+    #[test]
+    fn a_version_2_workspace_gets_the_toolbar_left_of_everything() {
+        // Lo que guardaba la tarea 2: `H[Canvas | V[Color / Groom]]`, sin la toolbar (era el
+        // panel fijo de la izquierda).
+        let mut state = DockState::new(vec!["canvas".to_string()]);
+        let [_, column] =
+            state
+                .main_surface_mut()
+                .split_right(NodeIndex::root(), 0.6, vec!["color".to_string()]);
+        state
+            .main_surface_mut()
+            .split_below(column, 0.4, vec!["groom".to_string()]);
+        let saved = SavedWorkspace {
+            version: 2,
+            state,
+            strip: Vec::new(),
+        };
+        let ron = ron::to_string(&saved).unwrap();
+        let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
+        let root = NodeIndex::root();
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Tools]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Canvas]);
+        assert_eq!(w.tools_side(), Some(true));
+        assert_eq!(w.column_panels(), [PanelId::Color, PanelId::Groom]);
+        assert_eq!(w.places(PanelId::Tools), 1);
+        assert!(!w.strip().contains(&PanelId::Tools));
+        // Lo que se guarda ahora es la 3, y se lee igual (sin otra toolbar).
+        let again = w.to_saved();
+        assert_eq!(again.version, SAVED_VERSION);
+        let back = Workspace::from_saved(again);
+        assert_eq!(back.state_tabs(), w.state_tabs());
+        assert_eq!(back.places(PanelId::Tools), 1);
+    }
+
+    #[test]
+    fn what_docks_with_the_focus_never_joins_the_lone_toolbar() {
+        // Un clic en la toolbar le da el foco a su grupo: lo que se acopla "con el foco" va al de
+        // Color, no como pestaña de la toolbar.
+        let mut w = Workspace::essentials();
+        assert!(w.focus(PanelId::Tools));
+        w.dock(PanelId::Library, DockTarget::Focused);
+        assert_eq!(w.leaf_of(PanelId::Library), w.leaf_of(PanelId::Color));
+        let (_, tools) = w.leaf_of(PanelId::Tools).unwrap();
+        assert_eq!(leaf_tabs(&w, tools), [PanelId::Tools]);
     }
 
     #[test]
@@ -577,8 +707,8 @@ mod tests {
         let (s, n) = w.leaf_of(PanelId::Groom).unwrap();
         w.collapse_to_icons(s, n);
         assert_eq!(w.strip(), PanelId::DOCK);
-        // Quedan el lienzo y Color (fase D: el lienzo es una hoja del árbol).
-        assert_eq!(w.state.iter_leaves().count(), 2);
+        // Quedan la toolbar, el lienzo y Color (fase D: son hojas del árbol).
+        assert_eq!(w.state.iter_leaves().count(), 3);
     }
 
     #[test]
@@ -635,7 +765,8 @@ mod tests {
         assert!(w.docked(PanelId::Slices));
         for &id in PanelId::ALL {
             let expected = usize::from(
-                PanelId::DOCK.contains(&id) || matches!(id, PanelId::Color | PanelId::Canvas),
+                PanelId::DOCK.contains(&id)
+                    || matches!(id, PanelId::Color | PanelId::Canvas | PanelId::Tools),
             );
             assert_eq!(places(&w, id), expected, "{id:?}");
         }
@@ -695,15 +826,19 @@ mod tests {
         };
         let ron = ron::to_string(&saved).unwrap();
         let w = Workspace::from_saved(ron::from_str(&ron).unwrap());
-        // `H[Canvas | V[Color / Groom]]`: el lienzo a la izquierda de la columna de antes.
+        // `H[Tools | H[Canvas | V[Color / Groom]]]`: el lienzo a la izquierda de la columna de
+        // antes, y la toolbar (que era el panel fijo) a la izquierda de todo.
         let main = w.state.main_surface();
         assert!(matches!(main[NodeIndex::root()], Node::Horizontal(_)));
         let leaf = |n: NodeIndex| match &main[n] {
             Node::Leaf(leaf) => leaf.tabs.clone(),
             other => panic!("{other:?}"),
         };
-        assert_eq!(leaf(NodeIndex::root().left()), [PanelId::Canvas]);
-        let column = NodeIndex::root().right();
+        assert_eq!(leaf(NodeIndex::root().left()), [PanelId::Tools]);
+        let canvas_side = NodeIndex::root().right();
+        assert!(matches!(main[canvas_side], Node::Horizontal(_)));
+        assert_eq!(leaf(canvas_side.left()), [PanelId::Canvas]);
+        let column = canvas_side.right();
         match &main[column] {
             Node::Vertical(split) => assert_eq!(split.fraction, 0.4),
             other => panic!("{other:?}"),
@@ -711,9 +846,9 @@ mod tests {
         assert_eq!(leaf(column.left()), [PanelId::Color]);
         assert_eq!(leaf(column.right()), [PanelId::Groom]);
         assert_eq!(w.places(PanelId::Canvas), 1);
-        // Lo que se guarda ahora es la versión 2 (y se lee igual, sin volver a migrar).
+        // Lo que se guarda ahora es la versión de ahora (y se lee igual, sin volver a migrar).
         let again = w.to_saved();
-        assert_eq!(again.version, 2);
+        assert_eq!(again.version, SAVED_VERSION);
         let back = Workspace::from_saved(again);
         assert_eq!(back.state_tabs(), w.state_tabs());
         // Y la columna, del ancho elegido (el de `view.palette_width`, que no va en el árbol).
@@ -757,7 +892,12 @@ mod tests {
         assert!(sound(&w.state));
         assert_eq!(
             w.state_tabs(),
-            vec![PanelId::Canvas, PanelId::Color, PanelId::Groom]
+            vec![
+                PanelId::Tools,
+                PanelId::Canvas,
+                PanelId::Color,
+                PanelId::Groom
+            ]
         );
         assert_ne!(w.leaf_of(PanelId::Color), w.leaf_of(PanelId::Groom));
         assert!(w.docked(PanelId::Color) && w.docked(PanelId::Groom));
@@ -769,7 +909,12 @@ mod tests {
         w.to_strip(PanelId::Groom);
         assert_eq!(
             w.state_tabs(),
-            vec![PanelId::Canvas, PanelId::Color, PanelId::Library]
+            vec![
+                PanelId::Tools,
+                PanelId::Canvas,
+                PanelId::Color,
+                PanelId::Library
+            ]
         );
     }
 
@@ -791,7 +936,7 @@ mod tests {
     #[test]
     fn a_malformed_or_empty_saved_workspace_gives_essentials() {
         let is_essentials = |w: &Workspace| {
-            w.state_tabs() == vec![PanelId::Canvas, PanelId::Color]
+            w.state_tabs() == vec![PanelId::Tools, PanelId::Canvas, PanelId::Color]
                 && w.docked(PanelId::Color)
                 && w.strip() == PanelId::DOCK
         };
@@ -820,14 +965,18 @@ mod tests {
 
     #[test]
     fn non_finite_numbers_in_a_saved_workspace_are_repaired_and_it_draws() {
-        // El split de Color sobre Groom (la raíz es la del lienzo y la columna).
-        let fraction = |w: &Workspace| match &w.state.main_surface()[NodeIndex::root().right()] {
+        // El split de Color sobre Groom (la raíz es la de la toolbar; debajo, la del lienzo y la
+        // columna).
+        let column = NodeIndex::root().right().right();
+        let fraction = |w: &Workspace| match &w.state.main_surface()[column] {
             Node::Vertical(split) => split.fraction,
             other => panic!("{other:?}"),
         };
         let mut demo = Workspace::demo("split").unwrap();
-        if let Node::Horizontal(split) = &mut demo.state.main_surface_mut()[NodeIndex::root()] {
-            split.fraction = 0.75;
+        for (n, f) in [(NodeIndex::root(), 0.25), (NodeIndex::root().right(), 0.75)] {
+            if let Node::Horizontal(split) = &mut demo.state.main_surface_mut()[n] {
+                split.fraction = f;
+            }
         }
         let split = ron::to_string(&demo.to_saved()).unwrap();
         assert_eq!(split.matches("fraction:0.5,").count(), 1, "{split}");
