@@ -155,14 +155,18 @@ pub(super) fn hold_windows(
 }
 
 /// Lo que el `DockArea` cambia con el puntero, el teclado o un clic de accesibilidad: la fracción
-/// de cada split, la pestaña al frente de cada grupo y el grupo con el foco. Con un diálogo modal
-/// se toma antes y se repone después (ver el modal en [`super::show::show`]): nada de eso cambia
-/// aunque algo se cuele (en una ventana flotante, un clic de accesibilidad no pasa por
-/// `modal_shields`).
+/// de cada split, la pestaña al frente de cada grupo y el grupo con el foco (el de la app y el de
+/// cada árbol). Con un diálogo modal se toma antes y se repone después (ver el modal en
+/// [`super::show::show`]): nada de eso cambia aunque algo se cuele (en una ventana flotante, un
+/// clic de accesibilidad no pasa por `modal_shields`, y egui_dock enfoca el grupo de un clic en su
+/// cuerpo aunque haya un escudo encima).
 pub(super) struct Frozen {
     splits: Vec<(egui_dock::NodePath, f32)>,
     active: Vec<(egui_dock::NodePath, egui_dock::TabIndex)>,
     focused: Option<egui_dock::NodePath>,
+    /// El nodo con el foco de cada árbol: egui_dock guarda uno por superficie, aparte del de la
+    /// superficie con el foco (`focused`).
+    trees: Vec<(SurfaceIndex, Option<NodeIndex>)>,
 }
 
 impl Frozen {
@@ -182,6 +186,10 @@ impl Frozen {
                 .map(|(path, leaf)| (path, leaf.active))
                 .collect(),
             focused: state.focused_leaf(),
+            trees: state
+                .iter_surfaces_indexed()
+                .filter_map(|(s, surface)| Some((s, surface.node_tree()?.focused_leaf())))
+                .collect(),
         }
     }
 
@@ -200,8 +208,17 @@ impl Frozen {
                 leaf.active = active;
             }
         }
-        // Sin foco antes, sin foco después: egui_dock no tiene cómo quitarlo, pero un camino que
-        // no es una hoja lo deja sin él (`set_focused_node_and_surface`).
+        // Sin foco antes, sin foco después: egui_dock no tiene cómo quitarlo, pero un nodo que no
+        // es una hoja lo deja sin él, en cada árbol (`Tree::set_focused_node`) y en la app
+        // (`set_focused_node_and_surface`, que solo quita la superficie).
+        for (surface, node) in self.trees {
+            if let Some(tree) = state
+                .get_surface_mut(surface)
+                .and_then(|s| s.node_tree_mut())
+            {
+                tree.set_focused_node(node.unwrap_or(NodeIndex(usize::MAX)));
+            }
+        }
         let none = egui_dock::NodePath {
             surface: SurfaceIndex::main(),
             node: NodeIndex(usize::MAX),
@@ -653,12 +670,8 @@ mod tests {
     #[test]
     fn a_modal_puts_back_no_focus_too() {
         let mut w = Workspace::essentials();
-        // Sin foco (un camino que no es una hoja lo quita).
-        let none = NodePath {
-            surface: egui_dock::SurfaceIndex::main(),
-            node: egui_dock::NodeIndex(usize::MAX),
-        };
-        w.state.set_focused_node_and_surface(none);
+        // Sin foco (un nodo que no es una hoja lo quita), tampoco en el árbol.
+        unfocus(&mut w.state);
         assert_eq!(w.state.focused_leaf(), None);
         let frozen = Frozen::take(&w.state);
         let (surface, node) = w.leaf_of(PanelId::Color).unwrap();
@@ -667,5 +680,63 @@ mod tests {
         assert!(w.state.focused_leaf().is_some());
         frozen.restore(&mut w.state);
         assert_eq!(w.state.focused_leaf(), None);
+        // Tampoco en el árbol: cada superficie guarda su propio nodo con el foco.
+        assert_eq!(focused_trees(&w.state), []);
+        // En la app: sin foco antes, un clic en el cuerpo de una ventana flotante (egui_dock le da
+        // el foco a su grupo aunque haya un escudo encima) no le deja el foco a su árbol.
+        for modal in [false, true] {
+            let mut app = test_app();
+            app.workspace
+                .float(PanelId::Library, egui::pos2(320.0, 120.0));
+            let ctx = egui::Context::default();
+            frames_in(&ctx, &mut app, SIZE);
+            unfocus(&mut app.workspace.state);
+            if modal {
+                app.show_message("Test", "A modal dialog");
+                frames_in(&ctx, &mut app, SIZE);
+                assert!(app.is_modal());
+            }
+            let library = leaf(&app, PanelId::Library);
+            click_at(
+                &ctx,
+                &mut app,
+                library.center(),
+                egui::PointerButton::Primary,
+                SIZE,
+            );
+            frames_in(&ctx, &mut app, SIZE);
+            let focused = focused_trees(&app.workspace.state);
+            if modal {
+                assert_eq!(focused, [], "with a dialog");
+                assert_eq!(app.workspace.state.focused_leaf(), None);
+            } else {
+                let (surface, node) = app.workspace.leaf_of(PanelId::Library).unwrap();
+                assert_eq!(
+                    focused,
+                    [(surface, node)],
+                    "without a dialog the click focuses"
+                );
+            }
+        }
+    }
+
+    /// El nodo con el foco de cada árbol (egui_dock guarda uno por superficie).
+    fn focused_trees(state: &DockState<PanelId>) -> Vec<(SurfaceIndex, NodeIndex)> {
+        state
+            .iter_surfaces_indexed()
+            .filter_map(|(s, surface)| Some((s, surface.node_tree()?.focused_leaf()?)))
+            .collect()
+    }
+
+    /// Sin foco en ninguna superficie ni en ningún árbol.
+    fn unfocus(state: &mut DockState<PanelId>) {
+        for tree in state.iter_surfaces_mut().filter_map(|s| s.node_tree_mut()) {
+            tree.set_focused_node(NodeIndex(usize::MAX));
+        }
+        state.set_focused_node_and_surface(NodePath {
+            surface: SurfaceIndex::main(),
+            node: NodeIndex(usize::MAX),
+        });
+        assert_eq!(focused_trees(state), []);
     }
 }
