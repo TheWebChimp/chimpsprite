@@ -463,8 +463,9 @@ egui_taffy y solo `workspace` conoce egui_dock.
      (los grupos botón por botón; Opacity y Duration, su etiqueta o reloj arriba de su stepper);
      donde todo cabía, las filas son las de antes, al punto. Ancho mínimo `timeline::MIN_WIDTH` = 86
      (`WIDEST_PART` 74, el stepper de la duración con 5 cifras) más el marco con Pixel UI: 89 a la
-     vista debajo del lienzo, 96 en un grupo o una ventana. Un acomodo guardado más angosto se
-     ensancha solo.
+     vista debajo del lienzo, 96 en un grupo o una ventana. Sin Pixel UI, el de antes (64,
+     `TIMELINE_PLAIN_MIN_WIDTH`: su timeline tiene scroll a lo ancho). Un acomodo guardado más
+     angosto se ensancha solo.
   5. **Lospec con `forms`:** cada paleta son dos formas (título, autor y números + tira y
      paginador; notas + Apply/Append/Save), con el ejemplo en el flujo de egui entre ellas; sin
      `Align::Center`, todo en puntos enteros.
@@ -476,18 +477,28 @@ egui_taffy y solo `workspace` conoce egui_dock.
   7. **Barrido de anchos:** sin el tramo de Lospec (364–600) y con el del timeline reducido a
      86–114 (ver "Límites conocidos").
 
-  Tests de `cs-ui`: 1746 `#[test]` en main → 1759 (ninguno perdió lo que verificaba).
+  Tests de `cs-ui`: 1746 `#[test]` en main → 1761 (ninguno perdió lo que verificaba).
   Capturas a escala 2 de Essentials contra main (en reposo, con Preview, en la pestaña de un
   modelo, con un diálogo, con y sin Pixel UI, más partido, flotando, timeline a la derecha y sin
   timeline): 0 pixeles distintos.
 
   **Cambios de pixeles a propósito** (ninguno se ve en Essentials en reposo):
-  - Color con Pixel UI: la columna mínima mide 136 (antes 137: contaba la línea de 1 pt del panel
-    viejo); lo de adentro mide justo su `min_width` (120).
-  - Timeline debajo del lienzo de 127 a 135 pt: Playback se parte 4 + 1 (antes pisaba el borde de
-    su caja); más angosto, la fila se parte (antes se salía).
+  - Color con Pixel UI: su mínimo baja 1 pt en cualquier lugar (columna, grupo o ventana:
+    `color_panel::panel_min_size` ya no suma la línea de 1 pt del panel viejo); en la columna,
+    136 (antes 137). Lo de adentro mide justo su `min_width` (120).
+  - Timeline de 127 a 135 pt de ancho a la vista (debajo del lienzo, su hoja sin la tira; flotando
+    o a un lado, lo de adentro de su marco: pasa igual): Playback se parte 4 + 1 (antes pisaba el
+    borde de su caja); más angosto, la fila se parte (antes se salía).
+  - Mínimos nuevos con Pixel UI (los pide la barra del timeline en su parte más ancha, 86): el lado
+    del lienzo con el timeline debajo no se angosta de 115 (antes 90, el del lienzo con la tira),
+    así que en ventanas angostas la columna derecha (o lo acoplado junto al lienzo) se ensancha
+    hasta 25 pt menos; el timeline a un lado del lienzo o flotando, de 64 a 96 (86 y el margen del
+    grupo a cada lado). Sin Pixel UI no cambian (90 y 64; lo fija
+    `the_canvas_side_minimum_with_the_timeline_below_is_fixed_per_mode`).
   - Lospec: el autor ("CREATED BY …") sube medio punto (1 px de pantalla); los botones y Load more
-    quedan donde el kit ya los pintaba (iguales pixel por pixel).
+    quedan donde el kit ya los pintaba (iguales pixel por pixel). Su orden de Tab cambió: antes
+    Save → Append → Apply (se ponían de derecha a izquierda), ahora Apply → Append → Save, de
+    izquierda a derecha como se ven.
   - Solo mientras se arrastra: las zonas de soltado (también las de egui_dock) en puntos enteros
     (medio punto en grupos de tamaño impar) y la tira bajo el puntero resaltada.
 
@@ -496,11 +507,14 @@ egui_taffy y solo `workspace` conoce egui_dock.
     donde ya cabía (el plan pedía botón por botón; habría movido el reloj y su stepper a 600 pt).
   - El mínimo del timeline cubre la duración de 5 cifras (60000 ms, el tope), no el combo de
     mezcla con un modo `Other (n)` de un archivo importado.
+  - Ese mínimo (86 y su marco) rige solo con Pixel UI, donde la barra se parte y lo necesita, aunque
+    con el timeline debajo ensanche el lado del lienzo (115 en vez de 90). Sin Pixel UI el timeline
+    tiene scroll a lo ancho y se queda con el de antes (64).
   - Lospec: el autor se redondea hacia abajo y los botones hacia arriba (donde el kit ya los
     pintaba), para que se vean igual. Las formas llevan `ui.id()` en su id: la ventana Palette
     Presets y el panel pueden mostrar las mismas paletas a la vez.
   - El arnés del timeline mide su ancho visible (la hoja menos la tira que baja junto a él: 26 con
-    Pixel UI), no la ventana: más estricto que antes.
+    Pixel UI), no la ventana: más estricto que antes. Tampoco recoge lo que dibuja esa tira.
   - `essentials_at_1200_by_800` y `_plain` toman los números que ya fijaban los tests de antes de
     la fase E (ninguno cambió).
 
@@ -540,7 +554,10 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - Menores de la bitácora: scroll vertical para la barra del timeline en su mínimo; ningún test
     fija el tramo 127–135; `Workspace::solo` no prueba `Edge::Top`; `ROW_H` / `TEXT_DROP` /
     `BUTTON_DROP` repetidos en dafont y Lospec (podrían vivir en `forms`);
-    `CHIMPSPRITE_DEMO_COLUMN` guarda el ancho en `app.ron`.
+    `CHIMPSPRITE_DEMO_COLUMN` guarda el ancho en `app.ron`; los demás de la bitácora
+    (`workspace-e-progress.md`), todos "puede esperar" según la revisión final.
+  - Juntar los hospedadores de tests: `LayoutHarness::frame_with` / `with_workspace` con
+    `hosted_panel::{frame, app, leaf}`, y `width_sweep_tests::{app_for, draw}` a `hosted_panel`.
 
 ## Pruebas
 

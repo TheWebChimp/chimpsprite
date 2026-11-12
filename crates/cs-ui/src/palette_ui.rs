@@ -1768,7 +1768,8 @@ mod tests {
 
     /// El panel Lospec acoplado a `width`, como en el barrido de anchos (con Pixel UI y la escala
     /// de la app, la página de muestra sin red: la segunda paleta con su paginador) y con la
-    /// segunda en la biblioteca: lo que quedó, medido en el segundo frame de ese ancho.
+    /// segunda en la biblioteca: lo que quedó, medido en el cuarto frame de ese ancho (en los tres
+    /// de antes rige Pixel UI y taffy mide con lo del frame anterior).
     fn lospec_at(width: f32) -> crate::forms::testing::Probe {
         use crate::panel_registry::PanelId;
         use crate::width_sweep_tests::{app_for, draw};
