@@ -99,13 +99,14 @@ pub type DockPanel = crate::panel_registry::PanelId;
 pub struct DockOutput {
     /// El panel abierto: cuál y dónde, para [`flyout`] (la app lo dibuja con su registro).
     pub app_panel: Option<(DockPanel, Anchor)>,
-    /// Sacar un panel de la tira (lo resuelve la app con su workspace).
+    /// Lo que se pidió para un panel de la tira: sacarlo (soltado fuera, o "Dock" y "Float" de su
+    /// menú) o reordenarlo en ella. Lo resuelve la app con su workspace.
     pub request: Option<StripRequest>,
     /// El panel cuyo ícono se arrastra fuera de la tira y dónde está el puntero (para resaltar
     /// dónde caería).
     pub dragging: Option<(DockPanel, egui::Pos2)>,
     /// Los botones a la vista de los paneles de la tira, en su orden (sin "More Panels" ni los del
-    /// timeline y el Preview): la app los guarda en su [`StripArea`].
+    /// timeline y el Preview): la app los guarda en su `StripArea`.
     pub buttons: Vec<(DockPanel, Rect)>,
 }
 
@@ -155,6 +156,29 @@ impl StripArea {
 /// El grueso de la línea de inserción.
 const LINE: f32 = 2.0;
 
+/// La capa de las zonas de destino de lo que se arrastra (la de un panel en el workspace y la
+/// línea de inserción de una tira): encima de todo salvo el fantasma.
+pub(crate) fn drop_zone_painter(ctx: &egui::Context) -> egui::Painter {
+    ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("workspace_drop_zone"),
+    ))
+}
+
+/// La línea de inserción `rect` de una tira (ver [`insertion_line`]), en la capa de las zonas de
+/// destino ([`drop_zone_painter`]: encima de la zona, si la hay, y debajo del fantasma): con Pixel
+/// UI, del color de selección del skin (`text_selection`); sin él, del de egui.
+pub(crate) fn paint_insertion_line(ui: &Ui, skin: Option<&Skin>, rect: Rect) {
+    if !rect.is_positive() {
+        return;
+    }
+    let color = match skin {
+        Some(skin) => skin.colors().text_selection,
+        None => ui.visuals().selection.bg_fill,
+    };
+    drop_zone_painter(ui.ctx()).rect_filled(rect, 0.0, color);
+}
+
 /// En qué hueco entre `buttons` (los de una tira, en orden; a lo alto si `vertical`) cae el
 /// puntero `pointer`: cuántos tienen el centro antes de él a lo largo de la tira (de 0, antes del
 /// primero, a `buttons.len()`, después del último).
@@ -203,7 +227,7 @@ pub(crate) fn insertion_line(buttons: &[Rect], strip: Rect, vertical: bool, inde
 pub enum StripRequest {
     /// Su ícono se arrastró y se soltó con el puntero ahí, fuera de la tira. Sobre otra tira, cae
     /// entre sus botones donde estaba el puntero: el lugar lo calcula quien lo aplica, con los
-    /// botones de esa tira ([`StripArea::drop_index`]; esta tira no los conoce).
+    /// botones de esa tira (`StripArea::drop_index`; esta tira no los conoce).
     Drop(DockPanel, egui::Pos2),
     /// Su ícono se arrastró a lo largo de su tira y se soltó en el hueco `usize` entre sus
     /// paneles (contando al mismo panel: 0, antes del primero; la cantidad de paneles, al final).
@@ -545,26 +569,33 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
         column = room;
     }
     // Un ícono que se arrastra a lo largo de la tira: la línea en el hueco donde caería y, al
-    // soltarlo, a ese hueco (más allá del último a la vista, al final; en su mismo lugar, nada).
+    // soltarlo, a ese lugar (más allá del último a la vista, al final; en su mismo lugar, nada),
+    // como si cayera de otra tira.
+    let this = StripArea {
+        edge,
+        rect: own,
+        buttons,
+    };
     if let Some((panel, p, dropped)) = along_strip {
-        let rects: Vec<Rect> = buttons.iter().map(|(_, r)| *r).collect();
-        let gap = insert_index(&rects, vertical, p);
         if dropped {
-            let gap = if gap == rects.len() {
-                panels.len()
-            } else {
-                gap
-            };
-            let at = shown.iter().position(|&q| q == panel).unwrap_or(gap);
-            if gap != at && gap != at + 1 {
+            let at = panels.iter().position(|&q| q == panel);
+            let index = this
+                .drop_index(panel, p)
+                .min(panels.len().saturating_sub(1));
+            if Some(index) != at {
+                // El lugar no lo cuenta; el hueco de `Reorder`, sí.
+                let gap = if at.is_some_and(|at| index >= at) {
+                    index + 1
+                } else {
+                    index
+                };
                 out.request = Some(StripRequest::Reorder(panel, gap));
             }
         } else {
-            let line = insertion_line(&rects, own, vertical, gap);
-            crate::workspace::paint_insertion_line(ui, skin, line);
+            paint_insertion_line(ui, skin, this.line(p));
         }
     }
-    out.buttons = buttons;
+    out.buttons = this.buttons;
     let Some(panel) = open_panel(ui.ctx()).filter(|p| panels.contains(p)) else {
         return out;
     };

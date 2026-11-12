@@ -63,9 +63,7 @@ pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 
-pub(crate) use drop::{
-    drop_target, paint_drop_zone, paint_insertion_line, paint_strip_zone, strip_under,
-};
+pub(crate) use drop::{drop_target, paint_drop_zone, paint_strip_zone, strip_under};
 pub(crate) use model::{DockTarget, SAVED_VERSION, SavedWorkspace};
 pub(crate) use presets::{FACTORY, Shown, Workspaces};
 pub(crate) use show::show;

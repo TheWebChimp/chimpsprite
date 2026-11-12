@@ -132,37 +132,15 @@ pub(crate) fn paint_strip_zone(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::R
 /// La tira de `strips` (las dibujadas en este frame) bajo `p`, si alguna: un ícono de otra tira
 /// soltado ahí pasa a ella, entre sus botones (ver [`Workspace::apply_strip_request`]) y, mientras
 /// se arrastra, se resalta (ver [`paint_strip_zone`]) con la línea de dónde caería (ver
-/// [`paint_insertion_line`]).
+/// `dock::paint_insertion_line`).
 pub(crate) fn strip_under(strips: &[StripArea], p: egui::Pos2) -> Option<&StripArea> {
     strips.iter().find(|s| s.rect.contains(p))
-}
-
-/// La línea de inserción `rect` de una tira (ver `dock::insertion_line`), en la capa de la zona de
-/// destino (encima de ella, si la hay) y debajo del fantasma: con Pixel UI, del color de selección
-/// del skin (`text_selection`); sin él, del de egui.
-pub(crate) fn paint_insertion_line(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::Rect) {
-    if !rect.is_positive() {
-        return;
-    }
-    let color = match skin {
-        Some(skin) => skin.colors().text_selection,
-        None => ui.visuals().selection.bg_fill,
-    };
-    zone_painter(ui.ctx()).rect_filled(rect, 0.0, color);
-}
-
-/// La capa de las zonas de destino: encima de todo salvo el fantasma.
-fn zone_painter(ctx: &egui::Context) -> egui::Painter {
-    ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new("workspace_drop_zone"),
-    ))
 }
 
 /// La zona de destino `rect` encima de todo salvo el fantasma (ver [`paint_drop_zone`]).
 fn paint_zone(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::Rect) {
     let ctx = ui.ctx();
-    let painter = zone_painter(ctx);
+    let painter = crate::dock::drop_zone_painter(ctx);
     match skin {
         Some(skin) => painter.extend(skin::drop_shapes(skin, rect, ctx.pixels_per_point())),
         None => {

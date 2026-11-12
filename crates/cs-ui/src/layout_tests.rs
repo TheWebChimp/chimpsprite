@@ -11991,14 +11991,14 @@ fn dragging_a_strip_icon_onto_the_canvas_floats_it_there() {
 }
 
 #[test]
-fn dropping_a_strip_icon_back_on_the_strip_leaves_it_there() {
+fn a_strip_icon_dropped_on_the_first_icon_of_its_strip_stays_in_it_moved_before_it() {
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let from = h.button("Groom").center();
-    let to = h.button("Artboards").center();
+    // Un punto antes del centro de Artboards (en el centro mismo, el empate cuenta como antes).
+    let to = h.button("Artboards").center() - vec2(0.0, 1.0);
     drag_in_steps(&mut h, from, to);
-    // Sigue en la tira (no se acopla ni flota): solo se reordena, al hueco antes del primero (el
-    // puntero no pasó del centro de Artboards).
+    // Sigue en la tira (no se acopla ni flota): solo se reordena, al hueco antes del primero.
     let mut want: Vec<PanelId> = PanelId::DOCK.to_vec();
     want.retain(|&p| p != PanelId::Groom);
     want.insert(0, PanelId::Groom);
@@ -15201,5 +15201,114 @@ fn a_strip_icon_dropped_on_another_strip_goes_where_the_line_was() {
     );
     assert!(!w.strip().contains(&PanelId::Library));
     assert_eq!(drop_zones(&h), []);
+    assert_eq!(insertion_lines(&h), []);
+}
+
+/// Essentials en una ventana de 1200 de ancho y el alto más chico (de 20 en 20) en el que la tira
+/// de la derecha muestra al menos dos paneles y los demás van a "More Panels".
+fn strip_with_more() -> LayoutHarness {
+    use crate::dock::Edge;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    for height in (300..=800).step_by(20) {
+        h.size = vec2(1200.0, height as f32);
+        for _ in 0..4 {
+            h.frame();
+        }
+        let shown = strip_buttons(&h, Edge::Right).len();
+        if shown >= 2 && shown < h.app.workspace.strip().len() {
+            return h;
+        }
+    }
+    panic!("no height shows some panels and hides others");
+}
+
+#[test]
+fn the_last_visible_strip_icon_dragged_past_the_end_goes_after_the_hidden_ones() {
+    use crate::dock::{Edge, insertion_line};
+    let mut h = strip_with_more();
+    let dock = h.panel("dock");
+    let before = h.app.workspace.strip().to_vec();
+    let buttons = strip_buttons(&h, Edge::Right);
+    let n = buttons.len();
+    assert!(
+        n >= 2 && n < before.len(),
+        "some in More Panels: {buttons:?} {before:?}"
+    );
+    let last = before[n - 1];
+    // Más de 6 puntos y pasado su centro: el hueco de después del último a la vista.
+    let from = buttons[n - 1].center() - vec2(0.0, 2.0);
+    let to = buttons[n - 1].center() + vec2(0.0, 8.0);
+    hold_drag(&mut h, from, to);
+    assert_eq!(
+        insertion_lines(&h),
+        [insertion_line(&buttons, dock, true, n)]
+    );
+    release_at(&mut h, to);
+    // Al final de toda la tira, después de los de "More Panels".
+    let mut want = before.clone();
+    want.retain(|&p| p != last);
+    want.push(last);
+    assert_eq!(h.app.workspace.strip(), want);
+}
+
+#[test]
+fn an_icon_dropped_on_more_panels_of_another_strip_goes_to_its_end() {
+    use crate::dock::{Edge, MORE, insertion_line};
+    use crate::panel_registry::PanelId;
+    let mut h = strip_with_more();
+    h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
+    for _ in 0..4 {
+        h.frame();
+    }
+    let dock = h.panel("dock");
+    let buttons = strip_buttons(&h, Edge::Right);
+    assert!(buttons.len() < h.app.workspace.strip().len(), "{buttons:?}");
+    let more = h.button(MORE);
+    let from = strip_buttons(&h, Edge::Left)[0].center();
+    let to = more.center();
+    hold_drag(&mut h, from, to);
+    // La tira resaltada y la línea después del último a la vista.
+    assert_eq!(drop_zones(&h), [dock]);
+    assert_eq!(
+        insertion_lines(&h),
+        [insertion_line(&buttons, dock, true, buttons.len())]
+    );
+    release_at(&mut h, to);
+    let w = &h.app.workspace;
+    assert_eq!(w.strip().last(), Some(&PanelId::Tools));
+    assert!(w.strip_at(Edge::Left).is_empty());
+}
+
+#[test]
+fn dragging_an_icon_along_the_top_strip_reorders_it() {
+    use crate::dock::{Edge, insertion_line};
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.to_strip_at(PanelId::Groom, Edge::Top);
+    h.app.workspace.to_strip_at(PanelId::Lumen, Edge::Top);
+    for _ in 0..2 {
+        h.frame();
+    }
+    assert_eq!(
+        h.app.workspace.strip_at(Edge::Top),
+        [PanelId::Groom, PanelId::Lumen]
+    );
+    let top = h.panel("dock_top");
+    let buttons = strip_buttons(&h, Edge::Top);
+    assert_eq!(buttons.len(), 2);
+    // Lumen, a lo ancho, hasta antes del centro de Groom.
+    let from = buttons[1].center();
+    let to = pos2(buttons[0].left() + 3.0, from.y);
+    hold_drag(&mut h, from, to);
+    assert_eq!(
+        insertion_lines(&h),
+        [insertion_line(&buttons, top, false, 0)]
+    );
+    assert_eq!(drop_zones(&h), [], "its own strip");
+    release_at(&mut h, to);
+    assert_eq!(
+        h.app.workspace.strip_at(Edge::Top),
+        [PanelId::Lumen, PanelId::Groom]
+    );
     assert_eq!(insertion_lines(&h), []);
 }

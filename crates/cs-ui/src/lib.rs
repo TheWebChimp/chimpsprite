@@ -1535,7 +1535,7 @@ impl ChimpApp {
             match workspace::strip_under(&strips, pointer) {
                 Some(strip) => {
                     workspace::paint_strip_zone(ui, skin, strip.rect);
-                    workspace::paint_insertion_line(ui, skin, strip.line(pointer));
+                    dock::paint_insertion_line(ui, skin, strip.line(pointer));
                 }
                 None => {
                     let target = workspace::drop_target(&self.workspace, pointer);
