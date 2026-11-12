@@ -15312,3 +15312,5 @@ fn dragging_an_icon_along_the_top_strip_reorders_it() {
     );
     assert_eq!(insertion_lines(&h), []);
 }
+
+mod diag_color_redock;
