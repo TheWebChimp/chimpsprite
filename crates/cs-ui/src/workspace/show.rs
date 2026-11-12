@@ -983,7 +983,11 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
 /// al divisor de la columna derecha y la toolbar junto al lienzo, un divisor (`sep`) menos (su
 /// margen de ese lado cuenta desde la línea). Con Pixel UI, el timeline lleva su marco: debajo
 /// del lienzo, el aire de su derecha (`timeline::pixel_panel_frame`); en otro lugar, el margen de
-/// su grupo a cada lado (`timeline_margin`), así lo de adentro nunca mide menos que su mínimo.
+/// su grupo a cada lado (`timeline_margin`), así lo de adentro nunca mide menos que su mínimo
+/// (`timeline::MIN_WIDTH`, 86). Debajo del lienzo eso, con la tira, es 115: el lado del lienzo
+/// (y por eso lo de al lado) no se angosta de ahí, 25 más que el lienzo solo (90). Sin Pixel UI,
+/// el del timeline es el de antes (`TIMELINE_PLAIN_MIN_WIDTH`, 64; con la tira, 90, el del
+/// lienzo): tiene scroll a lo ancho.
 fn workspace_minima(
     ui: &egui::Ui,
     skin: Option<&Skin>,

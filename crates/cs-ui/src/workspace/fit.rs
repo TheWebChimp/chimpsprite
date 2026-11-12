@@ -292,7 +292,8 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 /// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). La toolbar, su ancho (el de
 /// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo y el
 /// timeline, el mínimo de su ficha (sin margen: la hoja del lienzo va de borde a borde; el marco
-/// del timeline, que depende de dónde va, lo suma `workspace_minima`). El Preview, el alto
+/// del timeline, que depende de dónde va, lo suma `workspace_minima`; el ancho del timeline sin
+/// Pixel UI, `TIMELINE_PLAIN_MIN_WIDTH`). El Preview, el alto
 /// de su modo (`preview::min_height`) con el margen. Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
 /// scroll, la barra (así los acomoda el `Viewer` de `show`).
@@ -317,7 +318,13 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                 (PanelId::Tools, _) => egui::vec2(toolbar_width(skin), 0.0),
                 // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
                 // que lleva su hoja, ver `ChimpApp::canvas_area_min`). El timeline tampoco: su
-                // marco y, debajo del lienzo, la tira se los suma `workspace_minima`.
+                // marco y, debajo del lienzo, la tira se los suma `workspace_minima`. Sin Pixel
+                // UI, el ancho del timeline es el de antes (con scroll a lo ancho, ver
+                // `TIMELINE_PLAIN_MIN_WIDTH`).
+                (PanelId::Timeline, None) => egui::vec2(
+                    crate::panel_registry::TIMELINE_PLAIN_MIN_WIDTH,
+                    id.spec().min_height,
+                ),
                 (PanelId::Canvas | PanelId::Timeline, _) => {
                     egui::vec2(id.spec().min_width, id.spec().min_height)
                 }
@@ -1788,6 +1795,27 @@ mod tests {
             super::super::model::TIMELINE_NARROW_DEMO.x,
             "demo: not widened ({inner:?})"
         );
+    }
+
+    #[test]
+    fn the_canvas_side_minimum_with_the_timeline_below_is_fixed_per_mode() {
+        // El split [lienzo / timeline] de Essentials, lo más angosto que puede quedar: con Pixel
+        // UI, el timeline (su barra, `timeline::MIN_WIDTH` 86, el aire de su marco, 3, y la tira,
+        // 26) le gana al lienzo (64 + la tira); sin Pixel UI su timeline tiene scroll a lo ancho y
+        // pide lo de main 45dc2da (64 + la tira, lo mismo que el lienzo).
+        for (pixel_ui, want) in [(true, 115.0), (false, 90.0)] {
+            let mut app = test_app();
+            app.view.pixel_ui = pixel_ui;
+            app.view.timeline = true;
+            let ctx = egui::Context::default();
+            frames(&ctx, &mut app);
+            assert_eq!(app.pixel.skin().is_some(), pixel_ui);
+            let w = &app.workspace;
+            let tree = w.state.main_surface();
+            let node = stack(tree).expect("the timeline below the canvas");
+            let min = node_min(tree, node, &w.sides.mins, w.sides.sep, w.sides.bar);
+            assert_eq!(min.x, want, "pixel_ui {pixel_ui}");
+        }
     }
 
     #[test]
