@@ -14888,20 +14888,34 @@ fn dragging_a_strip_icon_over_another_strip_highlights_it() {
     for _ in 0..2 {
         h.frame();
     }
+    let release = |h: &mut LayoutHarness, pos| {
+        h.frame_with(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.frame();
+    };
     let left = h.panel("dock_left");
     let from = h.button("Library").center();
+    // Dentro de su propia tira (más abajo en ella), nada se resalta y nada cambia al soltar.
+    let right = h.panel("dock");
+    let inside = pos2(right.center().x, right.bottom() - 20.0);
+    assert!(right.contains(inside) && (inside - from).length() > 40.0);
+    hold_drag(&mut h, from, inside);
+    // Se arrastra (el fantasma con su título: ningún botón de la tira lo escribe).
+    assert!(h.texts.iter().any(|(t, _)| t == "Library"), "the ghost");
+    assert_eq!(drop_zones(&h), [], "inside its own strip");
+    release(&mut h, inside);
+    assert!(h.app.workspace.strip().contains(&PanelId::Library));
+    assert_eq!(h.app.workspace.strip_at(Edge::Left), [PanelId::Tools]);
     let to = pos2(left.center().x, left.top() + left.height() * 0.6);
     hold_drag(&mut h, from, to);
     // Sin soltar: la tira de destino entera, resaltada (y nada más).
     assert_eq!(drop_zones(&h), [left]);
     // Al soltar, Library pasa a ella.
-    h.frame_with(vec![Event::PointerButton {
-        pos: to,
-        button: PointerButton::Primary,
-        pressed: false,
-        modifiers: Default::default(),
-    }]);
-    h.frame();
+    release(&mut h, to);
     let w = &h.app.workspace;
     assert_eq!(w.strip_at(Edge::Left), [PanelId::Tools, PanelId::Library]);
     assert!(!w.strip().contains(&PanelId::Library));

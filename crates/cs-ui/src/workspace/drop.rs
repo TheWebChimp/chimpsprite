@@ -1,6 +1,7 @@
-//! Dónde cae un panel que se suelta ([`drop_target`]), cómo se resalta mientras se arrastra
-//! ([`paint_drop_zone`], y sobre otra tira [`paint_strip_zone`]) y la pestaña de egui_dock que se suelta fuera de los grupos
-//! ([`tab_drag_released`]: el workspace la pone a flotar donde cayó).
+//! Dónde cae un panel que se suelta ([`drop_target`]; sobre otra tira, [`strip_under`]), cómo se
+//! resalta mientras se arrastra ([`paint_drop_zone`] y, sobre otra tira, [`paint_strip_zone`]) y
+//! la pestaña de egui_dock que se suelta fuera de los grupos ([`tab_drag_released`]: el workspace
+//! la pone a flotar donde cayó).
 
 use eframe::egui;
 use egui_dock::{DockState, NodePath};
@@ -9,6 +10,7 @@ use egui_dock::{Node, Tree};
 
 use super::fit::{half, whole};
 use super::{DockTarget, NodeIndex, Split, SurfaceIndex, Workspace, dock_id, skin};
+use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 use crate::skin::Skin;
 
@@ -121,10 +123,20 @@ pub(crate) fn paint_drop_zone(
 /// Resalta la tira `rect` (la de otra orilla) sobre la que se arrastra un ícono: soltarlo ahí lo
 /// pasa a ella (ver [`Workspace::apply_strip_request`]). Como [`paint_drop_zone`], la tira entera.
 pub(crate) fn paint_strip_zone(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::Rect) {
-    let rect = egui::Rect::from_min_max(rect.min.round(), rect.max.round());
+    let rect = whole(rect);
     if rect.is_positive() {
         paint_zone(ui, skin, rect);
     }
+}
+
+/// La tira de `strips` (las dibujadas en este frame, con su orilla) bajo `p`, si alguna: un ícono
+/// de otra tira soltado ahí pasa a ella (ver [`Workspace::apply_strip_request`]) y, mientras se
+/// arrastra, se resalta (ver [`paint_strip_zone`]).
+pub(crate) fn strip_under(
+    strips: &[(Edge, egui::Rect)],
+    p: egui::Pos2,
+) -> Option<(Edge, egui::Rect)> {
+    strips.iter().find(|(_, r)| r.contains(p)).copied()
 }
 
 /// La zona de destino `rect` encima de todo salvo el fantasma (ver [`paint_drop_zone`]).
@@ -150,19 +162,17 @@ impl Workspace {
     pub(crate) fn apply_strip_request(
         &mut self,
         request: crate::dock::StripRequest,
-        strips: &[(crate::dock::Edge, egui::Rect)],
+        strips: &[(Edge, egui::Rect)],
     ) {
         use crate::dock::StripRequest;
         match request {
-            StripRequest::Drop(id, pointer) => {
-                match strips.iter().find(|(_, r)| r.contains(pointer)) {
-                    Some(&(edge, _)) => self.to_strip_at(id, edge),
-                    None => {
-                        let target = drop_target(self, pointer);
-                        self.drop_panel(id, target);
-                    }
+            StripRequest::Drop(id, pointer) => match strip_under(strips, pointer) {
+                Some((edge, _)) => self.to_strip_at(id, edge),
+                None => {
+                    let target = drop_target(self, pointer);
+                    self.drop_panel(id, target);
                 }
-            }
+            },
             StripRequest::Dock(id) => self.dock_from_strip(id),
             StripRequest::Float(id, at) => self.float(id, at),
         }
