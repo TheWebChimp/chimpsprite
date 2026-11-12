@@ -158,11 +158,18 @@ impl Harness {
         self.flat_colors.clear();
         self.texts.clear();
         self.flat_rects.clear();
-        // Lo del timeline y sus menús; no las barras de la ventana ni el lienzo.
-        let shapes = output
-            .shapes
-            .iter()
-            .filter(|c| hosted_panel::clipped_to(c.clip_rect, leaf));
+        // Lo del timeline y sus menús; no las barras de la ventana, el lienzo ni la tira de la
+        // derecha. La tira baja junto al timeline, encima de lo último de su hoja (le quita
+        // `dock::strip_room` a lo que se ve, ver `visible_width`), recortada a su rect: de
+        // `dock::WIDTH` desde la orilla de la hoja (sin Pixel UI, su línea va encima de la última
+        // columna de lo que se ve).
+        let pixel = self.app.pixel.skin().is_some();
+        let room = crate::dock::strip_room(&self.ctx.global_style(), pixel);
+        let visible = leaf.with_max_x(leaf.max.x - room);
+        let strip = leaf.max.x - crate::dock::WIDTH;
+        let shapes = output.shapes.iter().filter(|c| {
+            hosted_panel::clipped_to(c.clip_rect, visible) && c.clip_rect.min.x < strip
+        });
         for clipped in shapes.clone() {
             collect_flat_rects(&clipped.shape, clipped.clip_rect, &mut self.flat_rects);
             collect_images(&clipped.shape, &mut self.images);
@@ -727,6 +734,49 @@ fn without_pixel_ui_the_timeline_does_not_use_the_skin() {
         h.rect(label);
     }
     assert_ne!(h.grid, Pos2::ZERO, "the \"Layers\" header");
+}
+
+#[test]
+fn the_harness_does_not_collect_the_strip_beside_the_timeline() {
+    // La tira de la derecha baja junto al timeline, encima de los últimos puntos de su hoja: sus
+    // íconos (con Pixel UI) y sus textos (sin él) no son del timeline.
+    let strip: Vec<PanelId> = PanelId::DOCK
+        .iter()
+        .copied()
+        .chain([PanelId::Timeline, PanelId::Preview])
+        .collect();
+    for pixel in [true, false] {
+        let h = Harness::with(400.0, pixel);
+        if pixel {
+            let ours: Vec<egui::TextureId> = strip
+                .iter()
+                .filter_map(|p| {
+                    h.skin()
+                        .piece(p.spec().icon, crate::skin::WidgetState::Normal)
+                })
+                .map(|piece| piece.texture.id())
+                .collect();
+            assert!(!ours.is_empty());
+            let drawn: Vec<_> = h.images.iter().filter(|(t, _)| ours.contains(t)).collect();
+            assert!(drawn.is_empty(), "strip icons: {drawn:?}");
+        } else {
+            let plain: Vec<&str> = strip.iter().map(|p| p.spec().plain).collect();
+            let drawn: Vec<_> = h
+                .texts
+                .iter()
+                .filter(|t| plain.contains(&t.as_str()))
+                .collect();
+            assert!(drawn.is_empty(), "strip labels: {drawn:?}");
+        }
+        // Y nada liso en su franja (lo del timeline va recortado a lo que se ve).
+        let band = h.visible_width();
+        let inside: Vec<_> = h
+            .flat_rects
+            .iter()
+            .filter(|(r, _)| r.width() > 0.0 && r.height() > 0.0 && r.min.x >= band)
+            .collect();
+        assert!(inside.is_empty(), "pixel {pixel}: {inside:?}");
+    }
 }
 
 #[test]
