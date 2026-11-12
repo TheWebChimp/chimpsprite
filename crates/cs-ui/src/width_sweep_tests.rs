@@ -62,18 +62,6 @@ const KNOWN_GAPS: &[Gap] = &[
         kind: Kind::Outside,
         why: "the layer table scrolls sideways: Add Layer Mask is reachable by scrolling",
     },
-    // Lospec no se migró a `forms` (filas de `ui.horizontal` con textos de alturas distintas): las
-    // filas de cada paleta de la lista (su título y "CREATED BY …", sus Apply, Append y Save) caen
-    // a medio punto a lo alto, a cualquier ancho. Pide migrarlo. (Antes el barrido dependía de
-    // cuándo respondía la red y solo lo veía desde 568; ahora la lista ya llegó: ver `app_for`.)
-    // Solo a lo alto: a lo ancho, todo cuenta.
-    Gap {
-        panel: PanelId::Lospec,
-        from: crate::palette_ui::LOSPEC_PANEL_W,
-        to: WIDEST,
-        kind: Kind::HalfPointY,
-        why: "not migrated to forms: its result rows fall on half points (y)",
-    },
 ];
 
 /// Los controles del kit que van pegados a propósito, por panel: cada uno comparte la columna (o
@@ -222,7 +210,7 @@ fn problems(panel: PanelId, probe: &Probe, width: f32) -> Vec<(Kind, String)> {
 
 /// La app con Pixel UI, una pestaña nueva y lo que necesita `id` para mostrar su forma entera: una
 /// fuente para FontForge y un modelo para el panel 3D.
-fn app_for(id: PanelId) -> ChimpApp {
+pub(crate) fn app_for(id: PanelId) -> ChimpApp {
     let view = ViewSettings {
         pixel_ui: true,
         ..Default::default()
@@ -243,7 +231,7 @@ fn app_for(id: PanelId) -> ChimpApp {
         // Las listas de Lospec y de dafont, ya llegadas y sin red (si no, llegan cuando la red
         // quiere, a la mitad del barrido).
         #[cfg(not(target_arch = "wasm32"))]
-        PanelId::Lospec => app.open_lospec_offline(lospec_page()),
+        PanelId::Lospec => app.open_lospec_offline(crate::demo::lospec_page()),
         #[cfg(not(target_arch = "wasm32"))]
         PanelId::Dafont => app.dafont = crate::dafont::DafontPanel::offline(),
         _ => {}
@@ -251,39 +239,9 @@ fn app_for(id: PanelId) -> ChimpApp {
     app
 }
 
-/// Una página de Lospec como las de verdad: paletas de varios tamaños, con autor, likes y
-/// descargas (sin imágenes de ejemplo, que se pedirían a la red).
-#[cfg(not(target_arch = "wasm32"))]
-fn lospec_page() -> cs_io::lospec::LospecPage {
-    let palette = |k: usize, colors: usize| cs_io::lospec::LospecPalette {
-        slug: format!("palette-{k}"),
-        title: format!("Palette Number {k}"),
-        author: Some(format!("Somebody {k}")),
-        palette: cs_core::Palette::new(
-            (0..colors)
-                .map(|c| cs_core::Rgba::from_hex(0x10_20_30 + (c as u32) * 0x05_07_09))
-                .collect(),
-        ),
-        likes: Some(12 * k as u32),
-        downloads: Some(345 * k as u32),
-        examples: Vec::new(),
-        source: None,
-    };
-    let palettes: Vec<_> = [4, 8, 16, 32, 64, 5]
-        .iter()
-        .enumerate()
-        .map(|(k, &n)| palette(k + 1, n))
-        .collect();
-    cs_io::lospec::LospecPage {
-        raw_count: palettes.len(),
-        total: 120,
-        palettes,
-    }
-}
-
 /// El panel `id` como lo hospeda el workspace acoplado: con todo el alto (los de cuerpo fijo) y
 /// hasta el fondo de su grupo (la lista de Lospec).
-fn draw(app: &mut ChimpApp, ui: &mut egui::Ui, id: PanelId) {
+pub(crate) fn draw(app: &mut ChimpApp, ui: &mut egui::Ui, id: PanelId) {
     app.pixel.update(ui.ctx(), &app.view);
     app.begin_panel_frame();
     let panel = PanelCtx {

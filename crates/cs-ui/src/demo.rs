@@ -473,7 +473,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.mascot.force(id, now, &app.keymap);
     }
     // Desarrollo: un acomodo del workspace para capturas (`library-tab`: Library junto a Color;
-    // `split`: Groom debajo de Color; `float`: Lumen flotando; ver `Workspace::demo`) o uno de
+    // `split`: Groom debajo de Color; `float`: Lumen flotando; `lospec-tab`: Lospec junto a
+    // Color; ver `Workspace::demo`) o uno de
     // fábrica por su nombre (`Animation`, `Tiles`, `Fonts`: como elegirlo en Window → Workspace).
     if let Some(name) = dev_var("CHIMPSPRITE_DEMO_WORKSPACE") {
         if let Some(workspace) = workspace::Workspace::demo(name) {
@@ -483,6 +484,11 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         // El de demostración no pisa el guardado del usuario al cerrar.
         app.save_workspace = false;
+    }
+    // Desarrollo: la columna derecha de este ancho (`view.palette_width`, en puntos), para
+    // capturas de un panel acoplado ahí a un ancho dado (nunca menos que su mínimo).
+    if let Some(width) = dev_var("CHIMPSPRITE_DEMO_COLUMN").and_then(|w| w.parse().ok()) {
+        app.view.palette_width = Some(width);
     }
     // Desarrollo: un arrastre con el puntero para capturas (`x0,y0,x1,y1` en puntos, y `,drop`
     // para soltarlo, `,hover` para solo pasar el puntero por `x0,y0` o `,menu` para un clic
@@ -837,8 +843,14 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             app.dafont.demo_detail(font);
         }
     }
-    // Desarrollo: el panel Lospec del dock abierto, para capturas.
+    // Desarrollo: el panel Lospec del dock abierto, para capturas. Con `offline`, con la página
+    // de muestra ya llegada y sin red (ver `lospec_page`): acoplado (`CHIMPSPRITE_DEMO_WORKSPACE=
+    // lospec-tab`), se ve igual en cada corrida.
     if std::env::var_os("CHIMPSPRITE_DEMO_LOSPEC").is_some() && app.has_doc() {
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::env::var("CHIMPSPRITE_DEMO_LOSPEC").as_deref() == Ok("offline") {
+            app.open_lospec_offline(lospec_page());
+        }
         dock::set_open(ctx, Some(dock::DockPanel::Lospec));
     }
     // Desarrollo: el panel Slices del dock abierto, para capturas.
@@ -1472,6 +1484,43 @@ fn demo_accents(e: &mut crate::editor::Editor) {
     e.go_to_glyph('á');
     e.select_component(Some(1));
     e.tool = crate::ToolKind::Move;
+}
+
+/// Una página de Lospec como las de verdad, para los tests y las capturas sin red (ver
+/// `ChimpApp::open_lospec_offline`): paletas de varios tamaños, con autor, likes y descargas; la
+/// segunda con tres ejemplos (su paginador; las imágenes no se piden).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn lospec_page() -> cs_io::lospec::LospecPage {
+    let palette = |k: usize, colors: usize| cs_io::lospec::LospecPalette {
+        slug: format!("palette-{k}"),
+        title: format!("Palette Number {k}"),
+        author: Some(format!("Somebody {k}")),
+        palette: cs_core::Palette::new(
+            (0..colors)
+                .map(|c| cs_core::Rgba::from_hex(0x10_20_30 + (c as u32) * 0x05_07_09))
+                .collect(),
+        ),
+        likes: Some(12 * k as u32),
+        downloads: Some(345 * k as u32),
+        examples: if k == 2 {
+            (0..3)
+                .map(|e| format!("https://example.invalid/palette-{k}-{e}.png"))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        source: None,
+    };
+    let palettes: Vec<_> = [4, 8, 16, 32, 64, 5]
+        .iter()
+        .enumerate()
+        .map(|(k, &n)| palette(k + 1, n))
+        .collect();
+    cs_io::lospec::LospecPage {
+        raw_count: palettes.len(),
+        total: 120,
+        palettes,
+    }
 }
 
 #[cfg(test)]

@@ -674,6 +674,12 @@ impl Workspace {
             "tools-float" => w.float(PanelId::Tools, egui::pos2(320.0, 120.0)),
             "timeline-right" => w.dock(PanelId::Timeline, DockTarget::Split(cs, cn, Split::Right)),
             "library-tab" => w.dock(PanelId::Library, DockTarget::Leaf(surface, node)),
+            // Lospec junto a Color, al frente: la columna del ancho de Lospec (o el de
+            // `CHIMPSPRITE_DEMO_COLUMN`).
+            "lospec-tab" => {
+                w.dock(PanelId::Lospec, DockTarget::Leaf(surface, node));
+                let _ = w.focus(PanelId::Lospec);
+            }
             "preview-docked" => w.dock(
                 PanelId::Preview,
                 DockTarget::Split(surface, node, Split::Below),
