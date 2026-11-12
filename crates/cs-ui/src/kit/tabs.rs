@@ -758,7 +758,7 @@ pub fn drag_tag_shapes(ui: &Ui, skin: &Skin, min: egui::Pos2, label: &str) -> Ve
     let rect = Rect::from_min_size(min.round(), drag_tag_size(ui, label));
     let mut shapes = match skin.piece(DRAG, WidgetState::Normal) {
         Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-        None => flat_drag_tag(rect, &colors, ppp),
+        None => flat_drag_tag(rect, &colors),
     };
     let text = galley(ui, label);
     let at = text_pos(&text, rect.left() + EDGE + PAD, rect.top() + CAPS_TOP, ppp);
@@ -767,56 +767,17 @@ pub fn drag_tag_shapes(ui: &Ui, skin: &Skin, min: egui::Pos2, label: &str) -> Ve
 }
 
 /// Respaldo de la pastilla (sin la pieza), como ella: el contorno `canvas` con las esquinas
-/// recortadas, el aro `highlight` de 1 y el relleno `background`.
-fn flat_drag_tag(rect: Rect, colors: &crate::skin::SkinColors, ppp: f32) -> Vec<Shape> {
-    let (l, t, r, b) = (rect.left(), rect.top(), rect.right(), rect.bottom());
-    let px = |x: f32, y: f32| Rect::from_min_size(pos2(x, y), Vec2::splat(1.0));
-    let mut parts = vec![
-        // El contorno: arriba y abajo sin las dos columnas de cada punta, los lados sin las dos
-        // filas de cada punta, y el píxel de cada esquina por dentro.
-        (
-            Rect::from_x_y_ranges(l + 2.0..=r - 2.0, t..=t + 1.0),
-            colors.canvas,
-        ),
-        (
-            Rect::from_x_y_ranges(l + 2.0..=r - 2.0, b - 1.0..=b),
-            colors.canvas,
-        ),
-        (
-            Rect::from_x_y_ranges(l..=l + 1.0, t + 2.0..=b - 2.0),
-            colors.canvas,
-        ),
-        (
-            Rect::from_x_y_ranges(r - 1.0..=r, t + 2.0..=b - 2.0),
-            colors.canvas,
-        ),
-        (px(l + 1.0, t + 1.0), colors.canvas),
-        (px(r - 2.0, t + 1.0), colors.canvas),
-        (px(l + 1.0, b - 2.0), colors.canvas),
-        (px(r - 2.0, b - 2.0), colors.canvas),
-        // El aro.
-        (
-            Rect::from_x_y_ranges(l + 2.0..=r - 2.0, t + 1.0..=t + 2.0),
-            colors.highlight,
-        ),
-        (
-            Rect::from_x_y_ranges(l + 2.0..=r - 2.0, b - 2.0..=b - 1.0),
-            colors.highlight,
-        ),
-        (
-            Rect::from_x_y_ranges(l + 1.0..=l + 2.0, t + 2.0..=b - 2.0),
-            colors.highlight,
-        ),
-        (
-            Rect::from_x_y_ranges(r - 2.0..=r - 1.0, t + 2.0..=b - 2.0),
-            colors.highlight,
-        ),
-    ];
-    parts.push((rect.shrink(2.0), colors.background));
-    parts
-        .into_iter()
-        .map(|(r, c)| Shape::rect_filled(r.round_to_pixels(ppp), 0.0, c))
-        .collect()
+/// recortadas, el aro `highlight` de 1 y el relleno `background`. `rect` ya está en puntos
+/// enteros.
+fn flat_drag_tag(rect: Rect, colors: &crate::skin::SkinColors) -> Vec<Shape> {
+    let mut shapes = crate::panel_kit::notched_outline(rect, colors.canvas, 2.0);
+    shapes.extend(crate::panel_kit::notched_outline(
+        rect.shrink(1.0),
+        colors.highlight,
+        1.0,
+    ));
+    shapes.push(Shape::rect_filled(rect.shrink(2.0), 0.0, colors.background));
+    shapes
 }
 
 /// Respaldo de la caja de una pestaña: el fondo (la activa) o `canvas` (las demás) con un borde

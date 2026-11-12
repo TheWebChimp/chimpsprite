@@ -381,6 +381,7 @@ fn a_tab_with_a_piece_icon_draws_it_bottom_aligned_before_the_name() {
 /// `shapes` rasterizadas a 1x en `rect` (fondo transparente): teseladas sin difuminado, cada
 /// triángulo pinta los píxeles cuyo centro cae dentro, con la textura del skin (las piezas de
 /// `skin`) o la de las fuentes, sin suavizado. Fila por fila, desde la esquina de `rect`.
+/// Supone mallas de cuadros (dos triángulos seguidos por cuadro, como rects, piezas y letras).
 fn raster(ctx: &egui::Context, skin: &Skin, shapes: Vec<Shape>, rect: Rect) -> Vec<Color32> {
     use egui::epaint::{ClippedShape, Primitive, TessellationOptions, Tessellator};
     let (font_size, font) = ctx.fonts(|f| (f.font_image_size(), f.image()));
