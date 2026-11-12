@@ -10,7 +10,7 @@ use egui_dock::{Node, Tree};
 
 use super::fit::{half, whole};
 use super::{DockTarget, NodeIndex, Split, SurfaceIndex, Workspace, dock_id, skin};
-use crate::dock::StripArea;
+use crate::dock::{Edge, StripArea};
 use crate::panel_registry::PanelId;
 use crate::skin::Skin;
 
@@ -24,6 +24,136 @@ pub(crate) enum DropTarget {
     Split(SurfaceIndex, NodeIndex, Split),
     /// En una ventana nueva con la esquina en el puntero.
     Float(egui::Pos2),
+    /// En la orilla, de lado a lado (ver [`DockTarget::Edge`]): el puntero en su franja
+    /// ([`edge_under`]).
+    Edge(Edge),
+}
+
+/// Lo que mide la franja de cada orilla del área del workspace (hacia adentro, junto a su tira si
+/// la tiene): soltar ahí un panel lo deja de lado a lado en esa orilla (ver [`edge_under`]).
+pub(crate) const EDGE_BAND: f32 = 16.0;
+
+/// La orilla en cuya franja ([`EDGE_BAND`]) está `p`, dentro de `area` (el área del workspace):
+/// la franja va pegada a la orilla o, a lo largo de una tira de esa orilla que la toque (`strips`:
+/// las dibujadas, con su orilla), justo por dentro de ella. Sobre una tira no hay franja (ahí cae
+/// en la tira). En una esquina (en dos franjas), la orilla más cercana.
+pub(crate) fn edge_under(
+    area: egui::Rect,
+    strips: &[(Edge, egui::Rect)],
+    p: egui::Pos2,
+) -> Option<Edge> {
+    if !area.contains(p) || strips.iter().any(|(_, r)| r.contains(p)) {
+        return None;
+    }
+    // De la orilla de `area` a `p`, y lo que mide ahí (a la altura de `p`) una tira que toca esa
+    // orilla, del lado de adentro.
+    let from_edge = |edge: Edge, r: egui::Rect| match edge {
+        Edge::Left => (
+            p.x - area.left(),
+            r.right() - area.left(),
+            r.left() - area.left(),
+        ),
+        Edge::Right => (
+            area.right() - p.x,
+            area.right() - r.left(),
+            area.right() - r.right(),
+        ),
+        Edge::Top => (
+            p.y - area.top(),
+            r.bottom() - area.top(),
+            r.top() - area.top(),
+        ),
+        Edge::Bottom => (
+            area.bottom() - p.y,
+            area.bottom() - r.top(),
+            area.bottom() - r.bottom(),
+        ),
+    };
+    Edge::ALL
+        .into_iter()
+        .filter_map(|edge| {
+            let along = |r: &egui::Rect| {
+                if edge.vertical() {
+                    r.y_range().contains(p.y)
+                } else {
+                    r.x_range().contains(p.x)
+                }
+            };
+            let strip = strips
+                .iter()
+                .filter(|(e, r)| *e == edge && along(r))
+                .map(|&(_, r)| from_edge(edge, r))
+                .filter(|&(_, _, gap)| gap.abs() <= 1.0)
+                .map(|(_, inner, _)| inner)
+                .fold(0.0, f32::max);
+            let (d, _, _) = from_edge(edge, area);
+            let d = d - strip;
+            (0.0..EDGE_BAND).contains(&d).then_some((d, edge))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, edge)| edge)
+}
+
+/// Lo dibujado en el último frame que dice dónde cae lo que se suelta en una orilla (ver
+/// [`edge_under`] y [`Workspace::edge_zone`]): el área del workspace (con las tiras de las
+/// orillas), la del árbol (sin ellas) y las tiras.
+#[derive(Clone, Debug)]
+pub(super) struct Bounds {
+    pub area: egui::Rect,
+    pub dock: egui::Rect,
+    pub strips: Vec<StripArea>,
+}
+
+impl Workspace {
+    /// La orilla en cuya franja está `p` (ver [`edge_under`]), con lo dibujado en el último frame.
+    /// La barra de pestañas de un grupo le gana a la franja (la de arriba pasa por las de los
+    /// grupos de hasta arriba): ahí se suelta como pestaña.
+    fn edge_at(&self, p: egui::Pos2) -> Option<Edge> {
+        let bounds = self.bounds.as_ref()?;
+        let on_tab_bar = self.state.iter_leaves().any(|(_, leaf)| {
+            !leaf.tab_bar_hidden
+                && leaf
+                    .rect
+                    .with_max_y(leaf.rect.top() + self.sides.bar)
+                    .contains(p)
+        });
+        if on_tab_bar {
+            return None;
+        }
+        let strips: Vec<(Edge, egui::Rect)> =
+            bounds.strips.iter().map(|s| (s.edge, s.rect)).collect();
+        edge_under(bounds.area, &strips, p)
+    }
+
+    /// La columna (o fila) que dejaría `id` acoplado en la orilla `edge` ([`DockTarget::Edge`])
+    /// del área del árbol `area`: de lado a lado, con su divisor entero (como
+    /// `Workspace::column_rect`), en puntos enteros, y del ancho (o alto) que le da `pin_sides`. A
+    /// la derecha es la columna derecha (va por fuera de todo): del ancho de la columna
+    /// (`view.palette_width`); la toolbar, el de su caja. En las demás, el de siempre del panel
+    /// ([`Workspace::preferred_side`]), a lo más el 45 % del área (como un lado nuevo).
+    pub(crate) fn edge_zone(&self, edge: Edge, id: PanelId, area: egui::Rect) -> egui::Rect {
+        let horizontal = edge.vertical();
+        let preferred = self.preferred_side(id, horizontal);
+        let side = match (edge, id) {
+            (_, PanelId::Tools) if horizontal => preferred,
+            (Edge::Right, _) => self.sides.column.unwrap_or(preferred),
+            _ => {
+                let across = if horizontal {
+                    area.width()
+                } else {
+                    area.height()
+                };
+                preferred.min(across * 0.45)
+            }
+        };
+        let len = side + self.sides.sep / 2.0;
+        whole(match edge {
+            Edge::Left => area.with_max_x((area.left() + len).min(area.right())),
+            Edge::Right => area.with_min_x((area.right() - len).max(area.left())),
+            Edge::Top => area.with_max_y((area.top() + len).min(area.bottom())),
+            Edge::Bottom => area.with_min_y((area.bottom() - len).max(area.top())),
+        })
+    }
 }
 
 /// La franja de cada borde de un grupo donde soltar un panel lo parte: 1/4 de su ancho (a los
@@ -31,7 +161,8 @@ pub(crate) enum DropTarget {
 const EDGE_ZONE: f32 = 0.25;
 
 /// Dónde cae un panel soltado con el puntero en `pointer`, con los rects de los grupos del frame
-/// pasado: sobre una ventana flotante, en su grupo; sobre el área del árbol (la superficie
+/// pasado: sobre una ventana flotante, en su grupo; en la franja de una orilla (ver
+/// [`edge_under`]), de lado a lado en esa orilla; sobre el área del árbol (la superficie
 /// principal), en el grupo bajo el puntero (o el más cercano, si cae en un divisor); en el centro
 /// de un grupo, como pestaña, y en la franja de un borde, partiéndolo. El lienzo no recibe
 /// pestañas: en la franja de un borde se parte a su lado y en su centro el panel flota. Fuera del
@@ -56,6 +187,11 @@ pub(crate) fn drop_target(w: &Workspace, pointer: egui::Pos2) -> DropTarget {
                 d(&a.1).total_cmp(&d(&b.1))
             })
     };
+    if window.is_none()
+        && let Some(edge) = w.edge_at(pointer)
+    {
+        return DropTarget::Edge(edge);
+    }
     let area = w.root_rect(SurfaceIndex::main());
     let hit = match window {
         Some(hit) => Some(hit),
@@ -90,8 +226,9 @@ fn edge_of(rect: egui::Rect, p: egui::Pos2) -> Option<Split> {
 
 /// Lo que ocupa un panel soltado en `target` (para resaltarlo mientras se arrastra): el grupo
 /// entero, si va como pestaña; su mitad de ese lado, si lo parte (la misma que se pinta al
-/// arrastrar una pestaña sobre el lienzo: [`half`]); nada si va a flotar. En puntos enteros.
-fn drop_zone(w: &Workspace, target: DropTarget) -> Option<egui::Rect> {
+/// arrastrar una pestaña sobre el lienzo: [`half`]); en una orilla, la columna (o fila) que deja
+/// `id` ahí ([`Workspace::edge_zone`]); nada si va a flotar. En puntos enteros.
+fn drop_zone(w: &Workspace, id: PanelId, target: DropTarget) -> Option<egui::Rect> {
     let leaf_rect = |surface, node| {
         w.state
             .leaf(NodePath { surface, node })
@@ -101,22 +238,103 @@ fn drop_zone(w: &Workspace, target: DropTarget) -> Option<egui::Rect> {
     match target {
         DropTarget::Tab(surface, node) => leaf_rect(surface, node).map(whole),
         DropTarget::Split(surface, node, side) => Some(half(leaf_rect(surface, node)?, side)),
+        DropTarget::Edge(edge) => w.bounds.as_ref().map(|b| w.edge_zone(edge, id, b.dock)),
         DropTarget::Float(_) => None,
     }
     .filter(|r| r.is_positive())
 }
 
-/// Resalta dónde caería el panel que se arrastra desde la tira (encima de todo salvo el
+/// Resalta dónde caería el panel `id` que se arrastra desde la tira (encima de todo salvo el
 /// fantasma): con Pixel UI, la zona de destino de egui_dock (la franja de selección en el marco
 /// `menu.side`); sin él, un rect con el color de selección de egui.
 pub(crate) fn paint_drop_zone(
     ui: &egui::Ui,
     skin: Option<&Skin>,
     w: &Workspace,
+    id: PanelId,
     target: DropTarget,
 ) {
-    if let Some(rect) = drop_zone(w, target) {
+    if let Some(rect) = drop_zone(w, id, target) {
         paint_zone(ui, skin, rect);
+    }
+}
+
+/// Lo que el workspace hace con una pestaña (o un grupo sin barra) que egui_dock arrastra, en vez
+/// de lo que haría egui_dock (solo parte o junta la hoja bajo el puntero; ver [`tab_drop`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TabDrop {
+    /// De lado a lado en esa orilla ([`DockTarget::Edge`]): el puntero en su franja o, si el
+    /// panel no va a la tira (Color), sobre la tira de esa orilla.
+    Edge(Edge),
+    /// En la tira de esa orilla, entre sus botones donde se suelta (un panel que va a la tira).
+    Strip(Edge),
+}
+
+/// Dónde cae la pestaña de `id` que egui_dock arrastra con el puntero en `p`, si no es lo de
+/// egui_dock (ver [`TabDrop`]), con lo dibujado en el último frame. Una ventana flotante encima
+/// gana (sus grupos son de egui_dock), salvo la del mismo `id`: no le tapa la orilla ni la tira a
+/// lo que se saca de ella. Sobre su propio grupo acoplado, tampoco (lo de egui_dock: la franja de
+/// agarre de un grupo de hasta arriba está en la franja de la orilla de arriba, y moverlo un poco
+/// no lo tiene que mandar a otro lado). Mientras rige, la zona de egui_dock no se ve (ver
+/// `skin::hide_drop_zone`) y se pinta la de aquí ([`paint_tab_drop`]); al soltar, el workspace
+/// corrige lo que hizo egui_dock (ver `show`).
+pub(super) fn tab_drop(
+    w: &Workspace,
+    ctx: &egui::Context,
+    id: PanelId,
+    p: egui::Pos2,
+) -> Option<TabDrop> {
+    let bounds = w.bounds.as_ref()?;
+    let path = w.state.find_tab(&id);
+    let own_group = path
+        .filter(|path| path.surface.is_main())
+        .and_then(|path| w.state.leaf(path.node_path()).ok())
+        .is_some_and(|leaf| leaf.rect.contains(p));
+    if own_group {
+        return None;
+    }
+    let own = path.map(|path| path.surface);
+    let covered = w
+        .state
+        .iter_surfaces_indexed()
+        .filter(|(s, surface)| {
+            !s.is_main() && Some(*s) != own && surface.node_tree().is_some_and(|t| t.num_tabs() > 0)
+        })
+        .filter_map(|(s, _)| ctx.memory(|m| m.area_rect(skin::window_area_id(s))))
+        .any(|r| r.contains(p));
+    if covered {
+        return None;
+    }
+    if let Some(strip) = strip_under(&bounds.strips, p) {
+        return Some(if Workspace::goes_to_strip(id) {
+            TabDrop::Strip(strip.edge)
+        } else {
+            TabDrop::Edge(strip.edge)
+        });
+    }
+    w.edge_at(p).map(TabDrop::Edge)
+}
+
+/// Resalta dónde cae la pestaña de `id` arrastrada con el puntero en `p` (ver [`tab_drop`]): la
+/// columna (o fila) de la orilla, o la tira con la línea de dónde caería entre sus botones.
+pub(super) fn paint_tab_drop(
+    ui: &egui::Ui,
+    skin: Option<&Skin>,
+    w: &Workspace,
+    (id, p): (PanelId, egui::Pos2),
+    drop: TabDrop,
+) {
+    let Some(bounds) = w.bounds.as_ref() else {
+        return;
+    };
+    match drop {
+        TabDrop::Edge(edge) => paint_zone(ui, skin, w.edge_zone(edge, id, bounds.dock)),
+        TabDrop::Strip(edge) => {
+            if let Some(strip) = bounds.strips.iter().find(|s| s.edge == edge) {
+                paint_strip_zone(ui, skin, strip.rect);
+                crate::dock::paint_insertion_line(ui, skin, strip.line(p));
+            }
+        }
     }
 }
 
@@ -186,6 +404,22 @@ impl Workspace {
         }
     }
 
+    /// Pone `id`, cuya pestaña se soltó en `at`, donde dice `drop` (ver [`tab_drop`]), saliendo
+    /// de donde lo haya puesto egui_dock.
+    pub(super) fn apply_tab_drop(&mut self, id: PanelId, at: egui::Pos2, drop: TabDrop) {
+        match drop {
+            TabDrop::Edge(edge) => self.dock(id, DockTarget::Edge(edge)),
+            TabDrop::Strip(edge) => {
+                let index = self
+                    .bounds
+                    .as_ref()
+                    .and_then(|b| b.strips.iter().find(|s| s.edge == edge))
+                    .map_or(usize::MAX, |s| s.drop_index(id, at));
+                self.move_in_strip(id, edge, index);
+            }
+        }
+    }
+
     /// Pone `id` donde cayó (ver [`drop_target`]).
     pub(crate) fn drop_panel(&mut self, id: PanelId, target: DropTarget) {
         match target {
@@ -194,6 +428,7 @@ impl Workspace {
                 self.dock(id, DockTarget::Split(surface, node, side));
             }
             DropTarget::Float(at) => self.float(id, at),
+            DropTarget::Edge(edge) => self.dock(id, DockTarget::Edge(edge)),
         }
     }
 
@@ -472,5 +707,66 @@ mod tests {
 
     fn pos(x: f32, y: f32) -> egui::Pos2 {
         egui::pos2(x, y)
+    }
+
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> egui::Rect {
+        egui::Rect::from_min_max(pos(x0, y0), pos(x1, y1))
+    }
+
+    #[test]
+    fn the_edge_band_runs_along_each_edge_and_a_corner_goes_to_the_nearest() {
+        let area = rect(0.0, 50.0, 1000.0, 650.0);
+        let at = |x, y| edge_under(area, &[], pos(x, y));
+        // Las cuatro orillas.
+        assert_eq!(at(5.0, 300.0), Some(Edge::Left));
+        assert_eq!(at(995.0, 300.0), Some(Edge::Right));
+        assert_eq!(at(500.0, 55.0), Some(Edge::Top));
+        assert_eq!(at(500.0, 645.0), Some(Edge::Bottom));
+        // La franja mide `EDGE_BAND`: justo adentro sí, justo afuera no; el centro no.
+        assert_eq!(at(EDGE_BAND - 0.5, 300.0), Some(Edge::Left));
+        assert_eq!(at(EDGE_BAND + 0.5, 300.0), None);
+        assert_eq!(at(1000.0 - EDGE_BAND + 0.5, 300.0), Some(Edge::Right));
+        assert_eq!(at(1000.0 - EDGE_BAND - 0.5, 300.0), None);
+        assert_eq!(at(500.0, 300.0), None);
+        // Fuera del área, nada.
+        assert_eq!(at(-1.0, 300.0), None);
+        assert_eq!(at(500.0, 700.0), None);
+        assert_eq!(at(1001.0, 300.0), None);
+        // Las esquinas: la orilla más cercana.
+        assert_eq!(at(3.0, 60.0), Some(Edge::Left));
+        assert_eq!(at(10.0, 52.0), Some(Edge::Top));
+        assert_eq!(at(990.0, 648.0), Some(Edge::Bottom));
+        assert_eq!(at(998.0, 640.0), Some(Edge::Right));
+    }
+
+    #[test]
+    fn the_edge_band_goes_just_inside_a_strip_on_its_edge_and_not_over_it() {
+        let area = rect(0.0, 50.0, 1000.0, 650.0);
+        // La tira de la izquierda (de alto completo) y la de la derecha, a lo alto del lienzo y
+        // el timeline (hasta 600).
+        let strips = [
+            (Edge::Left, rect(0.0, 50.0, 26.0, 650.0)),
+            (Edge::Right, rect(974.0, 50.0, 1000.0, 600.0)),
+        ];
+        let at = |x, y| edge_under(area, &strips, pos(x, y));
+        // Sobre la tira, no (ahí cae en la tira); justo por dentro de ella, la franja.
+        assert_eq!(at(13.0, 300.0), None);
+        assert_eq!(at(30.0, 300.0), Some(Edge::Left));
+        assert_eq!(at(26.0 + EDGE_BAND + 0.5, 300.0), None);
+        assert_eq!(at(987.0, 300.0), None);
+        assert_eq!(at(965.0, 300.0), Some(Edge::Right));
+        assert_eq!(at(950.0, 300.0), None);
+        // Debajo de la tira de la derecha, la franja vuelve a la orilla.
+        assert_eq!(at(995.0, 620.0), Some(Edge::Right));
+        assert_eq!(at(965.0, 620.0), None);
+        // Una tira que no toca su orilla (la de la derecha, entre el lienzo y la columna): la
+        // franja va en la orilla y la tira no cuenta como suya.
+        let inner = [(Edge::Right, rect(700.0, 50.0, 726.0, 650.0))];
+        assert_eq!(
+            edge_under(area, &inner, pos(995.0, 300.0)),
+            Some(Edge::Right)
+        );
+        assert_eq!(edge_under(area, &inner, pos(690.0, 300.0)), None);
+        assert_eq!(edge_under(area, &inner, pos(713.0, 300.0)), None);
     }
 }

@@ -63,6 +63,8 @@ pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 
+#[cfg(test)]
+pub(crate) use drop::EDGE_BAND;
 pub(crate) use drop::{drop_target, paint_drop_zone, paint_strip_zone, strip_under};
 pub(crate) use model::{DockTarget, SAVED_VERSION, SavedWorkspace};
 pub(crate) use presets::{FACTORY, Shown, Workspaces};
@@ -107,6 +109,9 @@ pub(crate) struct Workspace {
     /// Un panel que Window pidió mostrar (el timeline o el Preview apagados): `show` lo enfoca y
     /// sube su ventana ([`Workspace::bring_forward`]) en cuanto vuelve al árbol, en el mismo frame.
     pub(crate) pending_focus: Option<PanelId>,
+    /// Lo dibujado en el último frame que dice dónde cae lo que se suelta en una orilla (el área
+    /// del workspace, la del árbol y las tiras; ver `drop::Bounds`). Lo pone `show`.
+    bounds: Option<drop::Bounds>,
 }
 
 impl Default for Workspace {
@@ -204,6 +209,13 @@ impl Workspace {
     #[cfg(test)]
     pub(crate) fn window_layer(&self, surface: SurfaceIndex) -> egui::LayerId {
         egui::LayerId::new(egui::Order::Middle, skin::window_area_id(surface))
+    }
+
+    /// La forma de la superficie principal: cada nodo (su clase y sus paneles), sin rects ni
+    /// fracciones (dos acomodos con la misma son el mismo árbol).
+    #[cfg(test)]
+    pub(crate) fn main_shape(&self) -> fit::Shape {
+        fit::shape(self.state.main_surface())
     }
 
     /// Si el grupo de `id` va sin barra de pestañas.

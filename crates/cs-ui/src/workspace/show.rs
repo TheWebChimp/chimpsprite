@@ -17,7 +17,7 @@ use eframe::egui;
 use egui_dock::{DockArea, TabViewer};
 
 use super::dividers::{cover_timeline_divider, cover_tools_divider, paint_crossings};
-use super::drop::{dragged_tab, tab_drag_released};
+use super::drop::{Bounds, dragged_tab, paint_tab_drop, tab_drag_released, tab_drop};
 use super::fit::{
     Minima, block_canvas_drag, chrome, fit_splits, fit_windows, fractions, half, minima, pin_sides,
     quadrant, record_sides, tidy_canvas, toolbar_width,
@@ -509,7 +509,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             widths.insert(id, bar.dock_width(i));
         }
     }
-    let style = match skin {
+    let mut style = match skin {
         Some(skin) => skin::dock_style(ui.style(), skin),
         None => skin::plain_style(ui.style()),
     };
@@ -540,6 +540,10 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     workspace.sides.bar = bar;
     workspace.sides.mins = m.clone();
     workspace.sides.column = Some(column_width - sep / 2.0);
+    // Color fuera de la columna, de ese mismo ancho de grupo (en la columna el divisor va dentro
+    // de `palette_width` y su margen cuenta desde la línea; fuera, el grupo entero es suyo: así
+    // lo de adentro mide lo mismo).
+    workspace.sides.palette = Some(preferred + sep / 2.0);
     // La toolbar, del ancho de su caja (la del skin), como el panel izquierdo de antes.
     workspace.sides.toolbar = Some(toolbar_width(skin));
     // El timeline, de su alto (hasta el centro del divisor). Justo debajo del lienzo, el divisor
@@ -581,16 +585,28 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     block_canvas_drag(&ctx, dock_id(), &workspace.state);
     pin_sides(&mut workspace.state, dock_rect, &mut workspace.sides);
     let before = fractions(&workspace.state);
-    let was_floating: Vec<PanelId> = workspace
+    // Lo que flotaba y en qué ventana (lo que egui_dock pase a otra ventana, va donde se soltó).
+    let was_floating: Vec<(PanelId, SurfaceIndex)> = workspace
         .state
         .iter_all_tabs()
         .filter(|(path, _)| !path.surface.is_main())
-        .map(|(_, p)| *p)
+        .map(|(path, p)| (*p, path.surface))
         .collect();
+    let pointer = ctx.input(|i| i.pointer.latest_pos());
+    // La pestaña que se arrastra sobre la franja de una orilla o sobre una tira: va ahí, no donde
+    // la pondría egui_dock (ver `drop::tab_drop`), y la zona que se ve es esa. Se decide con lo
+    // dibujado en el último frame, antes del `DockArea` (que mueve lo soltado al empezar): lo
+    // que se pinta es lo que pasa al soltar.
+    let tab_drop = match (dragged_tab(&ctx), pointer) {
+        (Some(id), Some(p)) => tab_drop(&workspace, &ctx, id, p).map(|d| (id, p, d)),
+        _ => None,
+    };
+    if tab_drop.is_some() {
+        skin::hide_drop_zone(&mut style);
+    }
     // Mientras se arrastra una pestaña sobre el lienzo: egui_dock pinta el lienzo entero ("como
     // pestaña"), pero lo que pasa es que se parte al lado (`tidy_canvas`): se pinta esa mitad.
-    let pointer = ctx.input(|i| i.pointer.latest_pos());
-    let canvas_drop = match (dragged_tab(&ctx), pointer) {
+    let canvas_drop = match (dragged_tab(&ctx).filter(|_| tab_drop.is_none()), pointer) {
         (Some(_), Some(p)) => workspace
             .state
             .find_tab(&PanelId::Canvas)
@@ -679,6 +695,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .draggable_tabs(!modal)
             .show_inside(ui, &mut viewer);
     }
+    // Si egui_dock movió algo (un panel soltado: lo hace al empezar el `DockArea`, así que este
+    // frame ya se dibujó así).
+    let reshaped = before.reshaped(&workspace.state);
     if let Some(frozen) = frozen {
         frozen.restore(&mut workspace.state);
     }
@@ -788,6 +807,20 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             });
         }
     }
+    // Lo de este frame, para saber dónde cae lo que se suelta en una orilla o en una tira.
+    workspace.bounds = Some(Bounds {
+        area,
+        dock: dock_rect,
+        strips: canvas
+            .as_ref()
+            .map(|c| c.strips.clone())
+            .unwrap_or_default(),
+    });
+    if let Some((id, p, drop)) = tab_drop
+        && !ctx.input(|i| i.pointer.primary_released())
+    {
+        paint_tab_drop(ui, skin, &workspace, (id, p), drop);
+    }
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
     // El de la columna es su preferencia (sin bajar de su mínimo, como el panel de antes).
     // Un divisor que cambió en el mismo frame de un doble clic: el de egui_dock (a la mitad).
@@ -814,10 +847,13 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         let width = (points + sep / 2.0).max(column_min);
         app.view.palette_width = Some((width * 64.0).round() / 64.0);
     } else if app.view.palette_width.is_none()
+        && !reshaped
         && let Some(rect) = column
     {
         // Sin una elegida, la que toma sola (más lo que se pase Color, si está en ella); si es más
-        // que su mínimo, es suya (no la de un panel acoplado ancho).
+        // que su mínimo, es suya (no la de un panel acoplado ancho). No la de un frame en que
+        // egui_dock acopló algo: la columna que parte va a la mitad (del frame siguiente en
+        // adelante, del ancho de siempre).
         let in_column = workspace.column_panels();
         let docked = extents.into_iter().filter(|e| in_column.contains(&e.id));
         let whole = rect.width() == rect.width().round();
@@ -939,7 +975,22 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     let released = tab_drag_released(&ctx, &workspace.state, &hits);
     // Lo que egui_dock soltó en el lienzo (como pestaña): al lado, del lado del cuadrante.
     let mut changed = tidy_canvas(&mut workspace.state, released.map(|(_, at)| at));
-    if let Some((id, at)) = released {
+    // Soltada en la franja de una orilla o sobre una tira (ver `drop::tab_drop`): de donde la haya
+    // puesto egui_dock, ahí.
+    let ours = released.and_then(|(id, at)| {
+        tab_drop
+            .filter(|&(dragged, _, _)| dragged == id)
+            .map(|(_, _, drop)| (id, at, drop))
+    });
+    if let Some((id, at, drop)) = ours {
+        workspace.apply_tab_drop(id, at, drop);
+        changed = true;
+    } else if let Some((id, at)) = released {
+        // Lo que egui_dock partió para él (junto al lienzo, p. ej.) va del ancho de siempre del
+        // panel, no de la mitad con que lo parte.
+        if reshaped {
+            workspace.pin_new_side(id);
+        }
         // Una pestaña (o un grupo sin barra) de egui_dock soltada fuera del árbol y de las
         // ventanas (en la barra de estado, la toolbar...): egui_dock no hace nada (solo suelta
         // sobre sus grupos); aquí se pone a flotar donde se soltó, como un ícono de la tira.
@@ -952,9 +1003,12 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         let outside = !dock_rect.contains(at) && !windows.iter().any(|r| r.contains(at));
         if id != PanelId::Canvas && outside {
             workspace.float(id, at);
-        } else if workspace.floating(id) && !was_floating.contains(&id) {
-            // egui_dock lo puso a flotar (soltado en el anillo de "ventana nueva"): su ventana,
-            // donde se soltó.
+        } else if let Some((surface, _)) = workspace.leaf_of(id).filter(|(s, _)| !s.is_main())
+            && !was_floating.contains(&(id, surface))
+        {
+            // egui_dock lo puso a flotar en una ventana nueva (soltado en el anillo de "ventana
+            // nueva", o en su propia ventana): su ventana, donde se soltó (egui no siempre
+            // respeta la esquina del primer frame).
             workspace.placing.retain(|(p, _, _)| *p != id);
             workspace
                 .placing

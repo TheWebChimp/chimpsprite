@@ -1,8 +1,11 @@
-//! Diagnóstico (sin arreglo): Color flotando sobre el lienzo, ¿se puede volver a acoplar
-//! arrastrándolo? Cada caso arrastra su pestaña (o su ventana) a un lugar y dice qué quedó.
+//! Color flotando vuelve a la columna derecha arrastrándolo (el diagnóstico de 4036dbb, ahora
+//! con el destino de orilla: ver `workspace::drop::edge_under` y `DockTarget::Edge`), y lo que
+//! mide un lado del lienzo que parte egui_dock.
 
 use super::*;
+use crate::dock::Edge;
 use crate::panel_registry::PanelId;
+use crate::workspace::{DockTarget, EDGE_BAND};
 
 /// Dónde queda flotando Color al empezar cada caso.
 #[derive(Clone, Copy, Debug)]
@@ -17,12 +20,17 @@ enum Start {
     Dragged,
 }
 
-/// Essentials en una ventana de `size`, con Color flotando sobre el lienzo.
-fn color_floating(size: Vec2, start: Start) -> LayoutHarness {
+/// Essentials con Pixel UI y una pestaña nueva, en una ventana de `size`.
+fn essentials(size: Vec2) -> LayoutHarness {
     let palettes = PaletteLibrary::new(Box::new(NoPresets));
     let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
     app.new_document();
-    let mut h = LayoutHarness::start_in(app, size);
+    LayoutHarness::start_in(app, size)
+}
+
+/// Essentials en una ventana de `size`, con Color flotando sobre el lienzo.
+fn color_floating(size: Vec2, start: Start) -> LayoutHarness {
+    let mut h = essentials(size);
     let canvas = h.leaf(PanelId::Canvas);
     match start {
         Start::Middle => {
@@ -67,12 +75,6 @@ fn describe(h: &LayoutHarness) -> String {
             w.floating(id)
         );
     }
-    if w.floating(PanelId::Color) {
-        out += &format!(
-            "  Color window {:?}\n",
-            w.window_rect(&h.ctx, PanelId::Color)
-        );
-    }
     out += &format!(
         "  column {:?} timeline_below {} palette_width {:?} natural {:?}\n",
         w.column_rect(),
@@ -83,128 +85,125 @@ fn describe(h: &LayoutHarness) -> String {
     out
 }
 
-/// Arrastra de `from` a `to` (como `dock_drag`, quieto al final), dice qué zona se pintó a
-/// mitad y al final, y suelta.
-fn try_drop(h: &mut LayoutHarness, from: Pos2, to: Pos2) -> String {
-    hold_drag(h, from, to);
-    let zones = drop_zones(h);
-    let window_before = h.app.workspace.window_rect(&h.ctx, PanelId::Color);
-    release_at(h, to);
-    for _ in 0..3 {
-        h.frame();
+/// Si `h` es Essentials como `reference`: el mismo árbol, los mismos rects de cada grupo, de la
+/// columna y de la tira, y los mismos anchos de la columna.
+fn assert_like(h: &LayoutHarness, reference: &LayoutHarness, case: &str) {
+    let (w, r) = (&h.app.workspace, &reference.app.workspace);
+    let why = || format!("{case}:\n{}vs\n{}", describe(h), describe(reference));
+    assert_eq!(w.main_shape(), r.main_shape(), "{}", why());
+    assert!(!w.floating(PanelId::Color), "{}", why());
+    for id in [
+        PanelId::Tools,
+        PanelId::Canvas,
+        PanelId::Timeline,
+        PanelId::Color,
+    ] {
+        assert_eq!(w.leaf_rect(id), r.leaf_rect(id), "{id:?} {}", why());
     }
-    format!(
-        "  zones while held {zones:?}\n  window while held {window_before:?}\n{}",
-        describe(h)
-    )
+    assert_eq!(w.column_rect(), r.column_rect(), "{}", why());
+    assert_eq!(h.panel("dock"), reference.panel("dock"), "{}", why());
+    assert_eq!(h.app.view.palette_width, reference.app.view.palette_width);
+    assert_eq!(
+        h.app.palette_natural_width,
+        reference.app.palette_natural_width,
+        "{}",
+        why()
+    );
 }
 
-fn run_cases(size: Vec2, start: Start) {
-    let h = color_floating(size, start);
-    let screen = h.screen();
-    let canvas = h.leaf(PanelId::Canvas);
-    let timeline = h.leaf(PanelId::Timeline);
-    let tools = h.leaf(PanelId::Tools);
-    let strip = h.panel("dock");
-    let tab = h.button("Color");
-    let window = h.window(PanelId::Color);
-    eprintln!(
-        "=== size {size:?} screen {screen:?} ppp {}\n  strip {strip:?} tab {tab:?} window {window:?}\n{}",
-        h.ctx.pixels_per_point(),
-        describe(&h)
-    );
-    let cases: Vec<(&str, Pos2, Pos2)> = vec![
-        ("a strip middle", tab.center(), strip.center()),
-        (
-            "a strip top (over canvas)",
-            tab.center(),
-            pos2(strip.center().x, canvas.top() + 40.0),
-        ),
-        (
-            "a strip bottom (over timeline)",
-            tab.center(),
-            pos2(strip.center().x, timeline.center().y),
-        ),
-        (
-            "b canvas right 12%",
-            tab.center(),
-            pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y),
-        ),
-        (
-            "b canvas right 30%",
-            tab.center(),
-            pos2(canvas.right() - canvas.width() * 0.30, canvas.center().y),
-        ),
-        (
-            "b canvas right 40% (ring)",
-            tab.center(),
-            pos2(canvas.center().x + canvas.width() * 0.15, canvas.center().y),
-        ),
-        (
-            "b canvas center",
-            tab.center(),
-            pos2(canvas.center().x + canvas.width() * 0.05, canvas.center().y),
-        ),
-        (
-            "c between canvas and strip",
-            tab.center(),
-            pos2(strip.left() - 2.0, canvas.center().y),
-        ),
-        (
-            "c screen right edge",
-            tab.center(),
-            pos2(screen.right() - 1.0, canvas.center().y),
-        ),
-        ("d tools center", tab.center(), tools.center()),
-        (
-            "d tools right edge",
-            tab.center(),
-            pos2(tools.right() - 2.0, tools.center().y),
-        ),
-        ("d timeline center", tab.center(), timeline.center()),
-        (
-            "d timeline right 10%",
-            tab.center(),
-            pos2(
-                timeline.right() - timeline.width() * 0.10,
-                timeline.center().y,
-            ),
-        ),
-        (
-            "d timeline top edge",
-            tab.center(),
-            pos2(timeline.center().x, timeline.top() + 3.0),
-        ),
-        (
-            "e empty tab bar -> strip",
-            pos2(tab.right() + 12.0, tab.center().y),
-            strip.center(),
-        ),
-        (
-            "e empty tab bar -> canvas right 12%",
-            pos2(tab.right() + 12.0, tab.center().y),
-            pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y),
-        ),
-    ];
-    for (name, from, to) in cases {
-        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut h = color_floating(size, start);
-            try_drop(&mut h, from, to)
-        }));
-        match run {
-            Ok(report) => eprintln!("--- {name}: {from:?} -> {to:?}\n{report}"),
-            Err(_) => eprintln!("--- {name}: {from:?} -> {to:?}\n  PANICKED (see above)"),
+/// Si `a` y `b` son el mismo rect a medio punto (las zonas pintadas se miden de sus piezas).
+fn near(a: Rect, b: Rect) -> bool {
+    (a.min - b.min).length() <= 0.5 && (a.max - b.max).length() <= 0.5
+}
+
+#[test]
+fn docking_color_at_the_right_edge_draws_exactly_essentials() {
+    for size in [vec2(1200.0, 800.0), vec2(960.0, 505.0)] {
+        let reference = essentials(size);
+        let mut h = essentials(size);
+        h.app.workspace.float(PanelId::Color, pos2(300.0, 100.0));
+        for _ in 0..3 {
+            h.frame();
+        }
+        h.app
+            .workspace
+            .dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        for _ in 0..3 {
+            h.frame();
+        }
+        assert_like(&h, &reference, &format!("{size:?}"));
+    }
+}
+
+#[test]
+fn the_floating_color_tab_dropped_on_the_right_edge_band_or_strip_gives_back_essentials() {
+    // Antes (4036dbb) ningún soltar dejaba la columna de alto completo: egui_dock solo parte la
+    // hoja bajo el puntero. Ahora la franja junto a la tira derecha y la tira misma (Color no va
+    // a la tira) son la orilla: la columna de Essentials, del ancho de siempre. Mientras se
+    // sostiene, la zona pintada es esa columna (y la de egui_dock no se ve). Con la ventana
+    // pegada a la orilla (tapando la tira), igual: su propia ventana no le tapa la orilla.
+    for size in [vec2(1200.0, 800.0), vec2(960.0, 505.0)] {
+        let reference = essentials(size);
+        let column = reference.app.workspace.column_rect().unwrap();
+        for start in [Start::Middle, Start::Dragged, Start::Right] {
+            let probe = color_floating(size, start);
+            let strip = probe.panel("dock");
+            let canvas = probe.leaf(PanelId::Canvas);
+            let timeline = probe.leaf(PanelId::Timeline);
+            let screen = probe.screen();
+            let tab = probe.button("Color").center();
+            let band = |y| pos2(strip.left() - EDGE_BAND / 2.0, y);
+            let targets = [
+                ("band, canvas", band(canvas.center().y)),
+                ("band, timeline", band(timeline.center().y)),
+                (
+                    "between canvas and strip",
+                    pos2(strip.left() - 2.0, canvas.center().y),
+                ),
+                ("strip middle", strip.center()),
+                ("strip top", pos2(strip.center().x, canvas.top() + 40.0)),
+                (
+                    "strip over the timeline",
+                    pos2(strip.center().x, timeline.center().y),
+                ),
+                (
+                    "screen right edge",
+                    pos2(screen.right() - 1.0, canvas.center().y),
+                ),
+            ];
+            for (name, to) in targets {
+                let case = format!("{size:?} {start:?} {name} {to:?}");
+                let mut h = color_floating(size, start);
+                hold_drag(&mut h, tab, to);
+                let zones = drop_zones(&h);
+                assert!(
+                    zones.len() == 1 && near(zones[0], column),
+                    "{case}: {zones:?} vs {column:?}"
+                );
+                release_at(&mut h, to);
+                for _ in 0..3 {
+                    h.frame();
+                }
+                assert_like(&h, &reference, &case);
+                assert_eq!(drop_zones(&h), [], "{case}: nothing painted after");
+            }
         }
     }
-    // Soltar en la tira sin quedarse quieto (soltar en cuanto llega).
-    let mut h = color_floating(size, start);
+}
+
+#[test]
+fn the_floating_color_tab_dropped_quickly_on_the_strip_gives_back_essentials() {
+    // Soltar en cuanto llega (sin quedarse quieto, sin el `max_preference_time` de egui_dock).
+    let size = vec2(960.0, 505.0);
+    let reference = essentials(size);
+    let mut h = color_floating(size, Start::Middle);
     let press = |pos, pressed| Event::PointerButton {
         pos,
         button: PointerButton::Primary,
         pressed,
         modifiers: Default::default(),
     };
-    let (from, to) = (tab.center(), strip.center());
+    let (from, to) = (h.button("Color").center(), h.panel("dock").center());
     h.frame_with(vec![Event::PointerMoved(from)]);
     h.frame_with(vec![press(from, true)]);
     for t in [0.1, 0.4, 0.7, 1.0] {
@@ -214,139 +213,178 @@ fn run_cases(size: Vec2, start: Start) {
     for _ in 0..3 {
         h.frame();
     }
-    eprintln!("--- a strip, quick release\n{}", describe(&h));
+    assert_like(&h, &reference, "quick release");
 }
 
 #[test]
-#[ignore = "diagnostic: prints what each drop does with Color floating"]
-fn diag_color_redock_report_1200x800() {
-    run_cases(vec2(1200.0, 800.0), Start::Middle);
-}
-
-#[test]
-#[ignore = "diagnostic: prints what each drop does with Color floating"]
-fn diag_color_redock_report_user_size() {
-    run_cases(vec2(960.0, 505.0), Start::Middle);
-}
-
-#[test]
-#[ignore = "diagnostic: prints what each drop does with Color floating"]
-fn diag_color_redock_report_user_size_right() {
-    run_cases(vec2(960.0, 505.0), Start::Right);
-}
-
-#[test]
-#[ignore = "diagnostic: prints what each drop does with Color floating"]
-fn diag_color_redock_report_user_size_dragged() {
-    run_cases(vec2(960.0, 505.0), Start::Dragged);
-}
-
-// --- Lo de hoy (08d04df), fijado: estos tests dicen lo que pasa, no lo que debería pasar. ---
-
-/// Si Color quedó como la columna derecha de Essentials: a la derecha del lienzo y del timeline
-/// (de alto completo), con el timeline todavía justo debajo del lienzo.
-fn full_height_column(h: &LayoutHarness) -> bool {
+fn a_strip_icon_dropped_on_the_left_edge_band_is_a_full_height_column_left_of_the_toolbar() {
+    // Library, de la tira derecha a la franja de la orilla izquierda: una columna de alto
+    // completo en la orilla (la toolbar queda entre ella y el lienzo, del ancho de su caja), del
+    // ancho de siempre de Library. Mientras se sostiene, se pinta esa columna.
+    let mut h = essentials(vec2(1200.0, 800.0));
+    let tools = h.leaf(PanelId::Tools);
+    let canvas = h.leaf(PanelId::Canvas);
+    let dock = tools.union(h.app.workspace.column_rect().unwrap());
+    let to = pos2(dock.left() + EDGE_BAND / 2.0, canvas.center().y);
+    let width = h
+        .app
+        .workspace
+        .preferred_side(PanelId::Library, true)
+        .min(dock.width() * 0.45);
+    let from = h.button("Library").center();
+    hold_drag(&mut h, from, to);
+    let zones = drop_zones(&h);
+    assert_eq!(zones.len(), 1, "{zones:?}");
+    let zone = zones[0];
+    let column = Rect::from_min_size(
+        dock.min,
+        vec2(width + crate::pixel_ui::ETCHED_SIZE / 2.0, dock.height()),
+    );
+    assert!(near(zone, column), "{zone:?} vs {column:?}");
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
     let w = &h.app.workspace;
-    let (Some(color), Some(timeline)) =
-        (w.leaf_rect(PanelId::Color), w.leaf_rect(PanelId::Timeline))
-    else {
-        return false;
-    };
-    w.docked(PanelId::Color) && w.timeline_below() && color.bottom() >= timeline.bottom()
+    let library = h.leaf(PanelId::Library);
+    assert!(w.docked(PanelId::Library) && w.strip_of(PanelId::Library).is_none());
+    assert_eq!(library.left(), dock.left());
+    assert_eq!(
+        (library.top(), library.bottom()),
+        (dock.top(), dock.bottom())
+    );
+    assert!(
+        (library.width() - zone.width()).abs() <= 2.0,
+        "{library:?} vs {zone:?}"
+    );
+    // La toolbar, a su derecha y del ancho de su caja; el lienzo, después.
+    let after = h.leaf(PanelId::Tools);
+    assert!(after.left() > library.right(), "{after:?} {library:?}");
+    assert_eq!(after.width(), tools.width());
+    assert_eq!(w.tools_side(), Some(true));
+    assert!(h.leaf(PanelId::Canvas).left() > after.right());
+    assert!(w.timeline_below());
+    assert_eq!(w.column_panels(), [PanelId::Color]);
 }
 
 #[test]
-fn diag_no_drop_of_the_floating_color_tab_restores_the_full_height_column() {
-    let size = vec2(960.0, 505.0);
-    let probe = color_floating(size, Start::Middle);
-    let canvas = probe.leaf(PanelId::Canvas);
-    let timeline = probe.leaf(PanelId::Timeline);
-    let strip = probe.panel("dock");
-    let tab = probe.button("Color").center();
-    let targets = [
-        strip.center(),
-        pos2(strip.left() - 2.0, canvas.center().y),
-        pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y),
-        pos2(canvas.center().x + canvas.width() * 0.05, canvas.center().y),
-        pos2(
-            timeline.right() - timeline.width() * 0.10,
-            timeline.center().y,
-        ),
-        pos2(strip.center().x, timeline.center().y),
-    ];
-    for to in targets {
-        let mut h = color_floating(size, Start::Middle);
-        hold_drag(&mut h, tab, to);
-        release_at(&mut h, to);
-        for _ in 0..3 {
-            h.frame();
-        }
-        // Se acopla (a un lado del lienzo o del timeline), pero nunca en la columna de alto
-        // completo: ningún destino de egui_dock es el split V[Canvas / Timeline].
-        assert!(h.app.workspace.docked(PanelId::Color), "{to:?}");
-        assert!(!full_height_column(&h), "{to:?}:\n{}", describe(&h));
+fn a_tab_dropped_on_a_strip_goes_into_it_where_it_was_dropped() {
+    // Library (pestaña junto a Color) soltada sobre la tira derecha, entre sus dos primeros
+    // íconos: a la tira, en ese lugar (no se acopla en ninguna columna).
+    let mut h = library_beside_color();
+    let strip = h.app.workspace.strip_at(Edge::Right).to_vec();
+    let first = h.button(strip[0].label());
+    let second = h.button(strip[1].label());
+    let to = pos2(first.center().x, (first.bottom() + second.top()) / 2.0);
+    let from = h.button("Library").center();
+    hold_drag(&mut h, from, to);
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
     }
+    let w = &h.app.workspace;
+    assert_eq!(w.strip_of(PanelId::Library), Some(Edge::Right));
+    assert_eq!(w.strip_at(Edge::Right)[1], PanelId::Library);
+    assert_eq!(w.strip_at(Edge::Right)[0], strip[0]);
+    assert!(!w.docked(PanelId::Library) && !w.floating(PanelId::Library));
+    assert_eq!(w.places(PanelId::Library), 1);
 }
 
 #[test]
-fn diag_the_floating_color_window_over_the_strip_hides_every_target_under_it() {
-    // Color flotando pegado a la orilla derecha (tapa la tira y casi todo el alto del lienzo a
-    // 960×505): su pestaña soltada sobre la tira o el cuarto derecho del lienzo cae en su propio
-    // grupo (egui_dock: `deserted_node`, sin splits) y vuelve a flotar, sin zona pintada.
+fn a_canvas_split_made_by_egui_dock_gives_the_panel_its_usual_width() {
+    // Antes (4036dbb), soltado en el cuarto derecho del lienzo (lo parte egui_dock, fracción
+    // 0.5), el lado nuevo se quedaba con la mitad del lienzo, y la columna lo guardaba como su
+    // ancho natural. Ahora: Color, la columna de su ancho de siempre (el natural no cambia).
     let size = vec2(960.0, 505.0);
-    let probe = color_floating(size, Start::Right);
-    let canvas = probe.leaf(PanelId::Canvas);
-    let window = probe.window(PanelId::Color);
-    let tab = probe.button("Color").center();
-    let strip = probe.panel("dock");
-    assert!(window.top() < canvas.top() + 20.0 && window.bottom() >= canvas.bottom());
-    for to in [
-        strip.center(),
-        pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y),
-    ] {
-        assert!(window.contains(to), "{to:?} under {window:?}");
-        let mut h = color_floating(size, Start::Right);
-        hold_drag(&mut h, tab, to);
-        assert_eq!(drop_zones(&h), [], "{to:?}: no zone painted");
-        release_at(&mut h, to);
-        for _ in 0..3 {
-            h.frame();
-        }
-        assert!(h.app.workspace.floating(PanelId::Color), "{to:?}");
-    }
-}
-
-#[test]
-fn diag_a_canvas_split_made_by_egui_dock_gives_color_half_the_canvas() {
-    // Soltado en la tira (el cuarto derecho del lienzo para egui_dock): Color a la derecha del
-    // lienzo a la mitad (0.5 de egui_dock), y ese ancho se queda como el "natural" de la columna.
-    // En el centro del lienzo (lo parte `tidy_canvas`, después de medir) va del ancho de antes.
-    let size = vec2(960.0, 505.0);
+    let reference = essentials(size);
+    let column = reference.app.workspace.column_rect().unwrap();
     let mut h = color_floating(size, Start::Middle);
     let before = h.app.palette_natural_width;
     let canvas = h.leaf(PanelId::Canvas);
-    let (tab, to) = (h.button("Color").center(), h.panel("dock").center());
+    let tab = h.button("Color").center();
+    let to = pos2(canvas.right() - canvas.width() * 0.2, canvas.center().y);
     hold_drag(&mut h, tab, to);
     release_at(&mut h, to);
     for _ in 0..3 {
         h.frame();
     }
-    let column = h.app.workspace.column_rect().expect("a column");
-    assert!(
-        (column.width() - (canvas.width() / 2.0)).abs() < 3.0,
-        "{column:?} vs canvas {canvas:?}"
-    );
-    assert_ne!(h.app.palette_natural_width, before);
-    let mut c = color_floating(size, Start::Middle);
-    let (tab, to) = (
-        c.button("Color").center(),
-        pos2(canvas.center().x + canvas.width() * 0.05, canvas.center().y),
-    );
-    hold_drag(&mut c, tab, to);
-    release_at(&mut c, to);
+    let w = &h.app.workspace;
+    assert!(w.docked(PanelId::Color), "{}", describe(&h));
+    let got = w.column_rect().expect("a column");
+    assert_eq!(got.width(), column.width(), "{}", describe(&h));
+    assert_eq!(h.app.palette_natural_width, before);
+    assert_eq!(h.app.view.palette_width, None);
+    // Library (de junto a Color), igual: su lado mide lo de siempre de Library, no la mitad.
+    let mut h = library_beside_color();
+    let natural = h.app.palette_natural_width;
+    let canvas = h.leaf(PanelId::Canvas);
+    let tab = h.button("Library").center();
+    let to = pos2(canvas.right() - canvas.width() * 0.15, canvas.center().y);
+    // (A lo más el 45 % de lo que parte, como cualquier lado nuevo: el del lienzo.)
+    let width = h
+        .app
+        .workspace
+        .preferred_side(PanelId::Library, true)
+        .min(canvas.width() * 0.45);
+    hold_drag(&mut h, tab, to);
+    release_at(&mut h, to);
     for _ in 0..3 {
-        c.frame();
+        h.frame();
     }
-    let column = c.app.workspace.column_rect().expect("a column");
-    assert!(column.width() < canvas.width() / 3.0, "{column:?}");
+    let library = h.leaf(PanelId::Library);
+    let canvas_after = h.leaf(PanelId::Canvas);
+    assert!(library.left() > canvas_after.left(), "{}", describe(&h));
+    assert!(
+        (library.width() + crate::pixel_ui::ETCHED_SIZE / 2.0 - width).abs() <= 1.5,
+        "{library:?} vs {width} (canvas {canvas:?})"
+    );
+    assert_eq!(h.app.palette_natural_width, natural);
+    assert_eq!(h.app.view.palette_width, None);
+}
+
+#[test]
+fn the_floating_color_tab_dropped_in_the_new_window_ring_floats_where_it_was_dropped() {
+    // Causa 3 de 4036dbb: soltada en el anillo de "ventana nueva" de egui_dock, la ventana nueva
+    // de lo que ya flotaba aparecía en un lugar fijo (~360,105), no donde se soltó.
+    let size = vec2(960.0, 505.0);
+    let mut h = color_floating(size, Start::Middle);
+    let canvas = h.leaf(PanelId::Canvas);
+    let tab = h.button("Color").center();
+    let to = pos2(canvas.center().x + canvas.width() * 0.15, canvas.center().y);
+    assert!(!h.window(PanelId::Color).contains(to));
+    hold_drag(&mut h, tab, to);
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.workspace.floating(PanelId::Color), "{}", describe(&h));
+    let window = h.window(PanelId::Color);
+    assert!(
+        (window.min - to.round()).length() <= 1.0,
+        "{window:?} vs {to:?}"
+    );
+}
+
+#[test]
+fn a_docked_group_dragged_a_little_from_its_grab_strip_stays_where_it_was() {
+    // La franja de agarre de un grupo de hasta arriba está en la franja de la orilla de arriba:
+    // mientras el puntero siga sobre su propio grupo, no cuenta (si no, moverlo un poco lo
+    // mandaría a una fila de ancho completo arriba).
+    let size = vec2(1200.0, 800.0);
+    let reference = essentials(size);
+    let mut h = essentials(size);
+    let leaf = h.leaf(PanelId::Color);
+    let from = pos2(leaf.left() + 20.0, leaf.top() + 1.0);
+    let to = from + vec2(12.0, 6.0);
+    hold_drag(&mut h, from, to);
+    assert!(
+        !drop_zones(&h).iter().any(|z| z.width() > leaf.width()),
+        "{:?}",
+        drop_zones(&h)
+    );
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_like(&h, &reference, "grab strip wiggle");
 }

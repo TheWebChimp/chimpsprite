@@ -1531,15 +1531,16 @@ impl ChimpApp {
         // al lienzo), en el lienzo (en una ventana) o en otra tira (entre sus botones), o desde su
         // menú contextual. Mientras se arrastra, dónde caería: sobre otra tira, esa tira y la
         // línea entre sus botones; si no, en el árbol. (Dentro de su tira la pinta la tira.)
-        if let Some((_, pointer)) = dock_out.dragging {
+        if let Some((id, pointer)) = dock_out.dragging {
             match workspace::strip_under(&strips, pointer) {
                 Some(strip) => {
                     workspace::paint_strip_zone(ui, skin, strip.rect);
                     dock::paint_insertion_line(ui, skin, strip.line(pointer));
                 }
+                // En la franja de una orilla, la columna (o fila) que deja ahí.
                 None => {
                     let target = workspace::drop_target(&self.workspace, pointer);
-                    workspace::paint_drop_zone(ui, skin, &self.workspace, target);
+                    workspace::paint_drop_zone(ui, skin, &self.workspace, id, target);
                 }
             }
         }

@@ -157,6 +157,48 @@ impl Workspace {
         )
     }
 
+    /// Lo que mide de siempre un lado del lienzo con `id` solo, a lo ancho (`horizontal`) o a lo
+    /// alto, hasta el centro de su divisor (como los demás lados, ver [`SidePoints`]): Color, el
+    /// ancho de la columna (`view.palette_width` o el que tomó sola, `SidePoints::palette`); la
+    /// toolbar, el de su caja; los demás, lo que piden de fábrica (su `reference_width` con su
+    /// margen y la barra de scroll, ver [`reference`]). A lo alto, el timeline lo suyo
+    /// (`view.timeline_height`) y los demás su `default_size`.
+    pub(crate) fn preferred_side(&self, id: PanelId, horizontal: bool) -> f32 {
+        let half = self.sides.sep / 2.0;
+        let fallback = panel_reference(id, horizontal) + half;
+        match (id, horizontal) {
+            (PanelId::Color, true) => self.sides.palette.unwrap_or(fallback),
+            (PanelId::Tools, true) => self.sides.toolbar.map_or(fallback, |w| w - half),
+            (PanelId::Timeline, false) => self.sides.timeline.unwrap_or(fallback),
+            _ => fallback,
+        }
+    }
+
+    /// El lado del lienzo con `id` solo (el de un split recién hecho, por el workspace o por
+    /// egui_dock), si lo hay, va como un lado nuevo: del ancho (o alto) de siempre del panel (ver
+    /// [`Workspace::preferred_side`]; a lo más el 45 % de su split), no de lo que mida dibujado
+    /// (egui_dock parte a la mitad y dibuja así el frame en que suelta; ese ancho se quedaría).
+    /// La columna derecha, la toolbar y el timeline los pide el anfitrión (ver [`pin_sides`]):
+    /// ahí no cambia nada.
+    pub(super) fn pin_new_side(&mut self, id: PanelId) {
+        let tree = self.state.main_surface();
+        let Some(level) = chain(tree)
+            .into_iter()
+            .find(|level| panels_of(tree, level.other) == [id])
+        else {
+            return;
+        };
+        let side = Side {
+            horizontal: level.horizontal,
+            first: level.first,
+            panels: vec![id],
+        };
+        self.sides.sides.retain(|(s, _)| *s != side);
+        if !self.sides.fresh.contains(&side) {
+            self.sides.fresh.push(side);
+        }
+    }
+
     /// Los paneles de la columna derecha (ver [`Workspace::column`]).
     pub(crate) fn column_panels(&self) -> Vec<PanelId> {
         let tree = self.state.main_surface();
@@ -744,6 +786,10 @@ pub(crate) struct SidePoints {
     /// Lo que mide la columna derecha (ver [`Workspace::column`]): la pide el anfitrión (de
     /// `view.palette_width`); sin ella, como los demás lados.
     pub column: Option<f32>,
+    /// Lo que mide un lado con Color solo fuera de la columna, hasta el centro de su divisor: su
+    /// grupo, del ancho de siempre de Color (`view.palette_width` o el que tomó sola), como lo
+    /// de adentro de la columna (ver [`Workspace::preferred_side`]). Lo da el anfitrión.
+    pub palette: Option<f32>,
     /// El ancho de la toolbar (ver [`toolbar_width`]): lo da el anfitrión. Su lado del lienzo
     /// (ver [`Workspace::tools_side`]) mide eso hasta el borde de su divisor, siempre (no se
     /// arrastra); sin él, como los demás lados.
@@ -770,6 +816,9 @@ pub(crate) struct SidePoints {
     /// estos paneles, como parte de su split: lo pide un workspace de fábrica (la franja del
     /// timeline y el Preview de Animation, ver `presets::factory`).
     pub shares: Vec<(Vec<PanelId>, f32)>,
+    /// Los lados recién hechos que van como nuevos aunque ya se hayan dibujado (ver
+    /// [`Workspace::pin_new_side`]): de lo que piden de fábrica, no de lo que miden.
+    fresh: Vec<Side>,
     /// Con qué se acomodaron por última vez.
     last: Option<Pinned>,
 }
@@ -829,9 +878,9 @@ struct Side {
 
 /// La forma de la superficie principal: cada nodo (su clase y sus paneles), sin rects ni
 /// fracciones.
-type Shape = Vec<(u8, Vec<PanelId>)>;
+pub(super) type Shape = Vec<(u8, Vec<PanelId>)>;
 
-fn shape(tree: &Tree<PanelId>) -> Shape {
+pub(super) fn shape(tree: &Tree<PanelId>) -> Shape {
     tree.iter()
         .map(|node| match node {
             Node::Empty => (0, Vec::new()),
@@ -944,23 +993,7 @@ fn reference(tree: &Tree<PanelId>, node: NodeIndex, horizontal: bool) -> f32 {
     if node.0 >= tree.len() {
         return 0.0;
     }
-    let of = |id: PanelId| {
-        let spec = id.spec();
-        if !horizontal {
-            return spec.default_size.y;
-        }
-        match id {
-            PanelId::Color => crate::color_panel::DEFAULT_WIDTH,
-            PanelId::Tools => spec.reference_width,
-            _ => {
-                let bar = match spec.body {
-                    Body::Fit | Body::Tall => pixel_ui::SCROLL_BAR,
-                    Body::Fixed => 0.0,
-                };
-                spec.reference_width + 2.0 * f32::from(dock::FLYOUT_MARGIN) + bar
-            }
-        }
-    };
+    let of = |id: PanelId| panel_reference(id, horizontal);
     match &tree[node] {
         Node::Empty => 0.0,
         Node::Leaf(leaf) => leaf.tabs.iter().map(|&t| of(t)).fold(0.0, f32::max),
@@ -971,6 +1004,26 @@ fn reference(tree: &Tree<PanelId>, node: NodeIndex, horizontal: bool) -> f32 {
             );
             let along = matches!(tree[node], Node::Horizontal(_)) == horizontal;
             if along { a + b } else { a.max(b) }
+        }
+    }
+}
+
+/// Lo que pide de fábrica el panel `id` en un grupo a lo ancho (`horizontal`) o a lo alto (ver
+/// [`reference`]).
+fn panel_reference(id: PanelId, horizontal: bool) -> f32 {
+    let spec = id.spec();
+    if !horizontal {
+        return spec.default_size.y;
+    }
+    match id {
+        PanelId::Color => crate::color_panel::DEFAULT_WIDTH,
+        PanelId::Tools => spec.reference_width,
+        _ => {
+            let bar = match spec.body {
+                Body::Fit | Body::Tall => pixel_ui::SCROLL_BAR,
+                Body::Fixed => 0.0,
+            };
+            spec.reference_width + 2.0 * f32::from(dock::FLYOUT_MARGIN) + bar
         }
     }
 }
@@ -1065,8 +1118,15 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             _ => match sides.get(&side) {
                 Some(points) => points,
                 None => {
+                    // Color solo, del ancho de la columna (el de siempre); lo demás, lo que pide
+                    // de fábrica.
+                    let palette = sides
+                        .palette
+                        .filter(|_| level.horizontal && side.panels == [PanelId::Color]);
                     let fresh = || {
-                        let r = reference(tree, level.other, level.horizontal) + sides.sep / 2.0;
+                        let r = palette.unwrap_or_else(|| {
+                            reference(tree, level.other, level.horizontal) + sides.sep / 2.0
+                        });
                         r.min(len * 0.45)
                     };
                     // Lo que pide un workspace de fábrica, solo la primera vez (si el lado se
@@ -1076,8 +1136,10 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
                         .iter()
                         .position(|(panels, _)| *panels == side.panels)
                         .map(|i| (len * sides.shares.remove(i).1).round());
+                    // Uno recién hecho, como nuevo (ver `Workspace::pin_new_side`).
+                    let new = sides.fresh.contains(&side);
                     let points = share
-                        .or_else(|| measured(tree, &level))
+                        .or_else(|| (!new).then(|| measured(tree, &level)).flatten())
                         .unwrap_or_else(fresh);
                     sides.set(side, points);
                     points
@@ -1103,8 +1165,9 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             (false, false) => rect.with_max_y(rect.top() + len * f - half),
         };
     }
-    // Los lados que ya no existen se olvidan.
+    // Los lados que ya no existen se olvidan; los recién hechos ya se acomodaron.
     sides.sides.retain(|(side, _)| alive.contains(side));
+    sides.fresh.clear();
     sides.last = Some(now);
 }
 
@@ -1113,6 +1176,14 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
 pub(super) struct Fractions {
     shape: Shape,
     of: Vec<(NodeIndex, f32)>,
+}
+
+impl Fractions {
+    /// Si la superficie principal de `state` cambió de forma desde que se tomaron (un panel se
+    /// soltó en el `DockArea`).
+    pub(super) fn reshaped(&self, state: &DockState<PanelId>) -> bool {
+        shape(state.main_surface()) != self.shape
+    }
 }
 
 pub(super) fn fractions(state: &DockState<PanelId>) -> Fractions {

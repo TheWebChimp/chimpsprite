@@ -51,6 +51,11 @@ pub(crate) enum DockTarget {
     /// En el grupo con el foco de la superficie principal (o el primero que haya), nunca en el
     /// del lienzo (ver [`Workspace::push_focused`]).
     Focused,
+    /// En la orilla `Edge` de la superficie principal, de lado a lado: una columna de alto
+    /// completo (a la izquierda o a la derecha) o una fila de ancho completo (arriba o abajo), por
+    /// fuera de lo que ya va en esa orilla y del ancho (o alto) de siempre del panel (ver
+    /// [`Workspace::preferred_side`] y `edge_node`).
+    Edge(Edge),
 }
 
 /// El acomodo como se guarda en la configuración de la app (`chimpsprite.workspace`): cada panel
@@ -159,6 +164,7 @@ impl Workspace {
             spots: Vec::new(),
             preview_anchored: false,
             pending_focus: None,
+            bounds: None,
         }
     }
 
@@ -745,6 +751,10 @@ impl Workspace {
         if id == PanelId::Canvas {
             return;
         }
+        if let DockTarget::Edge(edge) = into {
+            self.dock_at_edge(id, edge);
+            return;
+        }
         let into = match into {
             DockTarget::Leaf(surface, node) if self.is_canvas_leaf(surface, node) => {
                 DockTarget::Split(surface, node, Split::Right)
@@ -760,7 +770,7 @@ impl Workspace {
                 .leaf(NodePath { surface, node })
                 .ok()
                 .map(|leaf| leaf.tabs.iter().copied().find(|&t| t != id)),
-            DockTarget::Focused => None,
+            DockTarget::Focused | DockTarget::Edge(_) => None,
         };
         match (target, into) {
             // Su propio grupo, donde ya está solo: nada que hacer.
@@ -789,6 +799,31 @@ impl Workspace {
         if self.state.find_tab(&id).is_none() {
             self.push_focused(id);
         }
+    }
+
+    /// [`DockTarget::Edge`]: `id` solo, de lado a lado en la orilla `edge` de la superficie
+    /// principal (partiendo el nodo de [`edge_node`] hacia esa orilla), con su lado del ancho (o
+    /// alto) de siempre del panel, en puntos (ver [`Workspace::pin_new_side`]).
+    fn dock_at_edge(&mut self, id: PanelId, edge: Edge) {
+        self.take(id);
+        let main = self.state.main_surface_mut();
+        if main.num_tabs() == 0 {
+            *main = Tree::new(vec![id]);
+            return;
+        }
+        let node = edge_node(main, edge);
+        let split = match edge {
+            Edge::Left => Split::Left,
+            Edge::Right => Split::Right,
+            Edge::Top => Split::Above,
+            Edge::Bottom => Split::Below,
+        };
+        let path = NodePath {
+            surface: SurfaceIndex::main(),
+            node,
+        };
+        self.state.split(path, split, 0.5, Node::leaf(id));
+        self.pin_new_side(id);
     }
 
     /// Si `(surface, node)` es el grupo del lienzo.
@@ -1152,6 +1187,41 @@ fn tree_sound<T>(tree: &Tree<T>) -> bool {
     })
 }
 
+/// El nodo de `tree` que parte lo que se acopla en la orilla `edge` ([`DockTarget::Edge`]): de la
+/// raíz se baja por los splits a lo largo de esa orilla (a lo ancho para la izquierda y la
+/// derecha, a lo alto para arriba y abajo) mientras el lado de la orilla lleve el lienzo; así lo
+/// que va pegado a la orilla de enfrente queda afuera y lo que ya va en esta, adentro. Cada nodo
+/// por el que se baja toca la orilla y va de lado a lado (solo se cruzan splits del otro eje del
+/// que se parte), así que lo nuevo queda en la orilla, de lado a lado, y por fuera de lo que ya
+/// estaba en ella.
+///
+/// En Essentials sin Color (`H[Tools | V[Canvas / Timeline]]`), a la derecha se baja de la raíz a
+/// la pila del lienzo y el timeline (la toolbar va en la orilla de enfrente): queda
+/// `H[Tools | H[V[Canvas / Timeline] | Color]]`, el árbol de Essentials. A la izquierda, la
+/// toolbar ya está en esa orilla: se parte la raíz y lo nuevo queda a la izquierda de la toolbar,
+/// que sigue junto al lienzo (un lado del lienzo, del ancho de su caja).
+fn edge_node(tree: &Tree<PanelId>, edge: Edge) -> NodeIndex {
+    let mut n = NodeIndex::root();
+    loop {
+        let along = match &tree[n] {
+            Node::Horizontal(_) => edge.vertical(),
+            Node::Vertical(_) => !edge.vertical(),
+            _ => false,
+        };
+        if !along {
+            return n;
+        }
+        let toward = match edge {
+            Edge::Left | Edge::Top => n.left(),
+            Edge::Right | Edge::Bottom => n.right(),
+        };
+        if !super::fit::panels_of(tree, toward).contains(&PanelId::Canvas) {
+            return n;
+        }
+        n = toward;
+    }
+}
+
 /// El primer grupo de `tree` (por índice), si tiene alguno.
 fn first_leaf<T>(tree: &Tree<T>) -> Option<NodeIndex> {
     (0..tree.len()).map(NodeIndex).find(|&n| tree[n].is_leaf())
@@ -1370,6 +1440,83 @@ mod tests {
         assert_eq!(leaf_tabs(&w, root.right().left().left()), [PanelId::Canvas]);
         assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
+    }
+
+    #[test]
+    fn color_docked_at_the_right_edge_is_the_essentials_column_again() {
+        // Flotando (o en cualquier otro lado) y acoplado en la orilla derecha: el árbol de
+        // Essentials, `H[Tools | H[V[Canvas / Timeline] | Color]]` (la columna, no a la derecha
+        // de la toolbar y del lienzo juntos).
+        let essentials = Workspace::essentials();
+        let mut w = Workspace::essentials();
+        w.float(PanelId::Color, egui::pos2(300.0, 100.0));
+        assert_ne!(w.main_shape(), essentials.main_shape());
+        w.dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        assert_eq!(w.main_shape(), essentials.main_shape());
+        assert!(w.docked(PanelId::Color) && !w.floating(PanelId::Color));
+        assert_eq!(w.places(PanelId::Color), 1);
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert!(w.timeline_below());
+        // Desde donde ya está, igual.
+        let mut again = w.clone();
+        again.dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        assert_eq!(again.main_shape(), essentials.main_shape());
+        // Desde junto al timeline (lo que dejaba egui_dock): también.
+        let mut beside = Workspace::essentials();
+        let (s, n) = beside.leaf_of(PanelId::Timeline).unwrap();
+        beside.dock(PanelId::Color, DockTarget::Split(s, n, Split::Right));
+        assert!(!beside.timeline_below());
+        beside.dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        assert_eq!(beside.main_shape(), essentials.main_shape());
+    }
+
+    #[test]
+    fn a_panel_docked_at_an_edge_goes_outside_everything_on_it_from_side_to_side() {
+        let root = NodeIndex::root();
+        // A la izquierda: la columna en la orilla, la toolbar entre ella y el lienzo (sigue siendo
+        // un lado del lienzo, del ancho de su caja).
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Library, DockTarget::Edge(Edge::Left));
+        assert!(matches!(w.state.main_surface()[root], Node::Horizontal(_)));
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Library]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Tools]);
+        assert_eq!(w.tools_side(), Some(true));
+        assert!(w.tools_beside_canvas());
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert!(w.timeline_below());
+        assert!(!w.strip().contains(&PanelId::Library));
+        assert_eq!(w.places(PanelId::Library), 1);
+        // Abajo: una fila debajo de todo (también de la toolbar, el timeline y Color).
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Lumen, DockTarget::Edge(Edge::Bottom));
+        assert!(matches!(w.state.main_surface()[root], Node::Vertical(_)));
+        assert_eq!(leaf_tabs(&w, root.right()), [PanelId::Lumen]);
+        assert_eq!(leaf_tabs(&w, root.left().left()), [PanelId::Tools]);
+        assert!(w.timeline_below());
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        // Arriba: una fila encima de todo.
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Groom, DockTarget::Edge(Edge::Top));
+        assert!(matches!(w.state.main_surface()[root], Node::Vertical(_)));
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Groom]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Tools]);
+        // A la derecha con Color en la columna: por fuera de Color (es la columna nueva).
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Library, DockTarget::Edge(Edge::Right));
+        let column = root.right();
+        assert_eq!(leaf_tabs(&w, column.right()), [PanelId::Library]);
+        assert_eq!(leaf_tabs(&w, column.left().right()), [PanelId::Color]);
+        assert_eq!(w.column_panels(), [PanelId::Library]);
+        assert_eq!(w.tools_side(), Some(true));
+        // Sin nada más en el árbol que el lienzo: a su lado.
+        let mut w = Workspace::essentials();
+        for id in [PanelId::Tools, PanelId::Color] {
+            w.float(id, egui::pos2(300.0, 100.0));
+        }
+        let _ = w.sync_timeline(false);
+        w.dock(PanelId::Color, DockTarget::Edge(Edge::Left));
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Color]);
+        assert_eq!(leaf_tabs(&w, root.right()), [PanelId::Canvas]);
     }
 
     #[test]

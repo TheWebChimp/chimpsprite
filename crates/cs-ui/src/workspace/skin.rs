@@ -23,6 +23,8 @@
 //!    [`dock_style`] (divisores, zona de destino; el contorno de "ventana nueva" como trazo), que
 //!    el marco de sus ventanas sea `Frame::window` del `Ui` que recibe el `DockArea` (ver
 //!    [`window_visuals`]) y que los atenúe con `linear_multiply` (ver el test de los marcadores).
+//!    La zona de destino y el contorno de "ventana nueva" van los dos de
+//!    `overlay.selection_color`: transparente, no se ven ([`hide_drop_zone`]).
 //! 5. Dónde los pinta: la zona de destino en la capa `Foreground` "overlay" recortada a la
 //!    pantalla, los divisores recortados al `DockArea` o a su ventana (de eso depende
 //!    `Armed::in_scope`).
@@ -129,6 +131,13 @@ pub(super) fn dock_style(ui_style: &egui::Style, skin: &Skin) -> egui_dock::Styl
     style.overlay.selection_color = M_DROP;
     style.overlay.selection_stroke_width = 2.0;
     style
+}
+
+/// Sin la zona de destino de egui_dock ni su contorno de "ventana nueva" (los dos van del color
+/// `overlay.selection_color`): mientras rige la de una orilla o una tira (ver `drop::TabDrop`), se
+/// pinta solo esa.
+pub(super) fn hide_drop_zone(style: &mut egui_dock::Style) {
+    style.overlay.selection_color = Color32::TRANSPARENT;
 }
 
 /// Lo que va igual con y sin Pixel UI: sin borde ni aire alrededor, la franja para agarrar un
