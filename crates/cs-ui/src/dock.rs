@@ -481,8 +481,9 @@ fn float_corner(edge: Edge, panel: DockPanel, button: Rect, width: f32) -> egui:
 }
 
 /// El fantasma del ícono de `panel` que se arrastra, con el botón en `button` (donde quedó el
-/// suyo, corrido lo que se arrastró): con Pixel UI, el botón del kit con su ícono y, a su derecha,
-/// la pestaña del kit con su título (como quedaría acoplado); sin él, el título en un recuadro.
+/// suyo, corrido lo que se arrastró): con Pixel UI, la pastilla del kit con su título
+/// (`kit::tabs::drag_tag_shapes`) con la esquina en la del botón; sin él, el título en un
+/// recuadro.
 fn ghost(ui: &Ui, skin: Option<&Skin>, panel: DockPanel, button: Rect) {
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Tooltip,
@@ -500,43 +501,9 @@ fn ghost(ui: &Ui, skin: Option<&Skin>, panel: DockPanel, button: Rect) {
         painter.galley(rect.min + vec2(4.0, 2.0), galley, ui.visuals().text_color());
         return;
     };
-    let ppp = ui.ctx().pixels_per_point();
-    let state = crate::kit::button::ButtonState::Hover;
-    let mut shapes = crate::kit::button::frame_shapes(
-        skin,
-        button.with_max_y(button.bottom() + 1.0),
-        state,
-        ppp,
-    );
-    shapes.extend(pixel_draw::piece_centered(
-        skin,
-        panel.spec().icon,
-        button,
-        ppp,
+    painter.extend(crate::kit::tabs::drag_tag_shapes(
+        ui, skin, button.min, title,
     ));
-    let item = crate::kit::tabs::TabItem::new(title);
-    let width = crate::kit::tabs::natural_width(ui, &item);
-    let top = button.top() + ((BUTTON_SIZE.y - crate::kit::tabs::ACTIVE_HEIGHT) / 2.0).round();
-    let row = Rect::from_min_size(
-        egui::pos2(button.right() + 2.0, top),
-        vec2(width, crate::kit::tabs::HEIGHT),
-    );
-    let look = crate::kit::tabs::TabLook {
-        active: true,
-        hovered: false,
-        mark_hovered: false,
-    };
-    shapes.extend(crate::kit::tabs::tab_shapes(
-        ui, skin, row, &item, title, look,
-    ));
-    painter.extend(shapes);
-    // Si el skin no trae el ícono, su texto (como `plain_icon`, en la capa del fantasma).
-    if skin.piece(panel.spec().icon, WidgetState::Normal).is_none() {
-        let font = egui::TextStyle::Body.resolve(ui.style());
-        let color = skin.colors().text;
-        let (center, plain) = (button.center(), panel.spec().plain);
-        painter.text(center, egui::Align2::CENTER_CENTER, plain, font, color);
-    }
 }
 
 /// El panel flotante de `panel` a la izquierda de su botón, de `width` de contenido. Arriba va

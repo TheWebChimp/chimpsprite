@@ -810,9 +810,9 @@ pub(super) fn plan_bars(
 /// Las pestañas del kit sobre las de egui_dock, en su misma capa: por cada grupo con barra (ver
 /// [`TabBar`]), la línea grabada cortada debajo de la activa y las pestañas que se ven, con su
 /// nombre como entra (la activa al final, tapa a sus vecinas; las flechas las pone
-/// `tabs::tab_arrows`); la que se arrastra, además, como fantasma bajo el puntero. En los grupos
-/// sin barra (`hidden`), la franja de arriba resaltada con el puntero encima, y su fantasma al
-/// arrastrarla.
+/// `tabs::tab_arrows`); la que se arrastra, además, como fantasma (la pastilla del kit con su
+/// nombre, `kit::tabs::drag_tag_shapes`). En los grupos sin barra (`hidden`), la franja de arriba
+/// resaltada con el puntero encima, y su fantasma (la misma pastilla) al arrastrarla.
 pub(super) fn paint_tabs(
     ui: &egui::Ui,
     skin: &Skin,
@@ -824,25 +824,14 @@ pub(super) fn paint_tabs(
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let press = ui.input(|i| i.pointer.press_origin());
     let hit_of = |p: PanelId| hits.iter().find(|h| h.id == p);
-    let ghost = |row: Rect, id: PanelId| {
+    // La pastilla del kit con el nombre del panel, con su esquina donde estaba la de lo agarrado
+    // (`grabbed`), corrida lo arrastrado.
+    let ghost = |grabbed: egui::Pos2, id: PanelId| {
         if let (Some(p), Some(o)) = (pointer, press) {
             let painter =
                 ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("workspace_ghost")));
-            let item = tab_item(id);
-            let look = TabLook {
-                active: true,
-                hovered: false,
-                mark_hovered: false,
-            };
-            let row = row.translate((p - o).round());
-            painter.extend(kit::tabs::tab_shapes(
-                ui,
-                skin,
-                row,
-                &item,
-                &item.label,
-                look,
-            ));
+            let at = grabbed + (p - o).round();
+            painter.extend(kit::tabs::drag_tag_shapes(ui, skin, at, id.spec().title));
         }
     };
     for (path, leaf) in state.iter_leaves() {
@@ -868,11 +857,7 @@ pub(super) fn paint_tabs(
                 ui.painter().with_clip_rect(strip).add(line);
             }
             if dragged {
-                let width = kit::tabs::natural_width(ui, &tab_item(active));
-                ghost(
-                    Rect::from_min_size(strip.min, vec2(width, kit::tabs::HEIGHT)),
-                    active,
-                );
+                ghost(strip.min, active);
             }
             continue;
         }
@@ -926,16 +911,13 @@ pub(super) fn paint_tabs(
                 look,
             ));
         }
-        // La que se arrastra (solo se agarra una que se ve), del ancho del kit.
-        for (i, &id) in plan.tabs.iter().enumerate() {
+        // La que se arrastra (solo se agarra una que se ve), desde la esquina de su pestaña del
+        // kit (la de egui_dock no cuenta el aire entre pestañas).
+        for &id in &plan.tabs {
             if let Some(h) = hit_of(id)
                 && is_dragged_tab(&h.response)
             {
-                let row = Rect::from_min_size(
-                    h.response.rect.min,
-                    vec2(plan.widths[i], kit::tabs::HEIGHT),
-                );
-                ghost(row, id);
+                ghost(plan.row(id).map_or(h.response.rect.min, |r| r.min), id);
             }
         }
     }

@@ -14823,6 +14823,82 @@ fn hold_drag(h: &mut LayoutHarness, from: Pos2, to: Pos2) {
 }
 
 #[test]
+fn what_is_dragged_is_drawn_as_the_drag_tag_with_the_panels_name() {
+    use crate::kit::tabs::{DRAG, TAB};
+    use crate::panel_registry::PanelId;
+    // Una pestaña acoplada (Library junto a Color, con su barra), la franja de agarre de un grupo
+    // sin barra (Color solo, en Essentials) y un ícono de la tira (Groom), hasta el lienzo.
+    for case in ["tab", "strip", "icon"] {
+        let mut h = if case == "tab" {
+            library_beside_color()
+        } else {
+            LayoutHarness::new(pixel_ui(), true)
+        };
+        let (grabbed, from, name) = match case {
+            "tab" => {
+                let tab = h.button("Library");
+                (tab.min, tab.center(), "Library")
+            }
+            "strip" => {
+                let leaf = h.leaf(PanelId::Color);
+                (
+                    leaf.min,
+                    pos2(leaf.left() + 20.0, leaf.top() + 1.0),
+                    "Color",
+                )
+            }
+            _ => {
+                let icon = h.button("Groom");
+                (icon.min, icon.center(), "Groom")
+            }
+        };
+        let to = h.leaf(PanelId::Canvas).center();
+        hold_drag(&mut h, from, to);
+        let skin = h.app.pixel.skin().expect("Pixel UI is on");
+        let id = |name: &str, state| skin.piece(name, state).map(|p| p.texture.id());
+        let tag = h
+            .textures
+            .iter()
+            .filter(|(t, _)| Some(*t) == id(DRAG, WidgetState::Normal))
+            .fold(Rect::NOTHING, |a, (_, r)| a.union(*r));
+        // La pastilla, con su esquina donde estaba la de lo agarrado, corrida lo arrastrado.
+        assert!(tag.is_positive(), "{case}: no drag tag");
+        assert_eq!(tag.min, grabbed + (to - from).round(), "{case}");
+        assert_eq!(tag.height(), 18.0, "{case}");
+        if name == "Color" {
+            assert_eq!(tag.size(), vec2(34.0, 18.0), "{case}");
+        }
+        // Con el nombre del panel adentro.
+        assert!(
+            h.text_rects
+                .iter()
+                .any(|(t, r, _)| t == name && tag.contains_rect(*r)),
+            "{case}: {name} in {tag:?}"
+        );
+        // Y ya no la pestaña del kit ni el botón con su ícono.
+        let states = [
+            WidgetState::Normal,
+            WidgetState::Hover,
+            WidgetState::Down,
+            WidgetState::Active,
+            WidgetState::Disabled,
+        ];
+        let old: Vec<_> = [TAB, "button"]
+            .iter()
+            .flat_map(|n| states.map(|s| id(n, s)))
+            .flatten()
+            .collect();
+        let under: Vec<Rect> = h
+            .textures
+            .iter()
+            .filter(|(t, r)| old.contains(t) && r.intersect(tag).is_positive())
+            .map(|(_, r)| *r)
+            .collect();
+        assert_eq!(under, [], "{case}: a tab or a button under the drag tag");
+    }
+}
+
+#[test]
 fn the_drop_zone_over_the_canvas_stops_above_the_timeline() {
     use crate::panel_registry::PanelId;
     // Library, desde su pestaña (egui_dock pinta el lienzo entero y se repinta su mitad: ver
