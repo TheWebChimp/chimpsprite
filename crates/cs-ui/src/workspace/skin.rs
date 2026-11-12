@@ -353,6 +353,33 @@ pub(super) fn drop_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
     out
 }
 
+/// Las zonas de destino de [`drop_shapes`] pintadas en `shapes`: el rect de cada una. Se
+/// reconocen por su relleno (lo último de `drop_shapes`, siempre un `Shape::Vec`, se pinten todas
+/// juntas, como en [`rewrite`], o una por una).
+#[cfg(test)]
+pub(crate) fn painted_drop_zones(
+    shapes: &[egui::epaint::ClippedShape],
+    skin: &Skin,
+    ppp: f32,
+) -> Vec<Rect> {
+    fn walk(shape: &Shape, skin: &Skin, ppp: f32, out: &mut Vec<Rect>) {
+        let Shape::Vec(v) = shape else {
+            return;
+        };
+        let zone = shape.visual_bounding_rect() + flyout_margin(skin);
+        if zone.is_positive() && drop_shapes(skin, zone, ppp).last() == Some(shape) {
+            out.push(zone);
+            return;
+        }
+        v.iter().for_each(|s| walk(s, skin, ppp, out));
+    }
+    let mut out = Vec::new();
+    for clipped in shapes {
+        walk(&clipped.shape, skin, ppp, &mut out);
+    }
+    out
+}
+
 /// El marco `menu.side` en 9-slice sin su centro (sin el skin, un borde de 1 punto).
 fn ring_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
     match skin.piece(FLYOUT, WidgetState::Normal) {

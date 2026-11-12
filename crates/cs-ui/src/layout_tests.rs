@@ -14796,3 +14796,70 @@ fn without_pixel_ui_the_toolbars_divider_cover_paints_nothing_on_the_canvas() {
         }
     }
 }
+
+// --- Fase E, tarea 8: minors de la fase D ---
+
+/// Las zonas de destino (las de `skin::drop_shapes`) pintadas en el último frame de `h`, con
+/// Pixel UI.
+fn drop_zones(h: &LayoutHarness) -> Vec<Rect> {
+    let skin = h.app.pixel.skin().expect("Pixel UI is on");
+    crate::workspace::painted_drop_zones(&h.shapes, skin, h.ctx.pixels_per_point())
+}
+
+/// Como `dock_drag`, sin soltar: aprieta en `from` y va hasta `to` como una mano (varias movidas
+/// y un rato quieto al final, más que `max_preference_time`).
+fn hold_drag(h: &mut LayoutHarness, from: Pos2, to: Pos2) {
+    let press = Event::PointerButton {
+        pos: from,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press]);
+    for t in [0.1, 0.3, 0.5, 0.7, 0.9].into_iter().chain([1.0; 8]) {
+        h.frame_with(vec![Event::PointerMoved(from + (to - from) * t)]);
+    }
+}
+
+#[test]
+fn the_drop_zone_over_the_canvas_stops_above_the_timeline() {
+    use crate::panel_registry::PanelId;
+    // Library, desde su pestaña (egui_dock pinta el lienzo entero y se repinta su mitad: ver
+    // `canvas_drop`) o desde la tira (`drop_zone`), sobre el lienzo de Essentials cerca de su borde
+    // de abajo: la zona pintada no baja del divisor con el timeline (va escondido: los dos se ven
+    // como una caja).
+    for from_tab in [true, false] {
+        for k in 0..3 {
+            let mut h = if from_tab {
+                library_beside_color()
+            } else {
+                LayoutHarness::new(pixel_ui(), true)
+            };
+            assert!(h.app.workspace.timeline_below());
+            let canvas = h.leaf(PanelId::Canvas);
+            let timeline = h.leaf(PanelId::Timeline);
+            // Junto al borde, en su franja y, de la pestaña, en el centro (cuadrante de abajo).
+            let to = match k {
+                0 => pos2(canvas.center().x, canvas.bottom() - 2.0),
+                1 => pos2(canvas.center().x, canvas.bottom() - canvas.height() * 0.2),
+                _ => canvas.center() + vec2(canvas.width() * 0.05, canvas.height() * 0.1),
+            };
+            if !from_tab && k == 2 {
+                // Desde la tira, el centro del lienzo es una ventana nueva: no hay zona.
+                continue;
+            }
+            let from = h.button("Library").center();
+            hold_drag(&mut h, from, to);
+            let zones = drop_zones(&h);
+            let what = format!("from the tab {from_tab}, at {to:?}");
+            assert!(!zones.is_empty(), "{what}: a drop zone is painted");
+            for z in &zones {
+                assert!(
+                    z.bottom() <= canvas.bottom() && z.bottom() < timeline.top(),
+                    "{what}: {z:?} reaches the timeline {timeline:?} (canvas {canvas:?})"
+                );
+            }
+        }
+    }
+}

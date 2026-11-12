@@ -70,6 +70,8 @@ pub(crate) use show::show;
 #[cfg(test)]
 pub(crate) use show::{MODEL_ELSEWHERE, has_marker};
 #[cfg(test)]
+pub(crate) use skin::painted_drop_zones;
+#[cfg(test)]
 pub(crate) use tabs::COLLAPSE;
 
 /// El acomodo de los paneles: el árbol de egui_dock (acoplados y flotantes) y la tira de íconos.
