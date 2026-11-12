@@ -763,7 +763,11 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             }
             let timeline = app.view.timeline;
             canvas.dock = app.strip_area(ui, (rect, dock_rect), modal, Edge::Right, &strip);
-            canvas.strips.push((Edge::Right, rect));
+            canvas.strips.push(dock::StripArea {
+                edge: Edge::Right,
+                rect,
+                buttons: std::mem::take(&mut canvas.dock.buttons),
+            });
             // Su botón del timeline: el árbol cambia en el frame siguiente.
             if app.view.timeline != timeline {
                 ctx.request_repaint();
@@ -777,7 +781,11 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             dock.app_panel = dock.app_panel.or(out.app_panel);
             dock.request = dock.request.or(out.request);
             dock.dragging = dock.dragging.or(out.dragging);
-            canvas.strips.push((edge, rect));
+            canvas.strips.push(dock::StripArea {
+                edge,
+                rect,
+                buttons: out.buttons,
+            });
         }
     }
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.

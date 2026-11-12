@@ -104,13 +104,111 @@ pub struct DockOutput {
     /// El panel cuyo ícono se arrastra fuera de la tira y dónde está el puntero (para resaltar
     /// dónde caería).
     pub dragging: Option<(DockPanel, egui::Pos2)>,
+    /// Los botones a la vista de los paneles de la tira, en su orden (sin "More Panels" ni los del
+    /// timeline y el Preview): la app los guarda en su [`StripArea`].
+    pub buttons: Vec<(DockPanel, Rect)>,
+}
+
+/// Una tira dibujada en el frame: su orilla, su rect y los botones a la vista de sus paneles (ver
+/// [`DockOutput::buttons`]). Un ícono soltado sobre ella cae entre sus botones (ver
+/// [`StripArea::drop_index`]) y, mientras se arrastra encima, se marca dónde (ver
+/// [`StripArea::line`]).
+#[derive(Clone, Debug)]
+pub(crate) struct StripArea {
+    pub edge: Edge,
+    pub rect: Rect,
+    pub buttons: Vec<(DockPanel, Rect)>,
+}
+
+impl StripArea {
+    fn rects(&self) -> Vec<Rect> {
+        self.buttons.iter().map(|(_, r)| *r).collect()
+    }
+
+    /// El lugar en la tira (contado sin `panel`, si ya estaba en ella) donde cae `panel` soltado
+    /// con el puntero en `p`: el hueco entre sus botones de [`insert_index`]; más allá del último
+    /// a la vista (o sobre "More Panels"), al final (`usize::MAX`).
+    pub(crate) fn drop_index(&self, panel: DockPanel, p: egui::Pos2) -> usize {
+        let gap = insert_index(&self.rects(), self.edge.vertical(), p);
+        if gap >= self.buttons.len() {
+            return usize::MAX;
+        }
+        self.buttons[..gap]
+            .iter()
+            .filter(|(q, _)| *q != panel)
+            .count()
+    }
+
+    /// La línea de inserción con el puntero en `p` (ver [`insertion_line`]).
+    pub(crate) fn line(&self, p: egui::Pos2) -> Rect {
+        let rects = self.rects();
+        let vertical = self.edge.vertical();
+        insertion_line(
+            &rects,
+            self.rect,
+            vertical,
+            insert_index(&rects, vertical, p),
+        )
+    }
+}
+
+/// El grueso de la línea de inserción.
+const LINE: f32 = 2.0;
+
+/// En qué hueco entre `buttons` (los de una tira, en orden; a lo alto si `vertical`) cae el
+/// puntero `pointer`: cuántos tienen el centro antes de él a lo largo de la tira (de 0, antes del
+/// primero, a `buttons.len()`, después del último).
+pub(crate) fn insert_index(buttons: &[Rect], vertical: bool, pointer: egui::Pos2) -> usize {
+    let along = |p: egui::Pos2| if vertical { p.y } else { p.x };
+    buttons
+        .iter()
+        .filter(|r| along(r.center()) < along(pointer))
+        .count()
+}
+
+/// La línea de inserción del hueco `index` entre `buttons` (ver [`insert_index`]) de la tira
+/// `strip`: [`LINE`] de grueso, a lo ancho del botón, centrada en el hueco entre dos; antes del
+/// primero o después del último, pegada a él (sin salirse de la tira). En puntos enteros. Sin
+/// botones, ninguna (`Rect::NOTHING`).
+pub(crate) fn insertion_line(buttons: &[Rect], strip: Rect, vertical: bool, index: usize) -> Rect {
+    let (Some(first), Some(last)) = (buttons.first(), buttons.last()) else {
+        return Rect::NOTHING;
+    };
+    let along = |r: &Rect| if vertical { r.y_range() } else { r.x_range() };
+    let ends = along(&strip);
+    let start = if index == 0 {
+        (along(first).min - LINE).max(ends.min)
+    } else if index >= buttons.len() {
+        (along(last).max + LINE).min(ends.max) - LINE
+    } else {
+        (along(&buttons[index - 1]).max + along(&buttons[index]).min) / 2.0 - LINE / 2.0
+    }
+    .round();
+    let line = egui::Rangef::new(start, start + LINE);
+    let across = if vertical {
+        first.x_range()
+    } else {
+        first.y_range()
+    };
+    let across = egui::Rangef::new(across.min.round(), across.max.round());
+    if vertical {
+        Rect::from_x_y_ranges(across, line)
+    } else {
+        Rect::from_x_y_ranges(line, across)
+    }
 }
 
 /// Lo que se pidió desde la tira para uno de sus paneles.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum StripRequest {
-    /// Su ícono se arrastró y se soltó con el puntero ahí, fuera de la tira.
+    /// Su ícono se arrastró y se soltó con el puntero ahí, fuera de la tira. Sobre otra tira, cae
+    /// entre sus botones donde estaba el puntero: el lugar lo calcula quien lo aplica, con los
+    /// botones de esa tira ([`StripArea::drop_index`]; esta tira no los conoce).
     Drop(DockPanel, egui::Pos2),
+    /// Su ícono se arrastró a lo largo de su tira y se soltó en el hueco `usize` entre sus
+    /// paneles (contando al mismo panel: 0, antes del primero; la cantidad de paneles, al final).
+    /// Solo si cambia el orden.
+    Reorder(DockPanel, usize),
     /// "Dock" de su menú contextual: al grupo con el foco de la columna.
     Dock(DockPanel),
     /// "Float" de su menú: en una ventana con la esquina ahí, junto a la tira.
@@ -263,6 +361,9 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
 pub(crate) struct StripCtx<'a> {
     /// Su orilla.
     pub edge: Edge,
+    /// Su rect, con su marco (el de su [`StripArea`]): arrastrar un ícono dentro de él lo
+    /// reordena; soltarlo fuera, lo saca.
+    pub rect: Rect,
     /// Sus paneles, en orden (los que no están acoplados ni flotando).
     pub panels: &'a [DockPanel],
     /// Los botones del timeline y del Preview, hasta abajo (solo los lleva la de la derecha).
@@ -282,12 +383,15 @@ fn buttons_in(room: f32, len: f32) -> usize {
 /// El dock: un botón por panel de la tira (`strip`, los que no están acoplados ni flotando) y el
 /// panel abierto, flotando junto a su botón (hacia adentro de la ventana). Un clic en un botón abre
 /// (o cierra) su panel; arrastrarlo más de lo que egui todavía cuenta como clic (6 puntos) lo
-/// levanta (con un fantasma bajo el puntero) y soltarlo fuera de la tira pide sacarlo
-/// ([`StripRequest::Drop`]); su menú contextual tiene "Dock" y "Float". Si no caben todos, los del
-/// final se van a "More Panels" ([`MORE`]), que los lista: elegir uno abre su flyout junto a él.
+/// levanta (con un fantasma bajo el puntero): a lo largo de la tira, una línea marca el hueco
+/// donde caería y soltarlo ahí lo reordena ([`StripRequest::Reorder`]); soltarlo fuera de la tira
+/// pide sacarlo ([`StripRequest::Drop`]); su menú contextual tiene "Dock" y "Float". Si no caben
+/// todos, los del final se van a "More Panels" ([`MORE`]), que los lista: elegir uno abre su
+/// flyout junto a él.
 pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> DockOutput {
     let StripCtx {
         edge,
+        rect: own,
         panels,
         toggles,
         room,
@@ -296,13 +400,16 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
     let mut out = DockOutput::default();
     let open = open_panel(ui.ctx()).filter(|p| panels.contains(p));
     let mut anchors = Vec::new();
+    let mut buttons = Vec::new();
+    // El ícono que se arrastra dentro de la tira: cuál, dónde está el puntero y si se soltó.
+    let mut along_strip = None;
     let vertical = edge.vertical();
     if vertical {
         ui.spacing_mut().item_spacing.y = BUTTON_GAP;
     } else {
         ui.spacing_mut().item_spacing.x = BUTTON_GAP;
     }
-    // Soltar un ícono sobre la tira no lo saca.
+    // Lo de adentro del marco.
     let strip_rect = ui.max_rect();
     let mut column = ui.max_rect();
     // A lo largo de la tira: lo que hay para los botones de los paneles (sin el aire de las
@@ -358,18 +465,22 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
             if response.clicked() {
                 set_open(ui.ctx(), (!is_open).then_some(panel));
             }
+            // Soltar un ícono sobre la tira (con su marco) no lo saca: lo reordena.
             let pointer = ui.input(|i| i.pointer.latest_pos());
-            let outside = pointer.filter(|p| !strip_rect.contains(*p));
+            let outside = pointer.filter(|p| !own.contains(*p));
+            let inside = pointer.filter(|p| own.contains(*p));
             if response.dragged() {
                 let delta = response.total_drag_delta().unwrap_or_default();
                 ghost(ui, skin, panel, response.rect.translate(delta.round()));
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                 out.dragging = outside.map(|p| (panel, p));
+                along_strip = inside.map(|p| (panel, p, false));
             }
-            if response.drag_stopped()
-                && let Some(p) = outside
-            {
-                out.request = Some(StripRequest::Drop(panel, p));
+            if response.drag_stopped() {
+                if let Some(p) = outside {
+                    out.request = Some(StripRequest::Drop(panel, p));
+                }
+                along_strip = inside.map(|p| (panel, p, true));
             }
             crate::menus::context_menu(&response, |ui| {
                 if ui.add(crate::menus::plain(MENU_DOCK)).clicked() {
@@ -383,6 +494,7 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
                 }
             });
             anchors.push((panel, response.rect));
+            buttons.push((panel, response.rect));
         }
         // Los que no caben, en "More Panels": prendido si el abierto es uno de ellos.
         if !hidden.is_empty() {
@@ -432,6 +544,27 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
         ui.with_layout(row, inner);
         column = room;
     }
+    // Un ícono que se arrastra a lo largo de la tira: la línea en el hueco donde caería y, al
+    // soltarlo, a ese hueco (más allá del último a la vista, al final; en su mismo lugar, nada).
+    if let Some((panel, p, dropped)) = along_strip {
+        let rects: Vec<Rect> = buttons.iter().map(|(_, r)| *r).collect();
+        let gap = insert_index(&rects, vertical, p);
+        if dropped {
+            let gap = if gap == rects.len() {
+                panels.len()
+            } else {
+                gap
+            };
+            let at = shown.iter().position(|&q| q == panel).unwrap_or(gap);
+            if gap != at && gap != at + 1 {
+                out.request = Some(StripRequest::Reorder(panel, gap));
+            }
+        } else {
+            let line = insertion_line(&rects, own, vertical, gap);
+            crate::workspace::paint_insertion_line(ui, skin, line);
+        }
+    }
+    out.buttons = buttons;
     let Some(panel) = open_panel(ui.ctx()).filter(|p| panels.contains(p)) else {
         return out;
     };
@@ -939,6 +1072,119 @@ mod tests {
         panel_height(&ctx, 2000.0);
         let full = panel_height(&ctx, 2000.0);
         assert!(full <= 560.0 + 1.0, "{full}");
+    }
+
+    /// Tres botones de la tira, uno cada 27 desde `start` a lo largo (a lo alto si `vertical`), a
+    /// 3 de la orilla de una tira de 26 de ancho.
+    fn three_buttons(vertical: bool, start: f32) -> Vec<Rect> {
+        (0..3)
+            .map(|i| {
+                let along = start + i as f32 * (BUTTON_SIZE.y + BUTTON_GAP);
+                let min = if vertical {
+                    egui::pos2(3.0, along)
+                } else {
+                    egui::pos2(along, 3.0)
+                };
+                Rect::from_min_size(min, BUTTON_SIZE)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_insert_index_counts_the_button_centers_before_the_pointer() {
+        for vertical in [true, false] {
+            // Los botones: 10..33, 37..60 y 64..87 (sus centros en 21.5, 48.5 y 75.5).
+            let buttons = three_buttons(vertical, 10.0);
+            let at = |along: f32| {
+                // Del otro lado, el centro de la tira (no cuenta).
+                let p = if vertical {
+                    egui::pos2(13.0, along)
+                } else {
+                    egui::pos2(along, 13.0)
+                };
+                insert_index(&buttons, vertical, p)
+            };
+            let case = format!("vertical {vertical}");
+            assert_eq!(at(0.0), 0, "{case}: above the first");
+            assert_eq!(at(20.0), 0, "{case}: on the first, before its center");
+            assert_eq!(at(25.0), 1, "{case}: on the first, after its center");
+            assert_eq!(at(35.0), 1, "{case}: between the first and the second");
+            assert_eq!(at(50.0), 2, "{case}: on the second, after its center");
+            assert_eq!(at(80.0), 3, "{case}: on the last, after its center");
+            assert_eq!(at(300.0), 3, "{case}: after the last");
+            assert_eq!(insert_index(&[], vertical, egui::pos2(5.0, 5.0)), 0);
+        }
+    }
+
+    #[test]
+    fn the_insertion_line_is_2_thick_across_the_button_in_the_gap_or_at_the_ends() {
+        for vertical in [true, false] {
+            let buttons = three_buttons(vertical, 10.0);
+            let strip = if vertical {
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(26.0, 300.0))
+            } else {
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(300.0, 26.0))
+            };
+            // A lo largo de la tira, `a..b`; a lo ancho, el del botón (3..26).
+            let line = |a: f32, b: f32| {
+                if vertical {
+                    Rect::from_x_y_ranges(3.0..=26.0, a..=b)
+                } else {
+                    Rect::from_x_y_ranges(a..=b, 3.0..=26.0)
+                }
+            };
+            let case = format!("vertical {vertical}");
+            // Antes del primero, pegada a él; en el hueco de 4 entre dos, centrada; después del
+            // último, pegada a él.
+            assert_eq!(
+                insertion_line(&buttons, strip, vertical, 0),
+                line(8.0, 10.0),
+                "{case}"
+            );
+            assert_eq!(
+                insertion_line(&buttons, strip, vertical, 1),
+                line(34.0, 36.0),
+                "{case}"
+            );
+            assert_eq!(
+                insertion_line(&buttons, strip, vertical, 2),
+                line(61.0, 63.0),
+                "{case}"
+            );
+            assert_eq!(
+                insertion_line(&buttons, strip, vertical, 3),
+                line(87.0, 89.0),
+                "{case}"
+            );
+            for i in 0..=3 {
+                let r = insertion_line(&buttons, strip, vertical, i);
+                assert!(strip.contains_rect(r), "{case}: {i} {r:?} in the strip");
+                assert_eq!(
+                    (r.min.round(), r.max.round()),
+                    (r.min, r.max),
+                    "{case}: {i}"
+                );
+            }
+            // Pegados a las puntas de la tira: la línea no se sale de ella.
+            let tight = three_buttons(vertical, 0.0);
+            let short = if vertical {
+                strip.with_max_y(tight[2].bottom())
+            } else {
+                strip.with_max_x(tight[2].right())
+            };
+            assert_eq!(
+                insertion_line(&tight, short, vertical, 0),
+                line(0.0, 2.0),
+                "{case}"
+            );
+            assert_eq!(
+                insertion_line(&tight, short, vertical, 3),
+                line(75.0, 77.0),
+                "{case}"
+            );
+            // Sin botones, ninguna.
+            assert!(!insertion_line(&[], strip, vertical, 0).is_positive());
+        }
     }
 
     #[test]

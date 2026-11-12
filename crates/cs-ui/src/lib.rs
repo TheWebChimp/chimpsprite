@@ -1528,11 +1528,15 @@ impl ChimpApp {
             strips,
         } = canvas_area.unwrap_or_default();
         // Sacar un panel de la tira: soltado en el árbol (como pestaña, partiendo un grupo o junto
-        // al lienzo), en el lienzo (en una ventana) o en otra tira, o desde su menú contextual.
-        // Mientras se arrastra, dónde caería: sobre otra tira, esa tira; si no, en el árbol.
+        // al lienzo), en el lienzo (en una ventana) o en otra tira (entre sus botones), o desde su
+        // menú contextual. Mientras se arrastra, dónde caería: sobre otra tira, esa tira y la
+        // línea entre sus botones; si no, en el árbol. (Dentro de su tira la pinta la tira.)
         if let Some((_, pointer)) = dock_out.dragging {
             match workspace::strip_under(&strips, pointer) {
-                Some((_, rect)) => workspace::paint_strip_zone(ui, skin, rect),
+                Some(strip) => {
+                    workspace::paint_strip_zone(ui, skin, strip.rect);
+                    workspace::paint_insertion_line(ui, skin, strip.line(pointer));
+                }
                 None => {
                     let target = workspace::drop_target(&self.workspace, pointer);
                     workspace::paint_drop_zone(ui, skin, &self.workspace, target);
@@ -1699,6 +1703,7 @@ impl ChimpApp {
                 ui.add_enabled_ui(!modal, |ui| {
                     let strip = dock::StripCtx {
                         edge,
+                        rect,
                         panels: strip,
                         toggles,
                         room,
@@ -1718,8 +1723,9 @@ pub(crate) struct CanvasArea {
     pub rect: egui::Rect,
     /// Lo de la tira de íconos: lo que se arrastra, lo que se pide y el flyout abierto.
     pub dock: dock::DockOutput,
-    /// Las tiras de íconos dibujadas, con su orilla (un ícono soltado sobre otra pasa a ella).
-    pub strips: Vec<(dock::Edge, egui::Rect)>,
+    /// Las tiras de íconos dibujadas, con su orilla y sus botones (un ícono soltado sobre otra
+    /// pasa a ella, entre sus botones).
+    pub strips: Vec<dock::StripArea>,
 }
 
 /// Sin la hoja del lienzo (no cupo): sin lienzo ni tira.

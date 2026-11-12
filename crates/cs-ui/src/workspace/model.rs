@@ -422,16 +422,15 @@ impl Workspace {
                 }
             }
         }
+        // En el orden en que se guardaron (se pueden reordenar); los que faltan, en su lugar.
         for id in PanelId::ALL.iter().copied() {
             if Workspace::goes_to_strip(id)
                 && w.state.find_tab(&id).is_none()
                 && w.strip_of(id).is_none()
             {
-                w.strips[Edge::Right.index()].push(id);
+                let strip = &mut w.strips[Edge::Right.index()];
+                strip.insert(ranked_place(strip, id), id);
             }
-        }
-        for strip in &mut w.strips {
-            strip.sort_by_key(|p| PanelId::ALL.iter().position(|q| q == p));
         }
         w
     }
@@ -860,7 +859,8 @@ impl Workspace {
         self.to_strip_at(id, edge);
     }
 
-    /// Manda `id` a la tira de la orilla `edge`, en su lugar (el orden de `PanelId::ALL`).
+    /// Manda `id` a la tira de la orilla `edge`, en su lugar (el orden de `PanelId::ALL`: antes
+    /// del primero que va después de él; la tira puede estar reordenada).
     #[allow(
         clippy::wrong_self_convention,
         reason = "no es una conversión: manda el panel a la tira"
@@ -870,10 +870,26 @@ impl Workspace {
             return;
         }
         self.take(id);
-        let rank = |p: &PanelId| PanelId::ALL.iter().position(|q| q == p);
         let strip = &mut self.strips[edge.index()];
-        let at = strip.partition_point(|p| rank(p) < rank(&id));
+        let at = ranked_place(strip, id);
         strip.insert(at, id);
+    }
+
+    /// Pone `id` en la tira de la orilla `edge` en el lugar `index`, contado sin él (más allá del
+    /// final, al final): lo reordena, si ya estaba en ella, o lo saca de donde esté (ver
+    /// [`Workspace::to_strip_at`]).
+    pub(crate) fn move_in_strip(&mut self, id: PanelId, edge: Edge, index: usize) {
+        if id == PanelId::Canvas {
+            return;
+        }
+        // En la misma tira solo cambia el orden: nada más se mueve.
+        if self.strip_of(id) == Some(edge) {
+            self.strips[edge.index()].retain(|&p| p != id);
+        } else {
+            self.take(id);
+        }
+        let strip = &mut self.strips[edge.index()];
+        strip.insert(index.min(strip.len()), id);
     }
 
     /// La orilla de `id`: la de su tira, si está en una; la de su grupo, si está en el árbol (ver
@@ -1139,6 +1155,16 @@ fn tree_sound<T>(tree: &Tree<T>) -> bool {
 /// El primer grupo de `tree` (por índice), si tiene alguno.
 fn first_leaf<T>(tree: &Tree<T>) -> Option<NodeIndex> {
     (0..tree.len()).map(NodeIndex).find(|&n| tree[n].is_leaf())
+}
+
+/// Dónde va `id` en la tira `strip` por su lugar de fábrica (el orden de `PanelId::ALL`): antes
+/// del primero que va después de él (en una tira sin reordenar, entre los suyos).
+fn ranked_place(strip: &[PanelId], id: PanelId) -> usize {
+    let rank = |p: &PanelId| PanelId::ALL.iter().position(|q| q == p);
+    strip
+        .iter()
+        .position(|p| rank(p) > rank(&id))
+        .unwrap_or(strip.len())
 }
 
 /// Si a un grupo con `tabs` va lo que se acopla "con el foco": no al del lienzo (no recibe

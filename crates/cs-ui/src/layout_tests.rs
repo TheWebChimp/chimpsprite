@@ -11997,7 +11997,13 @@ fn dropping_a_strip_icon_back_on_the_strip_leaves_it_there() {
     let from = h.button("Groom").center();
     let to = h.button("Artboards").center();
     drag_in_steps(&mut h, from, to);
-    assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
+    // Sigue en la tira (no se acopla ni flota): solo se reordena, al hueco antes del primero (el
+    // puntero no pasó del centro de Artboards).
+    let mut want: Vec<PanelId> = PanelId::DOCK.to_vec();
+    want.retain(|&p| p != PanelId::Groom);
+    want.insert(0, PanelId::Groom);
+    assert_eq!(h.app.workspace.strip(), want);
+    assert!(!h.app.workspace.docked(PanelId::Groom) && !h.app.workspace.floating(PanelId::Groom));
     assert_eq!(crate::dock::open_panel(&h.ctx), None);
 }
 
@@ -14975,7 +14981,8 @@ fn dragging_a_strip_icon_over_another_strip_highlights_it() {
     };
     let left = h.panel("dock_left");
     let from = h.button("Library").center();
-    // Dentro de su propia tira (más abajo en ella), nada se resalta y nada cambia al soltar.
+    // Dentro de su propia tira (más abajo en ella, pasado el último), nada se resalta y al soltar
+    // solo se reordena: al final de ella.
     let right = h.panel("dock");
     let inside = pos2(right.center().x, right.bottom() - 20.0);
     assert!(right.contains(inside) && (inside - from).length() > 40.0);
@@ -14984,8 +14991,9 @@ fn dragging_a_strip_icon_over_another_strip_highlights_it() {
     assert!(h.texts.iter().any(|(t, _)| t == "Library"), "the ghost");
     assert_eq!(drop_zones(&h), [], "inside its own strip");
     release(&mut h, inside);
-    assert!(h.app.workspace.strip().contains(&PanelId::Library));
+    assert_eq!(h.app.workspace.strip().last(), Some(&PanelId::Library));
     assert_eq!(h.app.workspace.strip_at(Edge::Left), [PanelId::Tools]);
+    let from = h.button("Library").center();
     let to = pos2(left.center().x, left.top() + left.height() * 0.6);
     hold_drag(&mut h, from, to);
     // Sin soltar: la tira de destino entera, resaltada (y nada más).
@@ -14996,4 +15004,202 @@ fn dragging_a_strip_icon_over_another_strip_highlights_it() {
     assert_eq!(w.strip_at(Edge::Left), [PanelId::Tools, PanelId::Library]);
     assert!(!w.strip().contains(&PanelId::Library));
     assert!(drop_zones(&h).is_empty(), "no zone once dropped");
+}
+
+// --- La pastilla al arrastrar y reordenar la tira, tarea 2: reordenar los íconos ---
+
+/// Los botones que se llaman `name` en la tira de `edge` en el último frame, en su orden a lo
+/// largo de ella (sin Pixel UI, cada botón se llama como su glifo y hay repetidos: el de Library
+/// es el del Preview).
+fn named_in_strip(h: &LayoutHarness, edge: crate::dock::Edge, name: &str) -> Vec<Rect> {
+    use crate::dock::Edge;
+    let panel = h.panel(match edge {
+        Edge::Right => "dock",
+        Edge::Left => "dock_left",
+        Edge::Top => "dock_top",
+        Edge::Bottom => "dock_bottom",
+    });
+    let along = |r: &Rect| if edge.vertical() { r.top() } else { r.left() };
+    let mut out: Vec<Rect> = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == name && panel.contains_rect(*r))
+        .map(|(_, r)| *r)
+        .collect();
+    out.sort_by(|a, b| along(a).total_cmp(&along(b)));
+    out
+}
+
+/// Los botones a la vista de los paneles de la tira de `edge` en el último frame, en su orden (sin
+/// "More Panels" ni los del timeline y el Preview): el de cada uno, el primero con su nombre
+/// después del del anterior.
+fn strip_buttons(h: &LayoutHarness, edge: crate::dock::Edge) -> Vec<Rect> {
+    let pixel = h.app.pixel.skin().is_some();
+    let along = |r: &Rect| if edge.vertical() { r.top() } else { r.left() };
+    let mut out: Vec<Rect> = Vec::new();
+    for p in h.app.workspace.strip_at(edge) {
+        let name = if pixel { p.label() } else { p.spec().plain };
+        let after = out.last().map_or(f32::MIN, along);
+        match named_in_strip(h, edge, name)
+            .into_iter()
+            .find(|r| along(r) > after)
+        {
+            Some(r) => out.push(r),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Las líneas de inserción pintadas en el último frame: los rects de 2 de grueso del color de
+/// selección (con Pixel UI, `text_selection` del skin; sin él, el de egui).
+fn insertion_lines(h: &LayoutHarness) -> Vec<Rect> {
+    fn walk(shape: &egui::Shape, color: egui::Color32, out: &mut Vec<Rect>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, color, out)),
+            egui::Shape::Rect(r)
+                if r.fill == color && (r.rect.width() == 2.0 || r.rect.height() == 2.0) =>
+            {
+                out.push(r.rect);
+            }
+            _ => {}
+        }
+    }
+    let color = match h.app.pixel.skin() {
+        Some(skin) => skin.colors().text_selection,
+        None => h.ctx.global_style().visuals.selection.bg_fill,
+    };
+    let mut out = Vec::new();
+    for clipped in &h.shapes {
+        walk(&clipped.shape, color, &mut out);
+    }
+    out
+}
+
+/// Suelta el botón principal en `pos` (después de `hold_drag`) y deja pasar un frame.
+fn release_at(h: &mut LayoutHarness, pos: Pos2) {
+    h.frame_with(vec![Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+}
+
+#[test]
+fn dragging_a_strip_icon_along_its_strip_reorders_it_with_an_insertion_line() {
+    use crate::dock::{Edge, PREVIEW, TIMELINE, insertion_line};
+    use crate::panel_registry::PanelId;
+    for pixel in [true, false] {
+        let mut h = LayoutHarness::new(if pixel { pixel_ui() } else { plain() }, true);
+        let name = |p: PanelId| if pixel { p.label() } else { p.spec().plain };
+        let (timeline, preview) = if pixel {
+            (TIMELINE, PREVIEW)
+        } else {
+            ("🎞", "▣")
+        };
+        let case = format!("pixel {pixel}");
+        let dock = h.panel("dock");
+        let before = h.app.workspace.strip().to_vec();
+        assert_eq!(before[1], PanelId::Library, "{case}");
+        let buttons = strip_buttons(&h, Edge::Right);
+        assert_eq!(buttons.len(), before.len(), "{case}: {buttons:?}");
+        // Los del timeline y el Preview: los últimos con su nombre (hasta abajo).
+        let toggles = |h: &LayoutHarness| {
+            [timeline, preview].map(|n| *named_in_strip(h, Edge::Right, n).last().unwrap())
+        };
+        let toggled = toggles(&h);
+        // El ícono de Library hasta arriba del primero (antes de su centro).
+        let from = buttons[1].center();
+        let to = pos2(from.x, buttons[0].top() + 3.0);
+        hold_drag(&mut h, from, to);
+        // La línea antes del primero; ninguna zona de destino (es su tira).
+        assert_eq!(
+            insertion_lines(&h),
+            [insertion_line(&buttons, dock, true, 0)],
+            "{case}"
+        );
+        if pixel {
+            assert_eq!(drop_zones(&h), [], "{case}: its own strip");
+        }
+        release_at(&mut h, to);
+        // Al soltar, Library es el primero y lo demás sigue en su orden.
+        let mut want = before.clone();
+        want.retain(|&p| p != PanelId::Library);
+        want.insert(0, PanelId::Library);
+        assert_eq!(h.app.workspace.strip(), want, "{case}");
+        assert_eq!(strip_buttons(&h, Edge::Right), buttons, "{case}");
+        let library = named_in_strip(&h, Edge::Right, name(PanelId::Library));
+        assert_eq!(library[0], buttons[0], "{case}");
+        // Los del timeline y el Preview, donde estaban; sin línea ni flyout.
+        assert_eq!(toggles(&h), toggled, "{case}");
+        assert_eq!(insertion_lines(&h), [], "{case}: no line once dropped");
+        assert_eq!(crate::dock::open_panel(&h.ctx), None, "{case}");
+    }
+}
+
+#[test]
+fn dropping_a_strip_icon_in_its_own_place_changes_nothing() {
+    use crate::dock::{Edge, insertion_line};
+    use crate::panel_registry::PanelId;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let dock = h.panel("dock");
+    let before = h.app.workspace.strip().to_vec();
+    let buttons = strip_buttons(&h, Edge::Right);
+    // Más de 6 puntos (se levanta) y todavía sobre sí mismo, pasado su centro: el hueco de después
+    // de él (el 2), su mismo lugar.
+    let library = h.button("Library");
+    let from = pos2(library.center().x, library.top() + 2.0);
+    let to = pos2(library.center().x, library.bottom() - 2.0);
+    assert!((to - from).length() > 6.0);
+    hold_drag(&mut h, from, to);
+    assert!(h.texts.iter().any(|(t, _)| t == "Library"), "the ghost");
+    assert_eq!(
+        insertion_lines(&h),
+        [insertion_line(&buttons, dock, true, 2)]
+    );
+    release_at(&mut h, to);
+    assert_eq!(h.app.workspace.strip(), before);
+    assert_eq!(strip_buttons(&h, Edge::Right), buttons);
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
+    // Un clic sigue abriendo su flyout.
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    assert_eq!(crate::dock::open_panel(&h.ctx), Some(PanelId::Library));
+    assert_eq!(h.app.workspace.strip(), before);
+}
+
+#[test]
+fn a_strip_icon_dropped_on_another_strip_goes_where_the_line_was() {
+    use crate::dock::{Edge, insertion_line};
+    use crate::panel_registry::PanelId;
+    // Tools y Groom en la tira de la izquierda; el ícono de Library, de la derecha hasta el hueco
+    // entre los dos.
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
+    h.app.workspace.to_strip_at(PanelId::Groom, Edge::Left);
+    for _ in 0..2 {
+        h.frame();
+    }
+    let left = h.panel("dock_left");
+    let buttons = strip_buttons(&h, Edge::Left);
+    assert_eq!(buttons.len(), 2);
+    let from = h.button("Library").center();
+    let to = pos2(left.center().x, buttons[1].top() - 2.0);
+    hold_drag(&mut h, from, to);
+    // La tira resaltada y, encima, la línea en el hueco.
+    assert_eq!(drop_zones(&h), [left]);
+    assert_eq!(
+        insertion_lines(&h),
+        [insertion_line(&buttons, left, true, 1)]
+    );
+    release_at(&mut h, to);
+    let w = &h.app.workspace;
+    assert_eq!(
+        w.strip_at(Edge::Left),
+        [PanelId::Tools, PanelId::Library, PanelId::Groom]
+    );
+    assert!(!w.strip().contains(&PanelId::Library));
+    assert_eq!(drop_zones(&h), []);
+    assert_eq!(insertion_lines(&h), []);
 }
