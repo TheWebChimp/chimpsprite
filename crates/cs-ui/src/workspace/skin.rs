@@ -51,6 +51,7 @@ use eframe::egui::{
 };
 use egui_dock::{DockState, Node, NodePath, OverlayType, SurfaceIndex};
 
+use super::fit::whole;
 use crate::kit;
 use crate::kit::tabs::{Strip, TabItem, TabLook};
 use crate::panel_registry::PanelId;
@@ -288,9 +289,11 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
                 }
                 *shape = etched_in(r.rect, &c, ppp);
             } else if r.fill == M_DROP {
+                // En puntos enteros, como las de la tira (`drop::drop_zone`): egui_dock parte un
+                // grupo de alto impar a medio punto.
                 let rect = match armed.canvas_drop {
                     Some((canvas, half)) if same_rect(r.rect, canvas) => half,
-                    _ => r.rect,
+                    _ => whole(r.rect),
                 };
                 *shape = Shape::Vec(drop_shapes(skin, rect, ppp));
             } else if r.fill == M_WINDOW {
@@ -1042,11 +1045,13 @@ mod tests {
         let mut zone = Shape::rect_filled(canvas.translate(vec2(0.5, 0.0)), 0.0, M_DROP);
         rewrite(&mut zone, &skin, 2.0, &armed);
         assert_eq!(bounds(&zone), half);
-        // Otra zona (un borde del lienzo, un grupo) queda como la pinta egui_dock.
+        // Otra zona (un borde del lienzo, un grupo) queda como la pinta egui_dock, en puntos
+        // enteros (el lienzo es de alto impar: egui_dock lo parte en 421.5).
         let other = canvas.with_min_y(canvas.center().y);
+        assert_eq!(other.top(), 421.5);
         let mut zone = Shape::rect_filled(other, 0.0, M_DROP);
         rewrite(&mut zone, &skin, 2.0, &armed);
-        assert_eq!(bounds(&zone), other);
+        assert_eq!(bounds(&zone), other.with_min_y(422.0));
     }
 
     #[test]

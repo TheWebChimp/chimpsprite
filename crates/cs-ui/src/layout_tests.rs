@@ -14859,7 +14859,20 @@ fn the_drop_zone_over_the_canvas_stops_above_the_timeline() {
                     z.bottom() <= canvas.bottom() && z.bottom() < timeline.top(),
                     "{what}: {z:?} reaches the timeline {timeline:?} (canvas {canvas:?})"
                 );
+                // En puntos enteros, por los dos caminos (el lienzo tiene un alto impar: su mitad
+                // de abajo empieza en 326, no en 325.5).
+                assert_eq!(
+                    (z.min.round(), z.max.round()),
+                    (z.min, z.max),
+                    "{what}: {z:?} on whole points"
+                );
             }
+            // Las dos, la mitad de abajo del lienzo: la misma.
+            let top = canvas.center().y.round();
+            assert!(
+                zones.iter().all(|z| z.top() == top),
+                "{what}: the lower half from {top}: {zones:?}"
+            );
         }
     }
 }

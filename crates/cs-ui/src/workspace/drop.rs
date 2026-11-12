@@ -7,6 +7,7 @@ use egui_dock::{DockState, NodePath};
 #[cfg(test)]
 use egui_dock::{Node, Tree};
 
+use super::fit::{half, whole};
 use super::{DockTarget, NodeIndex, Split, SurfaceIndex, Workspace, dock_id, skin};
 use crate::panel_registry::PanelId;
 use crate::skin::Skin;
@@ -86,7 +87,8 @@ fn edge_of(rect: egui::Rect, p: egui::Pos2) -> Option<Split> {
 }
 
 /// Lo que ocupa un panel soltado en `target` (para resaltarlo mientras se arrastra): el grupo
-/// entero, si va como pestaña; su mitad de ese lado, si lo parte; nada si va a flotar.
+/// entero, si va como pestaña; su mitad de ese lado, si lo parte (la misma que se pinta al
+/// arrastrar una pestaña sobre el lienzo: [`half`]); nada si va a flotar. En puntos enteros.
 fn drop_zone(w: &Workspace, target: DropTarget) -> Option<egui::Rect> {
     let leaf_rect = |surface, node| {
         w.state
@@ -95,21 +97,11 @@ fn drop_zone(w: &Workspace, target: DropTarget) -> Option<egui::Rect> {
             .map(|leaf| leaf.rect)
     };
     match target {
-        DropTarget::Tab(surface, node) => leaf_rect(surface, node),
-        DropTarget::Split(surface, node, side) => {
-            let r = leaf_rect(surface, node)?;
-            let c = r.center();
-            Some(match side {
-                Split::Left => r.with_max_x(c.x),
-                Split::Right => r.with_min_x(c.x),
-                Split::Above => r.with_max_y(c.y),
-                Split::Below => r.with_min_y(c.y),
-            })
-        }
+        DropTarget::Tab(surface, node) => leaf_rect(surface, node).map(whole),
+        DropTarget::Split(surface, node, side) => Some(half(leaf_rect(surface, node)?, side)),
         DropTarget::Float(_) => None,
     }
     .filter(|r| r.is_positive())
-    .map(|r| egui::Rect::from_min_max(r.min.round(), r.max.round()))
 }
 
 /// Resalta dónde caería el panel que se arrastra desde la tira (encima de todo salvo el

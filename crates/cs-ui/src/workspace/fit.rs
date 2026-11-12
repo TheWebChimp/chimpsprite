@@ -599,15 +599,22 @@ pub(super) fn quadrant(rect: egui::Rect, p: egui::Pos2) -> Split {
     }
 }
 
-/// La mitad de `rect` del lado `side`.
+/// La mitad de `rect` del lado `side`, en puntos enteros (ver [`whole`]): la zona de destino de lo
+/// que parte un grupo (de un lienzo de alto impar, la mitad de abajo empieza en el punto de abajo
+/// del centro).
 pub(super) fn half(rect: egui::Rect, side: Split) -> egui::Rect {
     let c = rect.center();
-    match side {
+    whole(match side {
         Split::Left => rect.with_max_x(c.x),
         Split::Right => rect.with_min_x(c.x),
         Split::Above => rect.with_max_y(c.y),
         Split::Below => rect.with_min_y(c.y),
-    }
+    })
+}
+
+/// `rect` con sus esquinas en el punto entero más cercano.
+pub(super) fn whole(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(rect.min.round(), rect.max.round())
 }
 
 /// El lienzo está una vez, en la superficie principal y solo en su grupo (egui_dock no tiene hojas
