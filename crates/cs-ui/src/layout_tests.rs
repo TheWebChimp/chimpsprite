@@ -14863,3 +14863,34 @@ fn the_drop_zone_over_the_canvas_stops_above_the_timeline() {
         }
     }
 }
+
+#[test]
+fn dragging_a_strip_icon_over_another_strip_highlights_it() {
+    use crate::dock::Edge;
+    use crate::panel_registry::PanelId;
+    // Tools colapsada con « (en la tira de la izquierda); el ícono de Library, de la tira de la
+    // derecha hasta encima de la de la izquierda.
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
+    for _ in 0..2 {
+        h.frame();
+    }
+    let left = h.panel("dock_left");
+    let from = h.button("Library").center();
+    let to = pos2(left.center().x, left.top() + left.height() * 0.6);
+    hold_drag(&mut h, from, to);
+    // Sin soltar: la tira de destino entera, resaltada (y nada más).
+    assert_eq!(drop_zones(&h), [left]);
+    // Al soltar, Library pasa a ella.
+    h.frame_with(vec![Event::PointerButton {
+        pos: to,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+    let w = &h.app.workspace;
+    assert_eq!(w.strip_at(Edge::Left), [PanelId::Tools, PanelId::Library]);
+    assert!(!w.strip().contains(&PanelId::Library));
+    assert!(drop_zones(&h).is_empty(), "no zone once dropped");
+}

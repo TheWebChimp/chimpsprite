@@ -1,5 +1,5 @@
 //! Dónde cae un panel que se suelta ([`drop_target`]), cómo se resalta mientras se arrastra
-//! ([`paint_drop_zone`]) y la pestaña de egui_dock que se suelta fuera de los grupos
+//! ([`paint_drop_zone`], y sobre otra tira [`paint_strip_zone`]) y la pestaña de egui_dock que se suelta fuera de los grupos
 //! ([`tab_drag_released`]: el workspace la pone a flotar donde cayó).
 
 use eframe::egui;
@@ -121,9 +121,22 @@ pub(crate) fn paint_drop_zone(
     w: &Workspace,
     target: DropTarget,
 ) {
-    let Some(rect) = drop_zone(w, target) else {
-        return;
-    };
+    if let Some(rect) = drop_zone(w, target) {
+        paint_zone(ui, skin, rect);
+    }
+}
+
+/// Resalta la tira `rect` (la de otra orilla) sobre la que se arrastra un ícono: soltarlo ahí lo
+/// pasa a ella (ver [`Workspace::apply_strip_request`]). Como [`paint_drop_zone`], la tira entera.
+pub(crate) fn paint_strip_zone(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::Rect) {
+    let rect = egui::Rect::from_min_max(rect.min.round(), rect.max.round());
+    if rect.is_positive() {
+        paint_zone(ui, skin, rect);
+    }
+}
+
+/// La zona de destino `rect` encima de todo salvo el fantasma (ver [`paint_drop_zone`]).
+fn paint_zone(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::Rect) {
     let ctx = ui.ctx();
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
