@@ -388,3 +388,119 @@ fn a_docked_group_dragged_a_little_from_its_grab_strip_stays_where_it_was() {
     }
     assert_like(&h, &reference, "grab strip wiggle");
 }
+
+// --- Lo de la revisión de la tarea 1 ---
+
+#[test]
+fn color_dragged_from_the_column_onto_the_right_strip_stays_the_essentials_column() {
+    // La tira derecha, con Color en la columna, va entre el lienzo y la columna: soltar ahí la
+    // franja de agarre de Color lo deja donde estaba (egui_dock lo mete junto al lienzo y el
+    // workspace lo regresa a la orilla: la misma forma de antes, y sus lados en puntos).
+    for size in [vec2(1200.0, 800.0), vec2(960.0, 505.0)] {
+        let reference = essentials(size);
+        let mut h = essentials(size);
+        let leaf = h.leaf(PanelId::Color);
+        let from = pos2(leaf.left() + 20.0, leaf.top() + 1.0);
+        let to = h.panel("dock").center();
+        hold_drag(&mut h, from, to);
+        release_at(&mut h, to);
+        for _ in 0..3 {
+            h.frame();
+        }
+        assert_like(&h, &reference, &format!("{size:?}"));
+    }
+}
+
+#[test]
+fn a_tab_joining_a_floating_window_does_not_move_that_window() {
+    let mut h = essentials(vec2(1200.0, 800.0));
+    h.app.workspace.float(PanelId::Library, pos2(600.0, 150.0));
+    h.app.workspace.float(PanelId::Color, pos2(150.0, 150.0));
+    for _ in 0..5 {
+        h.frame();
+    }
+    let window = h.window(PanelId::Library);
+    let tab = h.button("Color").center();
+    let to = h.leaf(PanelId::Library).center();
+    hold_drag(&mut h, tab, to);
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    assert_eq!(w.leaf_of(PanelId::Color), w.leaf_of(PanelId::Library));
+    assert_eq!(h.window(PanelId::Library).min, window.min);
+}
+
+#[test]
+fn the_right_columns_width_preference_is_colors_only() {
+    // Library en la orilla derecha (Color flotando): la columna es suya, de su ancho de siempre
+    // (como cualquier lado nuevo, a lo más el 45 % de lo que parte), no del de Color; arrastrar
+    // su divisor no cambia el de Color, y Color de vuelta en la orilla derecha toma el suyo.
+    for size in [vec2(1200.0, 800.0), vec2(960.0, 505.0)] {
+        let reference = essentials(size);
+        let column = reference.app.workspace.column_rect().unwrap();
+        let mut h = color_floating(size, Start::Middle);
+        let (palette, natural) = (h.app.view.palette_width, h.app.palette_natural_width);
+        let canvas = h.leaf(PanelId::Canvas);
+        let stack = canvas.union(h.leaf(PanelId::Timeline));
+        let strip = h.panel("dock");
+        let to = pos2(strip.left() - EDGE_BAND / 2.0, canvas.center().y);
+        let width = h
+            .app
+            .workspace
+            .preferred_side(PanelId::Library, true)
+            .min(stack.width() * 0.45);
+        let from = h.button("Library").center();
+        hold_drag(&mut h, from, to);
+        let zones = drop_zones(&h);
+        release_at(&mut h, to);
+        for _ in 0..3 {
+            h.frame();
+        }
+        let case = format!("{size:?}:\n{}", describe(&h));
+        let w = &h.app.workspace;
+        assert_eq!(w.column_panels(), [PanelId::Library], "{case}");
+        let got = w.column_rect().unwrap();
+        let sep = crate::pixel_ui::ETCHED_SIZE;
+        assert!(
+            (got.width() - (width + sep / 2.0)).abs() <= 1.0,
+            "{got:?} vs {width} {case}"
+        );
+        assert!(
+            zones.len() == 1 && near(zones[0], got),
+            "{zones:?} vs {got:?} {case}"
+        );
+        assert_eq!(h.app.view.palette_width, palette, "{case}");
+        assert_eq!(h.app.palette_natural_width, natural, "{case}");
+        // Su divisor, 40 más a la izquierda: es suyo.
+        let edge = pos2(got.left(), got.center().y);
+        drag(&mut h, edge, edge - vec2(40.0, 0.0));
+        let dragged = h.app.workspace.column_rect().unwrap();
+        assert!(
+            (dragged.width() - got.width() - 40.0).abs() <= 1.0,
+            "{dragged:?}"
+        );
+        assert_eq!(h.app.view.palette_width, palette, "{case}");
+        assert_eq!(h.app.palette_natural_width, natural, "{case}");
+        // Color de vuelta a la orilla derecha (por fuera de Library): del ancho de la columna de
+        // Essentials.
+        let tab = h.button("Color").center();
+        let to = pos2(h.screen().right() - EDGE_BAND / 2.0, canvas.center().y);
+        hold_drag(&mut h, tab, to);
+        release_at(&mut h, to);
+        for _ in 0..3 {
+            h.frame();
+        }
+        let w = &h.app.workspace;
+        assert_eq!(w.column_panels(), [PanelId::Color], "{}", describe(&h));
+        assert_eq!(
+            w.column_rect().unwrap().width(),
+            column.width(),
+            "{}",
+            describe(&h)
+        );
+        assert_eq!(h.app.view.palette_width, palette);
+        assert_eq!(h.app.palette_natural_width, natural);
+    }
+}

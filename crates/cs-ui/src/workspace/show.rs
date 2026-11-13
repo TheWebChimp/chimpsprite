@@ -585,12 +585,13 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     block_canvas_drag(&ctx, dock_id(), &workspace.state);
     pin_sides(&mut workspace.state, dock_rect, &mut workspace.sides);
     let before = fractions(&workspace.state);
-    // Lo que flotaba y en qué ventana (lo que egui_dock pase a otra ventana, va donde se soltó).
-    let was_floating: Vec<(PanelId, SurfaceIndex)> = workspace
+    // Las ventanas que ya había (lo que egui_dock ponga en una ventana nueva va donde se soltó;
+    // lo que junte a una de estas, no la mueve).
+    let windows_before: Vec<SurfaceIndex> = workspace
         .state
         .iter_all_tabs()
         .filter(|(path, _)| !path.surface.is_main())
-        .map(|(path, p)| (*p, path.surface))
+        .map(|(path, _)| path.surface)
         .collect();
     let pointer = ctx.input(|i| i.pointer.latest_pos());
     // La pestaña que se arrastra sobre la franja de una orilla o sobre una tira: va ahí, no donde
@@ -840,7 +841,11 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .max(crate::panel_registry::TIMELINE_MIN.y);
         app.view.timeline_height = Some((height * 64.0).round() / 64.0);
     }
-    let column = workspace.column_rect();
+    // El ancho de la columna es de Color: solo se toma (y solo se guarda lo arrastrado de su
+    // divisor, ver `record_sides`) con Color en ella.
+    let column = workspace
+        .column_rect()
+        .filter(|_| workspace.column_panels().contains(&PanelId::Color));
     if let Some(points) = dragged.column {
         // A 1/64 de punto: sin el ruido de ir de puntos a fracción y de vuelta (un arrastre de
         // 40 puntos guarda 40, no 39.99997), y sin correr el divisor (ver `record_sides`).
@@ -1004,7 +1009,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         if id != PanelId::Canvas && outside {
             workspace.float(id, at);
         } else if let Some((surface, _)) = workspace.leaf_of(id).filter(|(s, _)| !s.is_main())
-            && !was_floating.contains(&(id, surface))
+            && !windows_before.contains(&surface)
         {
             // egui_dock lo puso a flotar en una ventana nueva (soltado en el anillo de "ventana
             // nueva", o en su propia ventana): su ventana, donde se soltó (egui no siempre

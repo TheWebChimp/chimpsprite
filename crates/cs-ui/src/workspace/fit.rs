@@ -162,16 +162,11 @@ impl Workspace {
     /// ancho de la columna (`view.palette_width` o el que tomó sola, `SidePoints::palette`); la
     /// toolbar, el de su caja; los demás, lo que piden de fábrica (su `reference_width` con su
     /// margen y la barra de scroll, ver [`reference`]). A lo alto, el timeline lo suyo
-    /// (`view.timeline_height`) y los demás su `default_size`.
+    /// (`view.timeline_height`) y los demás su `default_size`. Es lo que toma un lado nuevo con
+    /// él solo (ver [`pin_sides`], a lo más el 45 % de su split; [`SidePoints::preferred`]).
+    #[cfg(test)]
     pub(crate) fn preferred_side(&self, id: PanelId, horizontal: bool) -> f32 {
-        let half = self.sides.sep / 2.0;
-        let fallback = panel_reference(id, horizontal) + half;
-        match (id, horizontal) {
-            (PanelId::Color, true) => self.sides.palette.unwrap_or(fallback),
-            (PanelId::Tools, true) => self.sides.toolbar.map_or(fallback, |w| w - half),
-            (PanelId::Timeline, false) => self.sides.timeline.unwrap_or(fallback),
-            _ => fallback,
-        }
+        self.sides.preferred(id, horizontal)
     }
 
     /// El lado del lienzo con `id` solo (el de un split recién hecho, por el workspace o por
@@ -194,9 +189,41 @@ impl Workspace {
             panels: vec![id],
         };
         self.sides.sides.retain(|(s, _)| *s != side);
+        // Aunque la forma sea la de antes (lo soltado volvió a donde estaba: egui_dock lo había
+        // movido en este frame), `pin_sides` vuelve a acomodar los lados.
+        self.sides.last = None;
         if !self.sides.fresh.contains(&side) {
             self.sides.fresh.push(side);
         }
+    }
+
+    /// El rect del lado del lienzo con `id` solo, con su divisor entero (como
+    /// [`Workspace::column_rect`]), en el área `area` y con las fracciones de ahora (las que deja
+    /// [`pin_sides`]): sin dibujar, con la misma cuenta que `pin_sides`. `None` si no hay.
+    pub(super) fn side_rect(&self, id: PanelId, area: egui::Rect) -> Option<egui::Rect> {
+        let tree = self.state.main_surface();
+        let half = self.sides.sep / 2.0;
+        let mut rect = area;
+        for level in chain(tree) {
+            let (_, f) = split_of(tree, level.parent)?;
+            let (start, len) = if level.horizontal {
+                (rect.left(), rect.width())
+            } else {
+                (rect.top(), rect.height())
+            };
+            let mid = start + len * f;
+            let (side, canvas_side) = match (level.horizontal, level.first) {
+                (true, true) => (rect.with_max_x(mid + half), rect.with_min_x(mid + half)),
+                (true, false) => (rect.with_min_x(mid - half), rect.with_max_x(mid - half)),
+                (false, true) => (rect.with_max_y(mid + half), rect.with_min_y(mid + half)),
+                (false, false) => (rect.with_min_y(mid - half), rect.with_max_y(mid - half)),
+            };
+            if panels_of(tree, level.other) == [id] {
+                return Some(side);
+            }
+            rect = canvas_side;
+        }
+        None
     }
 
     /// Los paneles de la columna derecha (ver [`Workspace::column`]).
@@ -783,8 +810,9 @@ pub(crate) struct SidePoints {
     /// Lo que mide cada lado que se conoce, por su identidad ([`Side`]): los índices del árbol se
     /// mueven.
     sides: Vec<(Side, f32)>,
-    /// Lo que mide la columna derecha (ver [`Workspace::column`]): la pide el anfitrión (de
-    /// `view.palette_width`); sin ella, como los demás lados.
+    /// Lo que mide la columna derecha (ver [`Workspace::column`]) con Color en ella: la pide el
+    /// anfitrión (de `view.palette_width`; ver `colors_column`). Sin ella, o con otro panel en la
+    /// columna, como los demás lados.
     pub column: Option<f32>,
     /// Lo que mide un lado con Color solo fuera de la columna, hasta el centro de su divisor: su
     /// grupo, del ancho de siempre de Color (`view.palette_width` o el que tomó sola), como lo
@@ -837,6 +865,18 @@ struct Pinned {
 }
 
 impl SidePoints {
+    /// Lo que mide de siempre un lado con `id` solo (ver `Workspace::preferred_side`).
+    pub(super) fn preferred(&self, id: PanelId, horizontal: bool) -> f32 {
+        let half = self.sep / 2.0;
+        let fallback = panel_reference(id, horizontal) + half;
+        match (id, horizontal) {
+            (PanelId::Color, true) => self.palette.unwrap_or(fallback),
+            (PanelId::Tools, true) => self.toolbar.map_or(fallback, |w| w - half),
+            (PanelId::Timeline, false) => self.timeline.unwrap_or(fallback),
+            _ => fallback,
+        }
+    }
+
     fn get(&self, side: &Side) -> Option<f32> {
         self.sides.iter().find(|(s, _)| s == side).map(|(_, p)| *p)
     }
@@ -921,6 +961,14 @@ fn timeline_level(tree: &Tree<PanelId>, level: &Level) -> bool {
     !level.horizontal
         && level.other.0 < tree.len()
         && matches!(&tree[level.other], Node::Leaf(leaf) if leaf.tabs == [PanelId::Timeline])
+}
+
+/// Si el lado `level` del lienzo es la columna derecha con Color en ella: el ancho de la columna
+/// (`view.palette_width`, el que tomó sola, lo que se arrastra de su divisor) es de Color y solo
+/// rige así (`SidePoints::column`). Con otro panel en la columna (Color flotando, o por dentro de
+/// otro en la orilla), ese lado va como los demás: de lo que pide su panel, en puntos.
+fn colors_column(tree: &Tree<PanelId>, level: &Level) -> bool {
+    level.column && panels_of(tree, level.other).contains(&PanelId::Color)
 }
 
 /// El split del lienzo con el timeline solo justo debajo (`V[Canvas / Timeline]`), si lo hay (ver
@@ -1112,19 +1160,20 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             .map(|width| width - sides.sep / 2.0);
         // El del timeline lo da el anfitrión ya hasta el centro del divisor.
         let host = toolbar.or(sides.timeline.filter(|_| timeline_level(tree, &level)));
-        let points = match (level.column, sides.column, host) {
+        let points = match (colors_column(tree, &level), sides.column, host) {
             (_, _, Some(points)) => points,
             (true, Some(points), _) => points,
             _ => match sides.get(&side) {
                 Some(points) => points,
                 None => {
-                    // Color solo, del ancho de la columna (el de siempre); lo demás, lo que pide
-                    // de fábrica.
-                    let palette = sides
-                        .palette
-                        .filter(|_| level.horizontal && side.panels == [PanelId::Color]);
+                    // Un panel solo, lo de siempre suyo (Color, el ancho de la columna); varios,
+                    // lo que piden de fábrica.
+                    let alone = match side.panels[..] {
+                        [id] => Some(sides.preferred(id, level.horizontal)),
+                        _ => None,
+                    };
                     let fresh = || {
-                        let r = palette.unwrap_or_else(|| {
+                        let r = alone.unwrap_or_else(|| {
                             reference(tree, level.other, level.horizontal) + sides.sep / 2.0
                         });
                         r.min(len * 0.45)
@@ -1258,7 +1307,7 @@ pub(super) fn record_sides(
         sides.set(side, points);
         // El anfitrión los va a pedir así: no hay que volver a acomodarlos (de una fracción a
         // puntos y de vuelta, un arrastre lento se correría medio punto por frame).
-        if level.column {
+        if colors_column(tree, &level) {
             dragged.column = Some(points);
             if let Some(last) = &mut sides.last {
                 last.column = Some(points);

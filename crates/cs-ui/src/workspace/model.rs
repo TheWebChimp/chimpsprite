@@ -805,6 +805,22 @@ impl Workspace {
     /// principal (partiendo el nodo de [`edge_node`] hacia esa orilla), con su lado del ancho (o
     /// alto) de siempre del panel, en puntos (ver [`Workspace::pin_new_side`]).
     fn dock_at_edge(&mut self, id: PanelId, edge: Edge) {
+        // Ya ahí (la misma forma de antes): nada que hacer, con sus fracciones como estaban.
+        let before = self.state.clone();
+        let shape = super::fit::shape(before.main_surface());
+        self.dock_at_edge_anew(id, edge);
+        if self.state.find_main_surface_tab(&id).is_some()
+            && super::fit::shape(self.state.main_surface()) == shape
+        {
+            self.state = before;
+            self.leave_strips(id);
+            return;
+        }
+        self.pin_new_side(id);
+    }
+
+    /// [`Workspace::dock_at_edge`] sin ver si ya estaba ahí.
+    fn dock_at_edge_anew(&mut self, id: PanelId, edge: Edge) {
         self.take(id);
         let main = self.state.main_surface_mut();
         if main.num_tabs() == 0 {
@@ -823,7 +839,6 @@ impl Workspace {
             node,
         };
         self.state.split(path, split, 0.5, Node::leaf(id));
-        self.pin_new_side(id);
     }
 
     /// Si `(surface, node)` es el grupo del lienzo.

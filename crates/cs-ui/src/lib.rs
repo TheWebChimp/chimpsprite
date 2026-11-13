@@ -1537,7 +1537,8 @@ impl ChimpApp {
                     workspace::paint_strip_zone(ui, skin, strip.rect);
                     dock::paint_insertion_line(ui, skin, strip.line(pointer));
                 }
-                // En la franja de una orilla, la columna (o fila) que deja ahí.
+                // Fuera de las tiras: donde cae en el árbol (en la franja de una orilla, la
+                // columna o fila que deja ahí, del ancho del panel arrastrado).
                 None => {
                     let target = workspace::drop_target(&self.workspace, pointer);
                     workspace::paint_drop_zone(ui, skin, &self.workspace, id, target);

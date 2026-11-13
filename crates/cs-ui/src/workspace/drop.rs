@@ -127,32 +127,20 @@ impl Workspace {
 
     /// La columna (o fila) que dejaría `id` acoplado en la orilla `edge` ([`DockTarget::Edge`])
     /// del área del árbol `area`: de lado a lado, con su divisor entero (como
-    /// `Workspace::column_rect`), en puntos enteros, y del ancho (o alto) que le da `pin_sides`. A
-    /// la derecha es la columna derecha (va por fuera de todo): del ancho de la columna
-    /// (`view.palette_width`); la toolbar, el de su caja. En las demás, el de siempre del panel
-    /// ([`Workspace::preferred_side`]), a lo más el 45 % del área (como un lado nuevo).
-    pub(crate) fn edge_zone(&self, edge: Edge, id: PanelId, area: egui::Rect) -> egui::Rect {
-        let horizontal = edge.vertical();
-        let preferred = self.preferred_side(id, horizontal);
-        let side = match (edge, id) {
-            (_, PanelId::Tools) if horizontal => preferred,
-            (Edge::Right, _) => self.sides.column.unwrap_or(preferred),
-            _ => {
-                let across = if horizontal {
-                    area.width()
-                } else {
-                    area.height()
-                };
-                preferred.min(across * 0.45)
-            }
-        };
-        let len = side + self.sides.sep / 2.0;
-        whole(match edge {
-            Edge::Left => area.with_max_x((area.left() + len).min(area.right())),
-            Edge::Right => area.with_min_x((area.right() - len).max(area.left())),
-            Edge::Top => area.with_max_y((area.top() + len).min(area.bottom())),
-            Edge::Bottom => area.with_min_y((area.bottom() - len).max(area.top())),
-        })
+    /// `Workspace::column_rect`), en puntos enteros. Es lo que va a quedar: se acopla en una
+    /// copia y se acomoda con `pin_sides` (Color en la columna, del ancho de la columna; los
+    /// demás, del de siempre del panel, a lo más el 45 % de lo que parten y sin quitarle al lienzo
+    /// su mínimo).
+    pub(crate) fn edge_zone(
+        &self,
+        edge: Edge,
+        id: PanelId,
+        area: egui::Rect,
+    ) -> Option<egui::Rect> {
+        let mut w = self.clone();
+        w.dock(id, DockTarget::Edge(edge));
+        super::fit::pin_sides(&mut w.state, area, &mut w.sides);
+        w.side_rect(id, area).map(whole)
     }
 }
 
@@ -238,7 +226,10 @@ fn drop_zone(w: &Workspace, id: PanelId, target: DropTarget) -> Option<egui::Rec
     match target {
         DropTarget::Tab(surface, node) => leaf_rect(surface, node).map(whole),
         DropTarget::Split(surface, node, side) => Some(half(leaf_rect(surface, node)?, side)),
-        DropTarget::Edge(edge) => w.bounds.as_ref().map(|b| w.edge_zone(edge, id, b.dock)),
+        DropTarget::Edge(edge) => w
+            .bounds
+            .as_ref()
+            .and_then(|b| w.edge_zone(edge, id, b.dock)),
         DropTarget::Float(_) => None,
     }
     .filter(|r| r.is_positive())
@@ -328,7 +319,11 @@ pub(super) fn paint_tab_drop(
         return;
     };
     match drop {
-        TabDrop::Edge(edge) => paint_zone(ui, skin, w.edge_zone(edge, id, bounds.dock)),
+        TabDrop::Edge(edge) => {
+            if let Some(zone) = w.edge_zone(edge, id, bounds.dock) {
+                paint_zone(ui, skin, zone);
+            }
+        }
         TabDrop::Strip(edge) => {
             if let Some(strip) = bounds.strips.iter().find(|s| s.edge == edge) {
                 paint_strip_zone(ui, skin, strip.rect);
