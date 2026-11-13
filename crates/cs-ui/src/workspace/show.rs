@@ -18,7 +18,9 @@ use eframe::egui;
 use egui_dock::{DockArea, TabViewer};
 
 use super::dividers::{cover_timeline_divider, cover_tools_divider, paint_crossings};
-use super::drop::{Bounds, dragged_tab, paint_tab_drop, see_through, tab_drag_released, tab_drop};
+use super::drop::{
+    Bounds, TabDrop, dragged_tab, paint_tab_drop, see_through, tab_drag_released, tab_drop,
+};
 use super::fit::{
     Minima, block_canvas_drag, chrome, fit_splits, fit_windows, fractions, half, minima, pin_sides,
     quadrant, record_sides, tidy_canvas, toolbar_width,
@@ -842,6 +844,13 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         squeezed,
         ..
     } = viewer;
+    // La pestaña que se arrastra y cae en la tira de una orilla (ver `drop::tab_drop`): esa tira
+    // la muestra donde caería (su vista previa, ver `dock::show`).
+    let onto_strip = |edge: Edge| {
+        tab_drop
+            .filter(|&(_, _, drop)| drop == TabDrop::Strip(edge))
+            .map(|(id, _, _)| id)
+    };
     // La tira de íconos, de alto completo a la derecha del lienzo (y del timeline justo debajo),
     // encima de los dos y de su divisor (que ahí no se agarra), como el panel de antes. Las de las
     // otras orillas van aunque esa no se pueda dibujar (sin el rect del lienzo y el timeline).
@@ -867,7 +876,14 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
                 );
             }
             let timeline = app.view.timeline;
-            canvas.dock = app.strip_area(ui, (rect, dock_rect), modal, Edge::Right, &strip);
+            let incoming = onto_strip(Edge::Right);
+            canvas.dock = app.strip_area(
+                ui,
+                (rect, dock_rect),
+                modal,
+                (Edge::Right, &strip),
+                incoming,
+            );
             canvas.strips.push(dock::StripArea {
                 edge: Edge::Right,
                 rect,
@@ -881,7 +897,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         // Las de las otras orillas (si tienen algo).
         for &(edge, rect) in &edge_strips {
             let panels = workspace.strip_at(edge).to_vec();
-            let out = app.strip_area(ui, (rect, dock_rect), modal, edge, &panels);
+            let incoming = onto_strip(edge);
+            let out = app.strip_area(ui, (rect, dock_rect), modal, (edge, &panels), incoming);
             let dock = &mut canvas.dock;
             dock.app_panel = dock.app_panel.or(out.app_panel);
             dock.request = dock.request.or(out.request);
@@ -902,10 +919,10 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             .map(|c| c.strips.clone())
             .unwrap_or_default(),
     });
-    if let Some((id, p, drop)) = tab_drop
+    if let Some((id, _, drop)) = tab_drop
         && !ctx.input(|i| i.pointer.primary_released())
     {
-        paint_tab_drop(ui, skin, &workspace, (id, p), drop);
+        paint_tab_drop(ui, skin, &workspace, id, drop);
     }
     // El divisor de un lado del lienzo que arrastró el usuario: lo que mide de ahí en adelante.
     // El de la columna es su preferencia (sin bajar de su mínimo, como el panel de antes).

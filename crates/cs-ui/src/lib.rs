@@ -1529,14 +1529,12 @@ impl ChimpApp {
         } = canvas_area.unwrap_or_default();
         // Sacar un panel de la tira: soltado en el árbol (como pestaña, partiendo un grupo o junto
         // al lienzo), en el lienzo (en una ventana) o en otra tira (entre sus botones), o desde su
-        // menú contextual. Mientras se arrastra, dónde caería: sobre otra tira, esa tira y la
-        // línea entre sus botones; si no, en el árbol. (Dentro de su tira la pinta la tira.)
+        // menú contextual. Mientras se arrastra, dónde caería: sobre otra tira, esa tira (que ya
+        // se ve como quedaría, con el ícono entre sus botones: ver `dock::show`); si no, en el
+        // árbol. (Dentro de su tira, la tira misma.)
         if let Some((id, pointer)) = dock_out.dragging {
             match workspace::strip_under(&strips, pointer) {
-                Some(strip) => {
-                    workspace::paint_strip_zone(ui, skin, strip.rect);
-                    dock::paint_insertion_line(ui, skin, strip.line(pointer));
-                }
+                Some(strip) => workspace::paint_strip_zone(ui, skin, strip.rect),
                 // Fuera de las tiras: donde cae en el árbol (en la franja de una orilla, la
                 // columna o fila que deja ahí, del ancho del panel arrastrado).
                 None => {
@@ -1669,14 +1667,15 @@ impl ChimpApp {
     /// completo, con el marco de siempre (el del panel derecho `"dock"` que iba dentro de la hoja
     /// del lienzo) y los botones del timeline y del Preview; las demás, en su orilla (`"dock_left"`,
     /// `"dock_top"`, `"dock_bottom"`), con sus flyouts dentro de `room` (el área del workspace).
-    /// Con un diálogo abierto, apagada.
+    /// Con un diálogo abierto, apagada. `incoming`: la pestaña que se arrastra sobre ella y cae en
+    /// ella (se ve en su vista previa, ver `dock::show`).
     pub(crate) fn strip_area(
         &mut self,
         ui: &mut egui::Ui,
         (rect, room): (egui::Rect, egui::Rect),
         modal: bool,
-        edge: dock::Edge,
-        strip: &[panel_registry::PanelId],
+        (edge, strip): (dock::Edge, &[panel_registry::PanelId]),
+        incoming: Option<panel_registry::PanelId>,
     ) -> dock::DockOutput {
         let shared_skin = self.pixel.shared_skin();
         let skin = shared_skin.as_deref();
@@ -1710,6 +1709,7 @@ impl ChimpApp {
                         toggles,
                         room,
                         flyout_width: &width,
+                        incoming,
                     };
                     dock::show(ui, skin, strip)
                 })

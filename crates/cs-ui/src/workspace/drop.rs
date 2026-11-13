@@ -327,13 +327,13 @@ pub(super) fn see_through(
     (!surface.is_main() && state[surface].num_tabs() == 1).then_some((id, surface))
 }
 
-/// Resalta dónde cae la pestaña de `id` arrastrada con el puntero en `p` (ver [`tab_drop`]): la
-/// columna (o fila) de la orilla, o la tira con la línea de dónde caería entre sus botones.
+/// Resalta dónde cae la pestaña de `id` arrastrada (ver [`tab_drop`]): la columna (o fila) de la
+/// orilla, o la tira (que ya la muestra entre sus botones donde caería: ver `dock::show`).
 pub(super) fn paint_tab_drop(
     ui: &egui::Ui,
     skin: Option<&Skin>,
     w: &Workspace,
-    (id, p): (PanelId, egui::Pos2),
+    id: PanelId,
     drop: TabDrop,
 ) {
     let Some(bounds) = w.bounds.as_ref() else {
@@ -348,7 +348,6 @@ pub(super) fn paint_tab_drop(
         TabDrop::Strip(edge) => {
             if let Some(strip) = bounds.strips.iter().find(|s| s.edge == edge) {
                 paint_strip_zone(ui, skin, strip.rect);
-                crate::dock::paint_insertion_line(ui, skin, strip.line(p));
             }
         }
     }
@@ -365,8 +364,7 @@ pub(crate) fn paint_strip_zone(ui: &egui::Ui, skin: Option<&Skin>, rect: egui::R
 
 /// La tira de `strips` (las dibujadas en este frame) bajo `p`, si alguna: un ícono de otra tira
 /// soltado ahí pasa a ella, entre sus botones (ver [`Workspace::apply_strip_request`]) y, mientras
-/// se arrastra, se resalta (ver [`paint_strip_zone`]) con la línea de dónde caería (ver
-/// `dock::paint_insertion_line`).
+/// se arrastra, se resalta (ver [`paint_strip_zone`]) y se ve como quedaría (ver `dock::show`).
 pub(crate) fn strip_under(strips: &[StripArea], p: egui::Pos2) -> Option<&StripArea> {
     strips.iter().find(|s| s.rect.contains(p))
 }

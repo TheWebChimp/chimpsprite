@@ -106,14 +106,15 @@ pub struct DockOutput {
     /// dónde caería).
     pub dragging: Option<(DockPanel, egui::Pos2)>,
     /// Los botones a la vista de los paneles de la tira, en su orden (sin "More Panels" ni los del
-    /// timeline y el Preview): la app los guarda en su `StripArea`.
+    /// timeline y el Preview): la app los guarda en su `StripArea`. Mientras la tira se ve como
+    /// quedaría (ver [`show`]), los de antes, en reposo.
     pub buttons: Vec<(DockPanel, Rect)>,
 }
 
-/// Una tira dibujada en el frame: su orilla, su rect y los botones a la vista de sus paneles (ver
-/// [`DockOutput::buttons`]). Un ícono soltado sobre ella cae entre sus botones (ver
-/// [`StripArea::drop_index`]) y, mientras se arrastra encima, se marca dónde (ver
-/// [`StripArea::line`]).
+/// Una tira dibujada en el frame: su orilla, su rect y los botones a la vista de sus paneles en
+/// reposo (ver [`DockOutput::buttons`]: mientras se ve la vista previa de un arrastre, los de
+/// antes). Un ícono soltado sobre ella cae entre sus botones (ver [`StripArea::drop_index`]) y,
+/// mientras se arrastra encima, la tira se dibuja como quedaría (ver [`show`]).
 #[derive(Clone, Debug)]
 pub(crate) struct StripArea {
     pub edge: Edge,
@@ -139,44 +140,15 @@ impl StripArea {
             .filter(|(q, _)| *q != panel)
             .count()
     }
-
-    /// La línea de inserción con el puntero en `p` (ver [`insertion_line`]).
-    pub(crate) fn line(&self, p: egui::Pos2) -> Rect {
-        let rects = self.rects();
-        let vertical = self.edge.vertical();
-        insertion_line(
-            &rects,
-            self.rect,
-            vertical,
-            insert_index(&rects, vertical, p),
-        )
-    }
 }
 
-/// El grueso de la línea de inserción.
-const LINE: f32 = 2.0;
-
-/// La capa de las zonas de destino de lo que se arrastra (la de un panel en el workspace y la
-/// línea de inserción de una tira): encima de todo salvo el fantasma.
+/// La capa de las zonas de destino de lo que se arrastra (la de un panel en el workspace o la de
+/// una tira): encima de todo salvo el fantasma.
 pub(crate) fn drop_zone_painter(ctx: &egui::Context) -> egui::Painter {
     ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::new("workspace_drop_zone"),
     ))
-}
-
-/// La línea de inserción `rect` de una tira (ver [`insertion_line`]), en la capa de las zonas de
-/// destino ([`drop_zone_painter`]: encima de la zona, si la hay, y debajo del fantasma): con Pixel
-/// UI, del color de selección del skin (`text_selection`); sin él, del de egui.
-pub(crate) fn paint_insertion_line(ui: &Ui, skin: Option<&Skin>, rect: Rect) {
-    if !rect.is_positive() {
-        return;
-    }
-    let color = match skin {
-        Some(skin) => skin.colors().text_selection,
-        None => ui.visuals().selection.bg_fill,
-    };
-    drop_zone_painter(ui.ctx()).rect_filled(rect, 0.0, color);
 }
 
 /// En qué hueco entre `buttons` (los de una tira, en orden; a lo alto si `vertical`) cae el
@@ -190,36 +162,58 @@ pub(crate) fn insert_index(buttons: &[Rect], vertical: bool, pointer: egui::Pos2
         .count()
 }
 
-/// La línea de inserción del hueco `index` entre `buttons` (ver [`insert_index`]) de la tira
-/// `strip`: [`LINE`] de grueso, a lo ancho del botón, centrada en el hueco entre dos; antes del
-/// primero o después del último, pegada a él (sin salirse de la tira). En puntos enteros. Sin
-/// botones, ninguna (`Rect::NOTHING`).
-pub(crate) fn insertion_line(buttons: &[Rect], strip: Rect, vertical: bool, index: usize) -> Rect {
-    let (Some(first), Some(last)) = (buttons.first(), buttons.last()) else {
-        return Rect::NOTHING;
-    };
-    let along = |r: &Rect| if vertical { r.y_range() } else { r.x_range() };
-    let ends = along(&strip);
-    let start = if index == 0 {
-        (along(first).min - LINE).max(ends.min)
-    } else if index >= buttons.len() {
-        (along(last).max + LINE).min(ends.max) - LINE
-    } else {
-        (along(&buttons[index - 1]).max + along(&buttons[index]).min) / 2.0 - LINE / 2.0
+/// `panels` (los de una tira) con `panel` en el lugar `index`, contado sin él (más allá del
+/// final, al final): como queda la tira al soltarlo ahí (ver `Workspace::move_in_strip`).
+pub(crate) fn landed(panels: &[DockPanel], panel: DockPanel, index: usize) -> Vec<DockPanel> {
+    let mut out: Vec<DockPanel> = panels.iter().copied().filter(|&p| p != panel).collect();
+    out.insert(index.min(out.len()), panel);
+    out
+}
+
+/// Con cuánta opacidad va, en la vista previa de una tira, el botón del panel que se arrastra en
+/// el lugar donde caería.
+pub(crate) const PREVIEW_OPACITY: f32 = 0.5;
+
+/// El ícono de una tira que se arrastra: su panel, el id de su botón y el rect de su botón cuando
+/// empezó. Lo recuerda su botón (ver [`show`]): mientras se ve la vista previa, la tira lo dibuja
+/// en otro lugar (o no lo dibuja) y el arrastre sigue en ese id y ese rect.
+#[derive(Clone, Copy, Debug)]
+struct IconDrag {
+    panel: DockPanel,
+    id: egui::Id,
+    rect: Rect,
+}
+
+fn icon_drag_id() -> egui::Id {
+    egui::Id::new("dock_icon_drag")
+}
+
+/// El ícono que se arrastra (o que se soltó en este frame), si es el arrastre de egui: si ya no lo
+/// es (se canceló, o la tira dejó de dibujarse), se olvida.
+fn icon_drag(ctx: &egui::Context) -> Option<IconDrag> {
+    let drag = ctx.data(|d| d.get_temp::<IconDrag>(icon_drag_id()))?;
+    if ctx.is_being_dragged(drag.id) || ctx.drag_stopped_id() == Some(drag.id) {
+        return Some(drag);
     }
-    .round();
-    let line = egui::Rangef::new(start, start + LINE);
-    let across = if vertical {
-        first.x_range()
-    } else {
-        first.y_range()
-    };
-    let across = egui::Rangef::new(across.min.round(), across.max.round());
-    if vertical {
-        Rect::from_x_y_ranges(across, line)
-    } else {
-        Rect::from_x_y_ranges(line, across)
-    }
+    ctx.data_mut(|d| d.remove::<IconDrag>(icon_drag_id()));
+    None
+}
+
+/// Dónde recuerda la tira de `edge` sus botones en reposo: mientras se ve la vista previa, son
+/// los que dicen dónde cae lo que se suelta (no se mueven con ella).
+fn rest_id(edge: Edge) -> egui::Id {
+    egui::Id::new(("dock_rest", edge.index()))
+}
+
+/// El id del `Ui` del botón de egui (sin Pixel UI) del ícono de `panel`: fijo, así el botón tiene
+/// el mismo id aunque la vista previa lo dibuje en otro lugar de la tira.
+fn icon_ui_id(panel: DockPanel) -> egui::Id {
+    egui::Id::new(("dock_icon", panel))
+}
+
+/// El id del botón semitransparente de `panel` en la vista previa (ver [`faded_button`]).
+fn faded_id(panel: DockPanel) -> egui::Id {
+    egui::Id::new(("dock_icon_faded", panel))
 }
 
 /// Lo que se pidió desde la tira para uno de sus paneles.
@@ -268,17 +262,56 @@ fn pixel_button(
     let response = pixel_draw::skin_button(ui, skin, rect, info, |r| {
         pixel_draw::piece_centered(skin, icon, r, ppp)
     });
-    plain_icon(ui, skin, icon, plain, rect);
+    plain_icon(ui, skin, icon, plain, rect, 1.0);
     response.tip(label)
 }
 
-/// Si el skin no trae la pieza `icon`, el texto `plain` centrado en `rect`: así el botón no queda
-/// vacío mientras falta el ícono.
-fn plain_icon(ui: &Ui, skin: &Skin, icon: &str, plain: &str, rect: Rect) {
+/// El botón semitransparente del ícono de `panel` en la vista previa de una tira (donde caería el
+/// que se arrastra): el mismo componente que los demás (prendido, `on`, si su panel está abierto)
+/// con [`PREVIEW_OPACITY`], sin responder a nada. Ocupa en la tira lo mismo que su botón.
+/// Devuelve su rect.
+fn faded_button(ui: &mut Ui, skin: Option<&Skin>, panel: DockPanel, on: bool) -> Rect {
+    let (label, spec) = (panel.label(), panel.spec());
+    let Some(skin) = skin else {
+        // El botón de egui, en un `Ui` de id fijo como los de verdad (mide lo mismo que el suyo).
+        let builder = egui::UiBuilder::new().id(faded_id(panel));
+        return ui
+            .scope_builder(builder, |ui| {
+                ui.set_opacity(PREVIEW_OPACITY);
+                ui.add(
+                    egui::Button::new(spec.plain)
+                        .selected(on)
+                        .min_size(BUTTON_SIZE),
+                )
+            })
+            .inner
+            .rect;
+    };
+    let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
+    let info = pixel_draw::ButtonInfo {
+        selected: Some(on),
+        ..pixel_draw::ButtonInfo::new(faded_id(panel), label)
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    pixel_draw::faded_skin_button(ui, skin, rect, info, PREVIEW_OPACITY, |r| {
+        pixel_draw::piece_centered(skin, spec.icon, r, ppp)
+    });
+    plain_icon(ui, skin, spec.icon, spec.plain, rect, PREVIEW_OPACITY);
+    rect
+}
+
+/// Si el skin no trae la pieza `icon`, el texto `plain` centrado en `rect` (con `opacity`, si es
+/// menos que 1): así el botón no queda vacío mientras falta el ícono.
+fn plain_icon(ui: &Ui, skin: &Skin, icon: &str, plain: &str, rect: Rect, opacity: f32) {
     if skin.piece(icon, WidgetState::Normal).is_none() {
         let font = egui::TextStyle::Body.resolve(ui.style());
         let color = skin.colors().text;
-        ui.painter().text(
+        let mut painter = ui.painter().clone();
+        if opacity < 1.0 {
+            painter.set_opacity(opacity);
+        }
+        painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             plain,
@@ -397,6 +430,9 @@ pub(crate) struct StripCtx<'a> {
     /// El ancho del contenido del flyout de cada panel: "Float" lo pone a flotar donde quedaría
     /// su flyout (la toolbar, del ancho de su caja).
     pub flyout_width: &'a dyn Fn(DockPanel) -> f32,
+    /// Un panel que se arrastra desde fuera de las tiras (su pestaña, con egui_dock) con el
+    /// puntero sobre esta tira, donde cae al soltarlo: se ve en la vista previa (ver [`show`]).
+    pub incoming: Option<DockPanel>,
 }
 
 /// Cuántos botones de `len` de largo (más [`BUTTON_GAP`] entre ellos) caben en `room`.
@@ -404,14 +440,31 @@ fn buttons_in(room: f32, len: f32) -> usize {
     ((room + BUTTON_GAP) / (len + BUTTON_GAP)).floor().max(0.0) as usize
 }
 
+/// Los paneles de `panels` que se ven en una tira donde caben `fit` botones y los que van a "More
+/// Panels" (los del final; con ellos, "More Panels" ocupa el último lugar).
+fn split_shown(panels: &[DockPanel], fit: usize) -> (&[DockPanel], &[DockPanel]) {
+    if panels.len() <= fit {
+        (panels, &[][..])
+    } else {
+        panels.split_at(fit.saturating_sub(1))
+    }
+}
+
 /// El dock: un botón por panel de la tira (`strip`, los que no están acoplados ni flotando) y el
 /// panel abierto, flotando junto a su botón (hacia adentro de la ventana). Un clic en un botón abre
 /// (o cierra) su panel; arrastrarlo más de lo que egui todavía cuenta como clic (6 puntos) lo
-/// levanta (con un fantasma bajo el puntero): a lo largo de la tira, una línea marca el hueco
-/// donde caería y soltarlo ahí lo reordena ([`StripRequest::Reorder`]); soltarlo fuera de la tira
-/// pide sacarlo ([`StripRequest::Drop`]); su menú contextual tiene "Dock" y "Float". Si no caben
-/// todos, los del final se van a "More Panels" ([`MORE`]), que los lista: elegir uno abre su
-/// flyout junto a él.
+/// levanta (con un fantasma bajo el puntero): soltarlo a lo largo de la tira lo reordena
+/// ([`StripRequest::Reorder`]); soltarlo fuera de la tira pide sacarlo ([`StripRequest::Drop`]);
+/// su menú contextual tiene "Dock" y "Float". Si no caben todos, los del final se van a "More
+/// Panels" ([`MORE`]), que los lista: elegir uno abre su flyout junto a él.
+///
+/// Mientras se arrastra un ícono (de esta tira u otra, ver [`IconDrag`]) o una pestaña que cae en
+/// ella (`incoming`), la tira se dibuja como quedaría al soltarlo: con el puntero sobre ella, el
+/// panel va en su lugar de destino (el de [`StripArea::drop_index`] con los botones en reposo),
+/// semitransparente ([`faded_button`]), y los demás se recorren; el ícono de esta tira con el
+/// puntero fuera de ella ya no está (se cierra su hueco). Si caería entre los de "More Panels", ese
+/// botón se ve prendido. El arrastre sigue siendo del botón de antes: su id y su rect (sin
+/// dibujarse ahí). "More Panels", el del timeline y el del Preview no se mueven.
 pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> DockOutput {
     let StripCtx {
         edge,
@@ -420,13 +473,48 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
         toggles,
         room,
         flyout_width,
+        incoming,
     } = strip;
+    let ctx = ui.ctx().clone();
     let mut out = DockOutput::default();
-    let open = open_panel(ui.ctx()).filter(|p| panels.contains(p));
+    let open = open_panel(&ctx).filter(|p| panels.contains(p));
     let mut anchors = Vec::new();
     let mut buttons = Vec::new();
+    // Las respuestas de los botones de los paneles (y la del que se arrastra): se atienden al final.
+    let mut responses: Vec<(DockPanel, egui::Response)> = Vec::new();
     // El ícono que se arrastra dentro de la tira: cuál, dónde está el puntero y si se soltó.
     let mut along_strip = None;
+    let pointer = ui.input(|i| i.pointer.latest_pos());
+    let over = pointer.filter(|p| own.contains(*p));
+    // La vista previa: el ícono de esta tira que se arrastra (`mine`) y lo que caería en ella con
+    // el puntero encima (en su lugar de destino, con los botones en reposo).
+    let drag = icon_drag(&ctx);
+    let mine = drag.filter(|d| panels.contains(&d.panel));
+    let coming = drag
+        .map(|d| d.panel)
+        .filter(|p| !panels.contains(p))
+        .or(incoming);
+    let rest = StripArea {
+        edge,
+        rect: own,
+        buttons: ctx
+            .data(|d| d.get_temp::<Vec<(DockPanel, Rect)>>(rest_id(edge)))
+            .unwrap_or_default(),
+    };
+    let landing = mine
+        .map(|d| d.panel)
+        .or(coming)
+        .zip(over)
+        .map(|(p, at)| (p, landed(panels, p, rest.drop_index(p, at))));
+    let previewing = mine.is_some() || landing.is_some();
+    let (order, faded) = match (landing, mine) {
+        (Some((p, order)), _) => (order, Some(p)),
+        (None, Some(d)) => (
+            panels.iter().copied().filter(|&p| p != d.panel).collect(),
+            None,
+        ),
+        (None, None) => (panels.to_vec(), None),
+    };
     let vertical = edge.vertical();
     if vertical {
         ui.spacing_mut().item_spacing.y = BUTTON_GAP;
@@ -453,11 +541,7 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
         None => 0.0,
     };
     let fit = buttons_in(along - air - tail, BUTTON_SIZE.y);
-    let (shown, hidden) = if panels.len() <= fit {
-        (panels, &[][..])
-    } else {
-        panels.split_at(fit.saturating_sub(1))
-    };
+    let (shown, hidden) = split_shown(&order, fit);
     let inner = |ui: &mut Ui| {
         if skin.is_some() {
             ui.add_space(TOP_AIR);
@@ -468,6 +552,10 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
         }
         for &panel in shown {
             let is_open = open == Some(panel);
+            if faded == Some(panel) {
+                anchors.push((panel, faded_button(ui, skin, panel, is_open)));
+                continue;
+            }
             let response = match skin {
                 Some(skin) => pixel_button(
                     ui,
@@ -476,61 +564,35 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
                     (panel.spec().icon, panel.spec().plain),
                     is_open,
                 ),
-                None => ui
-                    .add(
-                        egui::Button::new(panel.spec().plain)
-                            .selected(is_open)
-                            .min_size(BUTTON_SIZE),
-                    )
-                    .tip(panel.label()),
+                // En un `Ui` de id fijo: el botón tiene el mismo id en cualquier lugar de la tira.
+                None => {
+                    let builder = egui::UiBuilder::new().id(icon_ui_id(panel));
+                    ui.scope_builder(builder, |ui| {
+                        ui.add(
+                            egui::Button::new(panel.spec().plain)
+                                .selected(is_open)
+                                .min_size(BUTTON_SIZE),
+                        )
+                        .tip(panel.label())
+                    })
+                    .inner
+                }
             };
             // También se arrastra (egui lo cuenta como clic mientras no se mueva más de 6 puntos).
             let response = response.interact(Sense::click_and_drag());
-            if response.clicked() {
-                set_open(ui.ctx(), (!is_open).then_some(panel));
-            }
-            // Soltar un ícono sobre la tira (con su marco) no lo saca: lo reordena.
-            let pointer = ui.input(|i| i.pointer.latest_pos());
-            let outside = pointer.filter(|p| !own.contains(*p));
-            let inside = pointer.filter(|p| own.contains(*p));
-            if response.dragged() {
-                let delta = response.total_drag_delta().unwrap_or_default();
-                ghost(ui, skin, panel, response.rect.translate(delta.round()));
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                out.dragging = outside.map(|p| (panel, p));
-                along_strip = inside.map(|p| (panel, p, false));
-            }
-            if response.drag_stopped() {
-                if let Some(p) = outside {
-                    out.request = Some(StripRequest::Drop(panel, p));
-                }
-                along_strip = inside.map(|p| (panel, p, true));
-            }
-            crate::menus::context_menu(&response, |ui| {
-                if ui.add(crate::menus::plain(MENU_DOCK)).clicked() {
-                    out.request = Some(StripRequest::Dock(panel));
-                    ui.close();
-                }
-                if ui.add(crate::menus::plain(MENU_FLOAT)).clicked() {
-                    let at = float_corner(edge, panel, response.rect, flyout_width(panel));
-                    out.request = Some(StripRequest::Float(panel, at.round()));
-                    ui.close();
-                }
-            });
             anchors.push((panel, response.rect));
             buttons.push((panel, response.rect));
+            responses.push((panel, response));
         }
-        // Los que no caben, en "More Panels": prendido si el abierto es uno de ellos.
+        // Los que no caben, en "More Panels": prendido si el abierto es uno de ellos o si ahí
+        // caería el que se arrastra.
         if !hidden.is_empty() {
             let is_open = open.is_some_and(|p| hidden.contains(&p));
+            let lit = is_open || faded.is_some_and(|p| hidden.contains(&p));
             let response = match skin {
-                Some(skin) => pixel_button(ui, skin, MORE, (MORE_ICON, "»"), is_open),
+                Some(skin) => pixel_button(ui, skin, MORE, (MORE_ICON, "»"), lit),
                 None => ui
-                    .add(
-                        egui::Button::new("»")
-                            .selected(is_open)
-                            .min_size(BUTTON_SIZE),
-                    )
+                    .add(egui::Button::new("»").selected(lit).min_size(BUTTON_SIZE))
                     .tip(MORE),
             };
             let align = match edge {
@@ -540,7 +602,7 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
                 Edge::Bottom => egui::RectAlign::TOP_START,
             };
             crate::menus::click_menu(&response, align, |ui| {
-                for &panel in hidden {
+                for &panel in hidden.iter().filter(|p| panels.contains(p)) {
                     if ui.add(crate::menus::plain(panel.label())).clicked() {
                         set_open(ui.ctx(), Some(panel));
                         ui.close();
@@ -548,6 +610,13 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
                 }
             });
             anchors.extend(hidden.iter().map(|&p| (p, response.rect)));
+        }
+        // El que se arrastra de esta tira sigue en su botón de antes (su id, su rect), aunque se
+        // dibuje en otro lugar o no se dibuje.
+        if let Some(d) = mine {
+            let response = ui.interact(d.rect, d.id, Sense::click_and_drag());
+            anchors.push((d.panel, d.rect));
+            responses.push((d.panel, response));
         }
         // Hasta abajo del dock, el del timeline y arriba de él, el del preview.
         if let Some((timeline, preview)) = toggles {
@@ -568,35 +637,77 @@ pub(crate) fn show(ui: &mut Ui, skin: Option<&Skin>, strip: StripCtx<'_>) -> Doc
         ui.with_layout(row, inner);
         column = room;
     }
-    // Un ícono que se arrastra a lo largo de la tira: la línea en el hueco donde caería y, al
-    // soltarlo, a ese lugar (más allá del último a la vista, al final; en su mismo lugar, nada),
-    // como si cayera de otra tira.
-    let this = StripArea {
-        edge,
-        rect: own,
-        buttons,
-    };
-    if let Some((panel, p, dropped)) = along_strip {
-        if dropped {
-            let at = panels.iter().position(|&q| q == panel);
-            let index = this
-                .drop_index(panel, p)
-                .min(panels.len().saturating_sub(1));
-            if Some(index) != at {
-                // El lugar no lo cuenta; el hueco de `Reorder`, sí.
-                let gap = if at.is_some_and(|at| index >= at) {
-                    index + 1
-                } else {
-                    index
-                };
-                out.request = Some(StripRequest::Reorder(panel, gap));
+    // Soltar un ícono sobre la tira (con su marco) no lo saca: lo reordena.
+    let outside = pointer.filter(|p| !own.contains(*p));
+    for (panel, response) in responses {
+        if response.clicked() {
+            set_open(&ctx, (open != Some(panel)).then_some(panel));
+        }
+        if response.dragged() {
+            // Lo recuerda para la vista previa (la de esta tira y la de las demás).
+            let drag = IconDrag {
+                panel,
+                id: response.id,
+                rect: response.rect,
+            };
+            ctx.data_mut(|d| d.insert_temp(icon_drag_id(), drag));
+            let delta = response.total_drag_delta().unwrap_or_default();
+            ghost(ui, skin, panel, response.rect.translate(delta.round()));
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            out.dragging = outside.map(|p| (panel, p));
+            along_strip = over.map(|p| (panel, p, false));
+        }
+        // (Lo recordado sigue este frame: las tiras que se dibujan después también muestran cómo
+        // queda; desde el siguiente, `icon_drag` lo olvida.)
+        if response.drag_stopped() {
+            if let Some(p) = outside {
+                out.request = Some(StripRequest::Drop(panel, p));
             }
-        } else {
-            paint_insertion_line(ui, skin, this.line(p));
+            along_strip = over.map(|p| (panel, p, true));
+        }
+        crate::menus::context_menu(&response, |ui| {
+            if ui.add(crate::menus::plain(MENU_DOCK)).clicked() {
+                out.request = Some(StripRequest::Dock(panel));
+                ui.close();
+            }
+            if ui.add(crate::menus::plain(MENU_FLOAT)).clicked() {
+                let at = float_corner(edge, panel, response.rect, flyout_width(panel));
+                out.request = Some(StripRequest::Float(panel, at.round()));
+                ui.close();
+            }
+        });
+    }
+    // Lo que dice dónde cae lo que se suelta: los botones en reposo (con la vista previa, los
+    // recordados de antes, que no se mueven con ella).
+    let this = if previewing {
+        rest
+    } else {
+        ctx.data_mut(|d| d.insert_temp(rest_id(edge), buttons.clone()));
+        StripArea {
+            edge,
+            rect: own,
+            buttons,
+        }
+    };
+    // Un ícono soltado a lo largo de la tira: a ese lugar (más allá del último a la vista, al
+    // final; en su mismo lugar, nada), como si cayera de otra tira. Es el de la vista previa.
+    if let Some((panel, p, true)) = along_strip {
+        let at = panels.iter().position(|&q| q == panel);
+        let index = this
+            .drop_index(panel, p)
+            .min(panels.len().saturating_sub(1));
+        if Some(index) != at {
+            // El lugar no lo cuenta; el hueco de `Reorder`, sí.
+            let gap = if at.is_some_and(|at| index >= at) {
+                index + 1
+            } else {
+                index
+            };
+            out.request = Some(StripRequest::Reorder(panel, gap));
         }
     }
     out.buttons = this.buttons;
-    let Some(panel) = open_panel(ui.ctx()).filter(|p| panels.contains(p)) else {
+    let Some(panel) = open_panel(&ctx).filter(|p| panels.contains(p)) else {
         return out;
     };
     let button = anchors
@@ -807,7 +918,7 @@ fn flyout_with(
                     _ => edge_tab_shapes(skin, piece, icon, (rect, button), edge, ppp),
                 });
                 ui.painter().set(background, Shape::Vec(shapes));
-                plain_icon(ui, skin, panel.spec().icon, panel.spec().plain, button);
+                plain_icon(ui, skin, panel.spec().icon, panel.spec().plain, button, 1.0);
             }
         });
 }
@@ -1148,74 +1259,23 @@ mod tests {
     }
 
     #[test]
-    fn the_insertion_line_is_2_thick_across_the_button_in_the_gap_or_at_the_ends() {
-        for vertical in [true, false] {
-            let buttons = three_buttons(vertical, 10.0);
-            let strip = if vertical {
-                Rect::from_min_size(egui::Pos2::ZERO, vec2(26.0, 300.0))
-            } else {
-                Rect::from_min_size(egui::Pos2::ZERO, vec2(300.0, 26.0))
-            };
-            // A lo largo de la tira, `a..b`; a lo ancho, el del botón (3..26).
-            let line = |a: f32, b: f32| {
-                if vertical {
-                    Rect::from_x_y_ranges(3.0..=26.0, a..=b)
-                } else {
-                    Rect::from_x_y_ranges(a..=b, 3.0..=26.0)
-                }
-            };
-            let case = format!("vertical {vertical}");
-            // Antes del primero, pegada a él; en el hueco de 4 entre dos, centrada; después del
-            // último, pegada a él.
-            assert_eq!(
-                insertion_line(&buttons, strip, vertical, 0),
-                line(8.0, 10.0),
-                "{case}"
-            );
-            assert_eq!(
-                insertion_line(&buttons, strip, vertical, 1),
-                line(34.0, 36.0),
-                "{case}"
-            );
-            assert_eq!(
-                insertion_line(&buttons, strip, vertical, 2),
-                line(61.0, 63.0),
-                "{case}"
-            );
-            assert_eq!(
-                insertion_line(&buttons, strip, vertical, 3),
-                line(87.0, 89.0),
-                "{case}"
-            );
-            for i in 0..=3 {
-                let r = insertion_line(&buttons, strip, vertical, i);
-                assert!(strip.contains_rect(r), "{case}: {i} {r:?} in the strip");
-                assert_eq!(
-                    (r.min.round(), r.max.round()),
-                    (r.min, r.max),
-                    "{case}: {i}"
-                );
-            }
-            // Pegados a las puntas de la tira: la línea no se sale de ella.
-            let tight = three_buttons(vertical, 0.0);
-            let short = if vertical {
-                strip.with_max_y(tight[2].bottom())
-            } else {
-                strip.with_max_x(tight[2].right())
-            };
-            assert_eq!(
-                insertion_line(&tight, short, vertical, 0),
-                line(0.0, 2.0),
-                "{case}"
-            );
-            assert_eq!(
-                insertion_line(&tight, short, vertical, 3),
-                line(75.0, 77.0),
-                "{case}"
-            );
-            // Sin botones, ninguna.
-            assert!(!insertion_line(&[], strip, vertical, 0).is_positive());
-        }
+    fn a_panel_lands_in_its_place_counted_without_it() {
+        use crate::panel_registry::PanelId::{Groom, Library, Lumen, Slices};
+        let strip = [Groom, Library, Lumen];
+        assert_eq!(landed(&strip, Library, 0), [Library, Groom, Lumen]);
+        assert_eq!(landed(&strip, Library, 1), strip, "its own place");
+        assert_eq!(landed(&strip, Groom, 2), [Library, Lumen, Groom]);
+        assert_eq!(
+            landed(&strip, Groom, usize::MAX),
+            [Library, Lumen, Groom],
+            "past the end"
+        );
+        assert_eq!(
+            landed(&strip, Slices, 1),
+            [Groom, Slices, Library, Lumen],
+            "from elsewhere"
+        );
+        assert_eq!(landed(&[], Slices, 3), [Slices]);
     }
 
     #[test]

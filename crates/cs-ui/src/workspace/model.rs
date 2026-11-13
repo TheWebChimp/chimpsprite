@@ -933,13 +933,12 @@ impl Workspace {
             return;
         }
         // En la misma tira solo cambia el orden: nada más se mueve.
-        if self.strip_of(id) == Some(edge) {
-            self.strips[edge.index()].retain(|&p| p != id);
-        } else {
+        if self.strip_of(id) != Some(edge) {
             self.take(id);
         }
+        // Como lo muestra la vista previa de la tira mientras se arrastra (`dock::show`).
         let strip = &mut self.strips[edge.index()];
-        strip.insert(index.min(strip.len()), id);
+        *strip = crate::dock::landed(strip, id, index);
     }
 
     /// La orilla de `id`: la de su tira, si está en una; la de su grupo, si está en el árbol (ver

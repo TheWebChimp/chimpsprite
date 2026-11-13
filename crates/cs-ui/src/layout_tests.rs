@@ -15088,8 +15088,8 @@ fn release_at(h: &mut LayoutHarness, pos: Pos2) {
 }
 
 #[test]
-fn dragging_a_strip_icon_along_its_strip_reorders_it_with_an_insertion_line() {
-    use crate::dock::{Edge, PREVIEW, TIMELINE, insertion_line};
+fn dragging_a_strip_icon_along_its_strip_reorders_it() {
+    use crate::dock::{Edge, PREVIEW, TIMELINE};
     use crate::panel_registry::PanelId;
     for pixel in [true, false] {
         let mut h = LayoutHarness::new(if pixel { pixel_ui() } else { plain() }, true);
@@ -15100,7 +15100,6 @@ fn dragging_a_strip_icon_along_its_strip_reorders_it_with_an_insertion_line() {
             ("🎞", "▣")
         };
         let case = format!("pixel {pixel}");
-        let dock = h.panel("dock");
         let before = h.app.workspace.strip().to_vec();
         assert_eq!(before[1], PanelId::Library, "{case}");
         let buttons = strip_buttons(&h, Edge::Right);
@@ -15114,12 +15113,8 @@ fn dragging_a_strip_icon_along_its_strip_reorders_it_with_an_insertion_line() {
         let from = buttons[1].center();
         let to = pos2(from.x, buttons[0].top() + 3.0);
         hold_drag(&mut h, from, to);
-        // La línea antes del primero; ninguna zona de destino (es su tira).
-        assert_eq!(
-            insertion_lines(&h),
-            [insertion_line(&buttons, dock, true, 0)],
-            "{case}"
-        );
+        // Sin línea (la tira ya se ve como quedaría) ni zona de destino (es su tira).
+        assert_eq!(insertion_lines(&h), [], "{case}");
         if pixel {
             assert_eq!(drop_zones(&h), [], "{case}: its own strip");
         }
@@ -15141,10 +15136,9 @@ fn dragging_a_strip_icon_along_its_strip_reorders_it_with_an_insertion_line() {
 
 #[test]
 fn dropping_a_strip_icon_in_its_own_place_changes_nothing() {
-    use crate::dock::{Edge, insertion_line};
+    use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    let dock = h.panel("dock");
     let before = h.app.workspace.strip().to_vec();
     let buttons = strip_buttons(&h, Edge::Right);
     // Más de 6 puntos (se levanta) y todavía sobre sí mismo, pasado su centro: el hueco de después
@@ -15155,10 +15149,10 @@ fn dropping_a_strip_icon_in_its_own_place_changes_nothing() {
     assert!((to - from).length() > 6.0);
     hold_drag(&mut h, from, to);
     assert!(h.texts.iter().any(|(t, _)| t == "Library"), "the ghost");
-    assert_eq!(
-        insertion_lines(&h),
-        [insertion_line(&buttons, dock, true, 2)]
-    );
+    // Su botón, semitransparente en su mismo lugar (ahí caería); los demás, donde estaban.
+    assert_eq!(strip_buttons(&h, Edge::Right), buttons);
+    assert!(faded(&h, buttons[1]));
+    assert_eq!(insertion_lines(&h), []);
     release_at(&mut h, to);
     assert_eq!(h.app.workspace.strip(), before);
     assert_eq!(strip_buttons(&h, Edge::Right), buttons);
@@ -15170,8 +15164,8 @@ fn dropping_a_strip_icon_in_its_own_place_changes_nothing() {
 }
 
 #[test]
-fn a_strip_icon_dropped_on_another_strip_goes_where_the_line_was() {
-    use crate::dock::{Edge, insertion_line};
+fn a_strip_icon_dropped_on_another_strip_goes_where_it_was_shown() {
+    use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     // Tools y Groom en la tira de la izquierda; el ícono de Library, de la derecha hasta el hueco
     // entre los dos.
@@ -15187,12 +15181,15 @@ fn a_strip_icon_dropped_on_another_strip_goes_where_the_line_was() {
     let from = h.button("Library").center();
     let to = pos2(left.center().x, buttons[1].top() - 2.0);
     hold_drag(&mut h, from, to);
-    // La tira resaltada y, encima, la línea en el hueco.
+    // La tira resaltada y, en ella, Library semitransparente en el hueco (Groom, un lugar más
+    // abajo); sin línea.
     assert_eq!(drop_zones(&h), [left]);
-    assert_eq!(
-        insertion_lines(&h),
-        [insertion_line(&buttons, left, true, 1)]
-    );
+    let order = [PanelId::Tools, PanelId::Library, PanelId::Groom];
+    let shown = buttons_in_order(&h, Edge::Left, &order, PanelId::label);
+    let next = buttons[1].translate(vec2(0.0, 27.0));
+    assert_eq!(shown, [buttons[0], buttons[1], next]);
+    assert!(faded(&h, shown[1]));
+    assert_eq!(insertion_lines(&h), []);
     release_at(&mut h, to);
     let w = &h.app.workspace;
     assert_eq!(
@@ -15224,9 +15221,8 @@ fn strip_with_more() -> LayoutHarness {
 
 #[test]
 fn the_last_visible_strip_icon_dragged_past_the_end_goes_after_the_hidden_ones() {
-    use crate::dock::{Edge, insertion_line};
+    use crate::dock::Edge;
     let mut h = strip_with_more();
-    let dock = h.panel("dock");
     let before = h.app.workspace.strip().to_vec();
     let buttons = strip_buttons(&h, Edge::Right);
     let n = buttons.len();
@@ -15239,10 +15235,7 @@ fn the_last_visible_strip_icon_dragged_past_the_end_goes_after_the_hidden_ones()
     let from = buttons[n - 1].center() - vec2(0.0, 2.0);
     let to = buttons[n - 1].center() + vec2(0.0, 8.0);
     hold_drag(&mut h, from, to);
-    assert_eq!(
-        insertion_lines(&h),
-        [insertion_line(&buttons, dock, true, n)]
-    );
+    assert_eq!(insertion_lines(&h), []);
     release_at(&mut h, to);
     // Al final de toda la tira, después de los de "More Panels".
     let mut want = before.clone();
@@ -15253,7 +15246,7 @@ fn the_last_visible_strip_icon_dragged_past_the_end_goes_after_the_hidden_ones()
 
 #[test]
 fn an_icon_dropped_on_more_panels_of_another_strip_goes_to_its_end() {
-    use crate::dock::{Edge, MORE, insertion_line};
+    use crate::dock::{Edge, MORE};
     use crate::panel_registry::PanelId;
     let mut h = strip_with_more();
     h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
@@ -15267,12 +15260,10 @@ fn an_icon_dropped_on_more_panels_of_another_strip_goes_to_its_end() {
     let from = strip_buttons(&h, Edge::Left)[0].center();
     let to = more.center();
     hold_drag(&mut h, from, to);
-    // La tira resaltada y la línea después del último a la vista.
+    // La tira resaltada, sin línea ("More Panels" prendido: ver
+    // `an_icon_that_would_land_among_the_hidden_ones_lights_more_panels`).
     assert_eq!(drop_zones(&h), [dock]);
-    assert_eq!(
-        insertion_lines(&h),
-        [insertion_line(&buttons, dock, true, buttons.len())]
-    );
+    assert_eq!(insertion_lines(&h), []);
     release_at(&mut h, to);
     let w = &h.app.workspace;
     assert_eq!(w.strip().last(), Some(&PanelId::Tools));
@@ -15281,7 +15272,7 @@ fn an_icon_dropped_on_more_panels_of_another_strip_goes_to_its_end() {
 
 #[test]
 fn dragging_an_icon_along_the_top_strip_reorders_it() {
-    use crate::dock::{Edge, insertion_line};
+    use crate::dock::Edge;
     use crate::panel_registry::PanelId;
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app.workspace.to_strip_at(PanelId::Groom, Edge::Top);
@@ -15293,17 +15284,20 @@ fn dragging_an_icon_along_the_top_strip_reorders_it() {
         h.app.workspace.strip_at(Edge::Top),
         [PanelId::Groom, PanelId::Lumen]
     );
-    let top = h.panel("dock_top");
     let buttons = strip_buttons(&h, Edge::Top);
     assert_eq!(buttons.len(), 2);
     // Lumen, a lo ancho, hasta antes del centro de Groom.
     let from = buttons[1].center();
     let to = pos2(buttons[0].left() + 3.0, from.y);
     hold_drag(&mut h, from, to);
+    // A lo ancho, como quedaría: Lumen (semitransparente) donde estaba Groom, y Groom después.
+    let order = [PanelId::Lumen, PanelId::Groom];
     assert_eq!(
-        insertion_lines(&h),
-        [insertion_line(&buttons, top, false, 0)]
+        buttons_in_order(&h, Edge::Top, &order, PanelId::label),
+        buttons
     );
+    assert!(faded(&h, buttons[0]));
+    assert_eq!(insertion_lines(&h), []);
     assert_eq!(drop_zones(&h), [], "its own strip");
     release_at(&mut h, to);
     assert_eq!(
@@ -15311,6 +15305,277 @@ fn dragging_an_icon_along_the_top_strip_reorders_it() {
         [PanelId::Lumen, PanelId::Groom]
     );
     assert_eq!(insertion_lines(&h), []);
+}
+
+// --- Redock, tarea 4: mientras se reordena, la tira se ve como quedaría ---
+
+/// Los botones de `panels` (en ese orden) en la tira de `edge` del último frame: el de cada uno, el
+/// primero con su nombre (`name`) después del del anterior a lo largo de la tira. Los que no se
+/// ven, no están (se corta en el primero que falte).
+fn buttons_in_order(
+    h: &LayoutHarness,
+    edge: crate::dock::Edge,
+    panels: &[crate::panel_registry::PanelId],
+    name: impl Fn(crate::panel_registry::PanelId) -> &'static str,
+) -> Vec<Rect> {
+    let along = |r: &Rect| if edge.vertical() { r.top() } else { r.left() };
+    let mut out: Vec<Rect> = Vec::new();
+    for &p in panels {
+        let after = out.last().map_or(f32::MIN, along);
+        match named_in_strip(h, edge, name(p))
+            .into_iter()
+            .find(|r| along(r) > after)
+        {
+            Some(r) => out.push(r),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Con qué opacidad (de 0 a 1) se pintó lo que cae entero dentro de `rect` (con un punto de más:
+/// la línea clara de abajo de los botones del skin) en el último frame: de las mallas con textura
+/// (las piezas del skin), el alfa más alto de sus vértices; de los textos, el de su color por su
+/// opacidad.
+fn opacities_in(h: &LayoutHarness, rect: Rect) -> Vec<f32> {
+    fn walk(shape: &egui::Shape, rect: Rect, out: &mut Vec<f32>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, rect, out)),
+            egui::Shape::Mesh(mesh)
+                if mesh.texture_id != TextureId::default()
+                    && rect.contains_rect(mesh.calc_bounds()) =>
+            {
+                let alpha = mesh.vertices.iter().map(|v| v.color.a()).max();
+                out.extend(alpha.map(|a| f32::from(a) / 255.0));
+            }
+            egui::Shape::Text(text)
+                if rect.contains_rect(Rect::from_min_size(text.pos, text.galley.size())) =>
+            {
+                let color = text.override_text_color.unwrap_or(text.fallback_color);
+                out.push(text.opacity_factor * f32::from(color.a()) / 255.0);
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &h.shapes {
+        walk(&clipped.shape, rect.expand(1.0), &mut out);
+    }
+    out
+}
+
+/// Si en `rect` se pintó algo a media opacidad (el botón semitransparente de la vista previa).
+fn faded(h: &LayoutHarness, rect: Rect) -> bool {
+    opacities_in(h, rect)
+        .iter()
+        .any(|a| (0.45..=0.55).contains(a))
+}
+
+/// Si lo pintado en `rect` (algo) va opaco.
+fn opaque(h: &LayoutHarness, rect: Rect) -> bool {
+    let all = opacities_in(h, rect);
+    !all.is_empty() && all.iter().all(|&a| a >= 0.99)
+}
+
+#[test]
+fn while_an_icon_is_dragged_along_its_strip_the_strip_is_drawn_as_it_will_be() {
+    use crate::dock::{Edge, PREVIEW, TIMELINE};
+    use crate::panel_registry::PanelId;
+    // Library (el segundo) arrastrado hasta arriba del primero: durante el arrastre la tira ya es
+    // la del orden final (Library primero, semitransparente; los demás corridos), sin línea; al
+    // soltar, nada salta.
+    for pixel in [true, false] {
+        let mut h = LayoutHarness::new(if pixel { pixel_ui() } else { plain() }, true);
+        let name = move |p: PanelId| if pixel { p.label() } else { p.spec().plain };
+        let (timeline, preview) = if pixel {
+            (TIMELINE, PREVIEW)
+        } else {
+            ("🎞", "▣")
+        };
+        let toggles = |h: &LayoutHarness| {
+            [timeline, preview].map(|n| *named_in_strip(h, Edge::Right, n).last().unwrap())
+        };
+        let case = format!("pixel {pixel}");
+        let before = h.app.workspace.strip().to_vec();
+        assert_eq!(before[1], PanelId::Library, "{case}");
+        let rest = strip_buttons(&h, Edge::Right);
+        assert_eq!(rest.len(), before.len(), "{case}: {rest:?}");
+        let toggled = toggles(&h);
+        let mut want = before.clone();
+        want.retain(|&p| p != PanelId::Library);
+        want.insert(0, PanelId::Library);
+        let from = rest[1].center();
+        let to = pos2(from.x, rest[0].top() + 3.0);
+        hold_drag(&mut h, from, to);
+        let during = buttons_in_order(&h, Edge::Right, &want, name);
+        assert_eq!(during.len(), want.len(), "{case}: {during:?}");
+        if pixel {
+            // Todos del mismo tamaño: cada uno en el lugar del de su lugar en reposo.
+            assert_eq!(during, rest, "{case}");
+        }
+        assert!(faded(&h, during[0]), "{case}: Library translucent");
+        for r in &during[1..] {
+            assert!(opaque(&h, *r), "{case}: {r:?} opaque");
+        }
+        assert_eq!(insertion_lines(&h), [], "{case}: no line");
+        assert_eq!(toggles(&h), toggled, "{case}");
+        assert_eq!(h.app.workspace.strip(), before, "{case}: nothing moved yet");
+        // La pastilla sigue al puntero.
+        assert!(h.texts.iter().any(|(t, _)| t == "Library"), "{case}");
+        // El frame en que se suelta y el siguiente: igual que la vista previa.
+        h.frame_with(vec![Event::PointerButton {
+            pos: to,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        assert_eq!(
+            buttons_in_order(&h, Edge::Right, &want, name),
+            during,
+            "{case}: the frame it is dropped"
+        );
+        h.frame();
+        assert_eq!(h.app.workspace.strip(), want, "{case}");
+        assert_eq!(
+            buttons_in_order(&h, Edge::Right, &want, name),
+            during,
+            "{case}: nothing jumps"
+        );
+        assert!(opaque(&h, during[0]), "{case}: Library opaque again");
+        assert_eq!(toggles(&h), toggled, "{case}");
+    }
+}
+
+#[test]
+fn over_another_strip_the_icon_shows_in_place_and_its_own_strip_closes_the_gap() {
+    use crate::dock::{Edge, PREVIEW, TIMELINE};
+    use crate::panel_registry::PanelId;
+    // Tools colapsada en la tira de la izquierda; Library, de la derecha hasta antes de Tools.
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
+    for _ in 0..2 {
+        h.frame();
+    }
+    let name = |p: PanelId| p.label();
+    let toggles = |h: &LayoutHarness| [TIMELINE, PREVIEW].map(|n| h.button(n));
+    let left = h.panel("dock_left");
+    let tools = strip_buttons(&h, Edge::Left);
+    assert_eq!(tools.len(), 1);
+    let rest = strip_buttons(&h, Edge::Right);
+    let before = h.app.workspace.strip().to_vec();
+    let mut others = before.clone();
+    others.retain(|&p| p != PanelId::Library);
+    let toggled = toggles(&h);
+    let from = h.button("Library").center();
+    let to = pos2(left.center().x, tools[0].top() + 3.0);
+    hold_drag(&mut h, from, to);
+    let order = [PanelId::Library, PanelId::Tools];
+    let target = buttons_in_order(&h, Edge::Left, &order, name);
+    assert_eq!(
+        target,
+        [tools[0], tools[0].translate(vec2(0.0, 27.0))],
+        "Library where Tools was, Tools after it"
+    );
+    assert!(faded(&h, target[0]), "Library translucent");
+    assert!(opaque(&h, target[1]), "Tools opaque");
+    // La tira de donde sale, sin el hueco: los demás, un lugar más arriba.
+    let source = buttons_in_order(&h, Edge::Right, &others, name);
+    assert_eq!(source, rest[..others.len()], "the gap closes");
+    assert!(named_in_strip(&h, Edge::Right, "Library").is_empty());
+    assert_eq!(toggles(&h), toggled);
+    // La tira de destino, resaltada; ninguna línea.
+    assert_eq!(drop_zones(&h), [left]);
+    assert_eq!(insertion_lines(&h), []);
+    h.frame_with(vec![Event::PointerButton {
+        pos: to,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    }]);
+    assert_eq!(buttons_in_order(&h, Edge::Left, &order, name), target);
+    assert_eq!(buttons_in_order(&h, Edge::Right, &others, name), source);
+    h.frame();
+    let w = &h.app.workspace;
+    assert_eq!(w.strip_at(Edge::Left), order);
+    assert_eq!(w.strip(), others);
+    assert_eq!(buttons_in_order(&h, Edge::Left, &order, name), target);
+    assert_eq!(buttons_in_order(&h, Edge::Right, &others, name), source);
+    assert!(opaque(&h, target[0]));
+    assert_eq!(toggles(&h), toggled);
+}
+
+#[test]
+fn an_icon_that_would_land_among_the_hidden_ones_lights_more_panels() {
+    use crate::dock::{Edge, MORE};
+    use crate::panel_registry::PanelId;
+    let lit = |h: &LayoutHarness| h.selected.iter().any(|(l, on)| l == MORE && *on);
+    let name = |p: PanelId| p.label();
+    // El último a la vista, arrastrado pasado su centro: va después de los ocultos. "More Panels"
+    // se resalta (no hay hueco ni fantasma) y su lugar lo toma el primero de los ocultos.
+    let mut h = strip_with_more();
+    let before = h.app.workspace.strip().to_vec();
+    let rest = strip_buttons(&h, Edge::Right);
+    let n = rest.len();
+    let more = h.button(MORE);
+    assert!(!lit(&h));
+    let last = before[n - 1];
+    let mut want = before.clone();
+    want.retain(|&p| p != last);
+    want.push(last);
+    let from = rest[n - 1].center() - vec2(0.0, 2.0);
+    let to = rest[n - 1].center() + vec2(0.0, 8.0);
+    hold_drag(&mut h, from, to);
+    assert!(lit(&h), "More Panels lit");
+    assert_eq!(h.button(MORE), more, "More Panels does not move");
+    assert_eq!(buttons_in_order(&h, Edge::Right, &want[..n], name), rest);
+    assert!(named_in_strip(&h, Edge::Right, last.label()).is_empty());
+    assert_eq!(insertion_lines(&h), []);
+    release_at(&mut h, to);
+    assert_eq!(h.app.workspace.strip(), want);
+    assert_eq!(buttons_in_order(&h, Edge::Right, &want[..n], name), rest);
+    assert!(!lit(&h));
+    // Desde otra tira, sobre "More Panels": también.
+    let mut h = strip_with_more();
+    h.app.workspace.to_strip_at(PanelId::Tools, Edge::Left);
+    for _ in 0..4 {
+        h.frame();
+    }
+    let rest = strip_buttons(&h, Edge::Right);
+    let more = h.button(MORE);
+    let from = strip_buttons(&h, Edge::Left)[0].center();
+    hold_drag(&mut h, from, more.center());
+    assert!(lit(&h), "More Panels lit, from another strip");
+    assert_eq!(h.button(MORE), more);
+    assert_eq!(strip_buttons(&h, Edge::Right), rest);
+    assert!(named_in_strip(&h, Edge::Right, PanelId::Tools.label()).is_empty());
+    assert_eq!(insertion_lines(&h), []);
+}
+
+#[test]
+fn a_tab_dragged_over_a_strip_shows_in_it_where_it_would_fall() {
+    use crate::dock::Edge;
+    use crate::panel_registry::PanelId;
+    // La pestaña de Library (junto a Color) sobre la tira derecha, entre sus dos primeros: ahí se
+    // ve, semitransparente, y los de después se corren; sin línea. Al soltar, nada salta.
+    let mut h = library_beside_color();
+    let name = |p: PanelId| p.label();
+    let strip = h.app.workspace.strip_at(Edge::Right).to_vec();
+    let rest = strip_buttons(&h, Edge::Right);
+    let to = pos2(rest[0].center().x, (rest[0].bottom() + rest[1].top()) / 2.0);
+    let mut want = strip.clone();
+    want.insert(1, PanelId::Library);
+    let from = h.button("Library").center();
+    hold_drag(&mut h, from, to);
+    let during = buttons_in_order(&h, Edge::Right, &want, name);
+    assert_eq!(during.len(), want.len(), "{during:?}");
+    assert_eq!(during[..2], rest[..2]);
+    assert_eq!(during[2], rest[1].translate(vec2(0.0, 27.0)));
+    assert!(faded(&h, during[1]), "Library translucent");
+    assert!(opaque(&h, during[2]));
+    assert_eq!(insertion_lines(&h), []);
+    release_at(&mut h, to);
+    assert_eq!(h.app.workspace.strip_at(Edge::Right), want);
+    assert_eq!(buttons_in_order(&h, Edge::Right, &want, name), during);
 }
 
 mod diag_color_redock;
