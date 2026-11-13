@@ -266,8 +266,9 @@ pub(super) enum TabDrop {
 
 /// Dónde cae la pestaña de `id` que egui_dock arrastra con el puntero en `p`, si no es lo de
 /// egui_dock (ver [`TabDrop`]), con lo dibujado en el último frame. Una ventana flotante encima
-/// gana (sus grupos son de egui_dock), salvo la del mismo `id`: no le tapa la orilla ni la tira a
-/// lo que se saca de ella. Sobre su propio grupo acoplado, tampoco (lo de egui_dock: la franja de
+/// gana (sus grupos son de egui_dock), salvo la que se ve a través (la de `id`, si es su única
+/// pestaña: [`see_through`]): no le tapa la orilla ni la tira a lo que se saca de ella. Sobre su
+/// propio grupo acoplado, tampoco gana la orilla (lo de egui_dock: la franja de
 /// agarre de un grupo de hasta arriba está en la franja de la orilla de arriba, y moverlo un poco
 /// no lo tiene que mandar a otro lado). Mientras rige, la zona de egui_dock no se ve (ver
 /// `skin::hide_drop_zone`) y se pinta la de aquí ([`paint_tab_drop`]); al soltar, el workspace
@@ -287,12 +288,16 @@ pub(super) fn tab_drop(
     if own_group {
         return None;
     }
-    let own = path.map(|path| path.surface);
+    // La ventana que se ve a través (la del panel, si es su única pestaña) no tapa; con más
+    // pestañas sí es destino (ver `see_through`).
+    let skip = see_through(&w.state, Some(id)).map(|(_, s)| s);
     let covered = w
         .state
         .iter_surfaces_indexed()
         .filter(|(s, surface)| {
-            !s.is_main() && Some(*s) != own && surface.node_tree().is_some_and(|t| t.num_tabs() > 0)
+            !s.is_main()
+                && Some(*s) != skip
+                && surface.node_tree().is_some_and(|t| t.num_tabs() > 0)
         })
         .filter_map(|(s, _)| ctx.memory(|m| m.area_rect(skin::window_area_id(s))))
         .any(|r| r.contains(p));
@@ -306,7 +311,6 @@ pub(super) fn tab_drop(
             TabDrop::Edge(strip.edge)
         });
     }
-    let skip = see_through(&w.state, Some(id)).map(|(_, s)| s);
     w.edge_at(p, skip).map(TabDrop::Edge)
 }
 
@@ -477,16 +481,38 @@ fn tab_drag_id() -> egui::Id {
     egui::Id::new("workspace_tab_drag")
 }
 
+/// Lo que egui_dock pide recorrer desde donde empezó el arrastre de una pestaña (o de la franja de
+/// un grupo sin barra) para empezar el suyo: más de 30 pt a lo ancho o de 6 a lo alto (ver el
+/// punto 14 de `skin`). Antes, egui ya lo da por arrastre (pasada la distancia de un clic, o
+/// apretado más de 0.8 s), pero egui_dock no tiene destino ni suelta nada.
+const DOCK_DRAG_START: egui::Vec2 = egui::vec2(30.0, 6.0);
+
+/// Un arrastre de pestaña de egui_dock (ver [`tab_drag_released`]).
+#[derive(Clone, Copy, Debug)]
+struct TabDrag {
+    id: PanelId,
+    /// Dónde estaba el puntero el primer frame en que egui lo dio por arrastre: de ahí cuenta
+    /// egui_dock.
+    start: egui::Pos2,
+    /// Si egui_dock ya empezó el suyo ([`DOCK_DRAG_START`]).
+    begun: bool,
+}
+
 /// El panel que egui_dock arrastraba en el frame anterior (por su pestaña o por su franja), si
-/// alguno: lo que [`tab_drag_released`] recordó.
+/// alguno y si egui_dock ya empezó su arrastre (ver [`DOCK_DRAG_START`]): lo que
+/// [`tab_drag_released`] recordó. Una pulsación larga o un deslizón corto no lo son.
 pub(super) fn dragged_tab(ctx: &egui::Context) -> Option<PanelId> {
-    ctx.data(|d| d.get_temp::<Option<PanelId>>(tab_drag_id()))
+    ctx.data(|d| d.get_temp::<Option<TabDrag>>(tab_drag_id()))
         .flatten()
+        .filter(|d| d.begun)
+        .map(|d| d.id)
 }
 
 /// El panel que egui_dock arrastraba y dónde se soltó, el frame en que se suelta. Mientras se
 /// arrastra (por su pestaña o por la franja de un grupo sin barra), se recuerda cuál es: el frame
-/// de soltar egui_dock ya no lo dice. El lienzo no cuenta (su arrastre se corta).
+/// de soltar egui_dock ya no lo dice. El lienzo no cuenta (su arrastre se corta), ni lo que egui da
+/// por arrastrado sin que egui_dock haya empezado el suyo (ver [`dragged_tab`]): ahí egui_dock no
+/// hace nada y el workspace tampoco.
 pub(super) fn tab_drag_released(
     ctx: &egui::Context,
     state: &DockState<PanelId>,
@@ -494,8 +520,11 @@ pub(super) fn tab_drag_released(
 ) -> Option<(PanelId, egui::Pos2)> {
     let memory = tab_drag_id();
     if ctx.input(|i| i.pointer.primary_released()) {
-        let id = ctx.data_mut(|d| d.remove_temp::<Option<PanelId>>(memory))??;
-        return Some((id, ctx.input(|i| i.pointer.latest_pos())?.round()));
+        let drag = ctx.data_mut(|d| d.remove_temp::<Option<TabDrag>>(memory))??;
+        if !drag.begun {
+            return None;
+        }
+        return Some((drag.id, ctx.input(|i| i.pointer.latest_pos())?.round()));
     }
     let dragged = hits
         .iter()
@@ -508,7 +537,22 @@ pub(super) fn tab_drag_released(
                 .and_then(|(_, leaf)| leaf.tabs.get(leaf.active.0).copied())
         })
         .filter(|&id| id != PanelId::Canvas);
-    ctx.data_mut(|d| d.insert_temp(memory, dragged));
+    let before = ctx
+        .data(|d| d.get_temp::<Option<TabDrag>>(memory))
+        .flatten();
+    let pointer = ctx.pointer_interact_pos();
+    let drag = dragged.zip(pointer).map(|(id, p)| {
+        let start = before.filter(|d| d.id == id).map_or(p, |d| d.start);
+        let delta = p - start;
+        TabDrag {
+            id,
+            start,
+            begun: before.is_some_and(|d| d.id == id && d.begun)
+                || delta.x.abs() > DOCK_DRAG_START.x
+                || delta.y.abs() > DOCK_DRAG_START.y,
+        }
+    });
+    ctx.data_mut(|d| d.insert_temp(memory, drag));
     None
 }
 

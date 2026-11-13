@@ -791,3 +791,110 @@ fn the_dragged_window_is_translucent_without_pixel_ui_too() {
     assert!(h.app.workspace.docked(PanelId::Color), "{}", describe(&h));
     assert!(h.leaf(PanelId::Color).left() > h.leaf(PanelId::Canvas).right());
 }
+
+// --- Tarea 3: lo que dejó la revisión de la tarea 2 ---
+
+#[test]
+fn a_long_press_or_a_short_slide_on_a_floating_lone_tab_off_the_tree_leaves_its_window() {
+    // egui da el arrastre por decidido (apretado más de 0.8 s, o 6 a 30 pt a lo ancho) sin que
+    // egui_dock haya empezado el suyo: soltar fuera del árbol (aquí, sobre la barra de menús) no
+    // es soltar en nada, y la ventana se queda donde estaba (no salta con su esquina al puntero).
+    let size = vec2(960.0, 505.0);
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for slide in [0.0, 20.0] {
+        let mut h = essentials(size);
+        h.app.workspace.float(PanelId::Color, pos2(300.0, 0.0));
+        for _ in 0..5 {
+            h.frame();
+        }
+        let window = h.window(PanelId::Color);
+        let tab = h.button("Color").center();
+        assert!(
+            tab.y < h.leaf(PanelId::Tools).top(),
+            "the tab is off the tree"
+        );
+        h.frame_with(vec![Event::PointerMoved(tab)]);
+        h.frame_with(vec![press(tab, true)]);
+        let to = tab + vec2(slide, 0.0);
+        for t in [0.25, 0.5, 0.75, 1.0] {
+            h.frame_with(vec![Event::PointerMoved(tab + (to - tab) * t)]);
+        }
+        // Más de 0.8 s quieto (cada frame del arnés son 0.05 s).
+        for _ in 0..20 {
+            h.frame();
+        }
+        release_at(&mut h, to);
+        for _ in 0..3 {
+            h.frame();
+        }
+        assert!(h.app.workspace.floating(PanelId::Color), "slide {slide}");
+        assert_eq!(h.window(PanelId::Color), window, "slide {slide}");
+    }
+}
+
+#[test]
+fn starting_to_drag_a_floating_lone_tab_paints_no_zone_on_its_own_window() {
+    // El primer frame del arrastre de egui_dock, su destino es todavía la propia ventana (antes
+    // de que haya arrastre no pregunta `allowed_in_windows`): su zona no se pinta (la ventana no
+    // es destino). Se arrastra a lo largo de su barra, de a 4 pt.
+    let size = vec2(1200.0, 800.0);
+    let mut h = color_floating(size, Start::Middle);
+    let window = h.window(PanelId::Color);
+    let from = h.button("Color").center();
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![Event::PointerButton {
+        pos: from,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    }]);
+    for k in 1..=16 {
+        let at = from + vec2(4.0 * k as f32, 0.0);
+        h.frame_with(vec![Event::PointerMoved(at)]);
+        let own: Vec<Rect> = drop_zones(&h)
+            .into_iter()
+            .filter(|z| window.expand(1.0).contains_rect(*z))
+            .collect();
+        assert_eq!(own, [], "frame {k}: a zone on its own window {window:?}");
+    }
+}
+
+#[test]
+fn a_two_tab_window_over_the_right_strip_takes_its_own_tab_dropped_on_it() {
+    // Con dos pestañas, la ventana sí es destino (regla B): soltar una de ellas sobre la propia
+    // ventana, encima de la tira, la deja en la ventana (no la manda a la orilla de la tira).
+    let size = vec2(960.0, 505.0);
+    let mut h = color_floating(size, Start::Right);
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Library, DockTarget::Leaf(s, n));
+    for _ in 0..3 {
+        h.frame();
+    }
+    let window = h.window(PanelId::Color);
+    let strip = h.panel("dock");
+    let to = pos2(strip.center().x, window.center().y);
+    assert!(
+        window.contains(to) && strip.contains(to),
+        "{window:?} {strip:?}"
+    );
+    let tab = h.button("Color").center();
+    hold_drag(&mut h, tab, to);
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    let (color, library) = (
+        w.leaf_of(PanelId::Color).unwrap(),
+        w.leaf_of(PanelId::Library).unwrap(),
+    );
+    assert!(w.floating(PanelId::Color), "{}", describe(&h));
+    assert_eq!(color.0, library.0, "{}", describe(&h));
+}

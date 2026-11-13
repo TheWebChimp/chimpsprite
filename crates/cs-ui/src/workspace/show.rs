@@ -976,9 +976,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         .filter(|r| r.is_positive())
         .collect();
     armed.canvas_drop = canvas_drop;
-    armed.faded = through
-        .filter(|_| !ctx.input(|i| i.pointer.primary_released()))
-        .map(|(_, s)| skin::window_layer(s));
+    let faded = through.filter(|_| !ctx.input(|i| i.pointer.primary_released()));
+    armed.faded = faded.map(|(_, s)| skin::window_layer(s));
+    armed.faded_leaf = faded.and_then(|(id, _)| workspace.leaf_rect(id));
     skin::arm(&ctx, armed);
     for id in closed {
         match id {

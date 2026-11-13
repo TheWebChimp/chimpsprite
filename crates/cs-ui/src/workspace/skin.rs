@@ -54,12 +54,19 @@
 //!     superficie principal) lo deja: es la primera llamada a `allowed_in_windows` después de ese
 //!     `ui` (el menú de las pestañas va apagado). El `Viewer` de `show` marca su grupo en `ui` y
 //!     `allowed_in_windows` gasta la marca (dice que no). La llamada de `show_drag_drop_overlay`
-//!     (al empezar el `DockArea`, antes de los grupos) no la ve.
+//!     (al empezar el `DockArea`, antes de los grupos) no la ve. El frame en que egui_dock empieza
+//!     el arrastre todavía no hay `dnd` (no pregunta `allowed_in_windows`) y el destino es la
+//!     propia ventana: su zona (el grupo entero o su barra, `Armed::faded_leaf`) no se pinta.
 //! 13. El grupo recordado (punto 9) se cambia en `State::set_drag_and_drop`, al empezar el
 //!     `DockArea`, solo si pasó `overlay.feel.max_preference_time` del estilo de ese frame desde
 //!     que se fijó. Con el puntero sobre la ventana que se arrastra va en 0: al empezar a
 //!     arrastrar el grupo recordado es el suyo (antes de que haya destino, egui_dock no pregunta
 //!     `allowed_in_windows`), y ahí lo de debajo cuenta en cuanto llega.
+//! 14. Cuándo empieza egui_dock el arrastre de una pestaña o de la franja de agarre
+//!     (`try_initiate_tab_drag` en `show/leaf.rs`): con el puntero a más de 30 pt a lo ancho o de
+//!     6 a lo alto de donde estaba el primer frame en que egui lo dio por arrastre
+//!     (`drop::DOCK_DRAG_START`). Antes (una pulsación larga, un deslizón corto) no suelta nada, y
+//!     `workspace` tampoco (`drop::dragged_tab`).
 
 use std::sync::Arc;
 
@@ -244,6 +251,9 @@ pub(super) struct Armed {
     /// Mientras se arrastra la única pestaña de una ventana flotante (ver `drop::see_through`):
     /// la capa de esa ventana ([`window_layer`]), que va con [`SEE_THROUGH`] de opacidad.
     pub faded: Option<LayerId>,
+    /// Y el rect de su grupo: la zona de destino de egui_dock que es ese grupo o su barra no se
+    /// pinta (ver [`own_zone`]).
+    pub faded_leaf: Option<Rect>,
 }
 
 impl Armed {
@@ -350,6 +360,12 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
                 }
                 *shape = etched_in(r.rect, &c, ppp);
             } else if r.fill == M_DROP {
+                // La de la ventana que se ve a través: no es destino (el primer frame del
+                // arrastre egui_dock todavía apunta a ella, ver el punto 12 del módulo).
+                if armed.faded_leaf.is_some_and(|leaf| own_zone(r.rect, leaf)) {
+                    *shape = Shape::Noop;
+                    return;
+                }
                 // En puntos enteros, como las de la tira (`drop::drop_zone`): egui_dock parte un
                 // grupo de alto impar a medio punto.
                 let rect = match armed.canvas_drop {
@@ -373,6 +389,15 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
 /// Si `a` y `b` son el mismo rect (a medio punto: egui_dock lo ajusta a píxel físico).
 fn same_rect(a: Rect, b: Rect) -> bool {
     (a.min - b.min).length() < 1.5 && (a.max - b.max).length() < 1.5
+}
+
+/// Si la zona de destino `zone` de egui_dock es el grupo `leaf` entero (soltar como pestaña en su
+/// cuerpo) o su barra de pestañas (o la franja de agarre, sin barra): lo de arriba del grupo, de
+/// su orilla izquierda, a lo más tan ancho como él y del alto de una barra.
+fn own_zone(zone: Rect, leaf: Rect) -> bool {
+    let top = (zone.min - leaf.min).length() < 1.5;
+    top && (same_rect(zone, leaf)
+        || (zone.height() <= TAB_BAR_H + 1.5 && zone.right() <= leaf.right() + 1.5))
 }
 
 /// Multiplica la opacidad de los rects llenos y de las mallas de `shape` (las piezas del skin son
@@ -1104,6 +1129,24 @@ mod tests {
         let Shape::Mesh(mesh) = &v[0] else { panic!() };
         let colors: Vec<Color32> = mesh.vertices.iter().map(|v| v.color).collect();
         assert_eq!(colors, [Color32::PLACEHOLDER, faded]);
+    }
+
+    #[test]
+    fn the_zone_of_the_faded_window_is_its_group_or_its_tab_bar_only() {
+        let leaf = Rect::from_min_max(egui::pos2(429.0, 95.0), egui::pos2(649.0, 393.0));
+        let at = |x0, y0, x1, y1| Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+        // El grupo entero, su barra (sin lo del «) y la franja de agarre de un grupo sin barra, a
+        // medio punto.
+        assert!(own_zone(leaf, leaf));
+        assert!(own_zone(leaf.translate(vec2(0.5, 0.5)), leaf));
+        assert!(own_zone(at(429.0, 95.0, 632.0, 112.0), leaf));
+        assert!(own_zone(at(429.0, 95.0, 649.0, 98.0), leaf));
+        // Lo de otro grupo (debajo o encima de ella), no: la mitad de abajo, una barra más abajo,
+        // uno más ancho o el lienzo entero.
+        assert!(!own_zone(leaf.with_min_y(leaf.center().y), leaf));
+        assert!(!own_zone(at(429.0, 120.0, 632.0, 137.0), leaf));
+        assert!(!own_zone(at(429.0, 95.0, 900.0, 112.0), leaf));
+        assert!(!own_zone(at(37.0, 63.0, 937.0, 780.0), leaf));
     }
 
     #[test]

@@ -175,7 +175,6 @@ impl Workspace {
     }
 
     /// El rect del grupo de `id` (el del frame pasado), si está en el árbol.
-    #[cfg(test)]
     pub(crate) fn leaf_rect(&self, id: PanelId) -> Option<egui::Rect> {
         let path = self.state.find_tab(&id)?;
         self.state.leaf(path.node_path()).ok().map(|leaf| leaf.rect)
