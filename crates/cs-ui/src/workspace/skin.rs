@@ -71,6 +71,12 @@
 //!     6 a lo alto de donde estaba el primer frame en que egui lo dio por arrastre
 //!     (`drop::DOCK_DRAG_START`). Antes (una pulsación larga, un deslizón corto) no suelta nada, y
 //!     `workspace` tampoco (`drop::dragged_tab`).
+//! 15. egui_dock mueve lo soltado al empezar `show_inside` y dibuja ese frame con el split nuevo a
+//!     la mitad (0.5), antes de que `workspace` acomode los lados (`pin_sides` y `fit_splits` van
+//!     fuera del `DockArea`): partiendo un grupo angosto (la toolbar, 35 pt), un lado queda más
+//!     angosto que su panel. Ese frame (el de soltar) el `Viewer` acomoda lo de adentro en su
+//!     mínimo, recortado (`Viewer::squeeze`), y se vuelve a dibujar. La segunda pasada de egui
+//!     no trae el soltar (su entrada va vacía).
 
 use std::sync::Arc;
 

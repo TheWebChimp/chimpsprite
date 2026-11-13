@@ -992,3 +992,33 @@ fn the_preview_tab_offers_no_dock() {
     h.click(h.button("Library").center(), PointerButton::Secondary);
     assert!(dock_offered(&h));
 }
+
+// --- Tarea 3: el crash en debug al soltar a la derecha de la toolbar ---
+
+#[test]
+fn a_tab_dropped_on_the_right_of_the_toolbar_docks_beside_it() {
+    // (d) de la investigación: la pestaña de Color soltada en el borde derecho de la toolbar.
+    // egui_dock parte su hoja (35 pt) por la mitad y dibuja ese frame así, antes de que el
+    // workspace le dé a cada lado su mínimo: Color se acomodaba en 16.5 pt (0 sin sus márgenes) y
+    // en debug tronaba (egui `placer.rs`, "Negative child size": la caja de la paleta, de 0 de
+    // ancho, sin sus bordes). Ahora se acomoda en su mínimo, y queda entre la toolbar y el lienzo.
+    for size in [vec2(960.0, 505.0), vec2(1200.0, 800.0)] {
+        let mut h = color_floating(size, Start::Middle);
+        let tools = h.leaf(PanelId::Tools);
+        let tab = h.button("Color").center();
+        let to = pos2(tools.right() - 2.0, h.leaf(PanelId::Canvas).center().y);
+        hold_drag(&mut h, tab, to);
+        release_at(&mut h, to);
+        for _ in 0..3 {
+            h.frame();
+        }
+        let case = format!("{size:?}:\n{}", describe(&h));
+        assert!(h.app.workspace.docked(PanelId::Color), "{case}");
+        let (tools, color) = (h.leaf(PanelId::Tools), h.leaf(PanelId::Color));
+        let canvas = h.leaf(PanelId::Canvas);
+        assert!(tools.right() < color.left(), "{case}");
+        assert!(color.right() < canvas.left(), "{case}");
+        // Su mínimo (no la mitad de la toolbar).
+        assert!(color.width() >= 100.0, "{case}");
+    }
+}

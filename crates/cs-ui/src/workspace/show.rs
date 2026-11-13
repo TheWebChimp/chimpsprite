@@ -100,36 +100,62 @@ struct Viewer<'a> {
     /// Si el grupo que egui_dock acaba de dibujar es el de `see_through`: la pone `ui` y la gasta
     /// `allowed_in_windows` (ver el punto 12 de `skin`).
     own_group: std::cell::Cell<bool>,
+    /// Lo mínimo de cada panel en su grupo (el de `workspace_minima`, con el margen de su cuerpo).
+    minima: &'a Minima,
+    /// Si en este frame egui_dock suelta una pestaña (ver [`Viewer::squeeze`]).
+    dropping: bool,
+    /// Si algún panel se acomodó en un grupo más angosto que su mínimo (ver [`Viewer::squeeze`]).
+    squeezed: bool,
 }
 
-impl TabViewer for Viewer<'_> {
-    type Tab = PanelId;
-
-    fn id(&mut self, tab: &mut PanelId) -> egui::Id {
-        egui::Id::new(("workspace_tab", tab.key()))
-    }
-
-    /// Con Pixel UI, el título casi sin ancho (fuente de 1 pt, transparente): el ancho de la
-    /// pestaña lo pone `minimum_width` (el del kit) y no el texto más los 16 de aire de egui_dock.
-    /// El nombre para los lectores de pantalla va en `on_tab_button`... después del `DockArea`.
-    fn title(&mut self, tab: &mut PanelId) -> egui::WidgetText {
-        let title = tab.spec().title;
-        if self.skinned {
-            egui::RichText::new(title)
-                .size(1.0)
-                .color(egui::Color32::TRANSPARENT)
-                .into()
-        } else {
-            title.into()
+impl Viewer<'_> {
+    /// El margen del cuerpo de `tab` en su grupo: el del panel derecho de hoy para Color, el del
+    /// izquierdo para la toolbar, ninguno para el lienzo y el timeline justo debajo de él (su
+    /// marco es suyo), el de su ventana de antes para el Preview solo, el de los paneles del dock
+    /// para los demás; pegado al divisor de la columna, un divisor menos a la izquierda.
+    fn body_margin(&self, tab: &PanelId) -> egui::Margin {
+        let mut margin = match tab {
+            // El lienzo, de borde a borde (sus márgenes son los del `CentralPanel` de antes).
+            PanelId::Canvas => egui::Margin::ZERO,
+            PanelId::Color => self.color_margin,
+            PanelId::Tools => self.tools_margin,
+            // Debajo del lienzo, el marco lo pone el timeline (el del panel de abajo de antes).
+            PanelId::Timeline if self.timeline_below => egui::Margin::ZERO,
+            PanelId::Timeline => self.timeline_margin,
+            // Solo en su ventana, lo de adentro donde va en su ventana de antes.
+            PanelId::Preview => match &self.preview_window {
+                Some(w) => w.margin,
+                None => egui::Margin::same(dock::FLYOUT_MARGIN),
+            },
+            _ => egui::Margin::same(dock::FLYOUT_MARGIN),
+        };
+        if self.beside.contains(tab) {
+            margin.left = (f32::from(margin.left) - self.sep).max(0.0) as i8;
         }
+        margin
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut PanelId) {
-        let id = *tab;
-        self.own_group.set(self.see_through == Some(id));
-        let spacing = ui.spacing().item_spacing;
-        ui.set_style(self.style.clone());
-        ui.spacing_mut().item_spacing = spacing;
+    /// El ancho mínimo de lo de adentro de `id`, si su cuerpo en `ui` es más angosto, el frame en
+    /// que egui_dock suelta una pestaña (`dropping`): parte el grupo de destino por la mitad y lo
+    /// dibuja así antes de que `fit_splits` le dé a cada lado su mínimo (ver el punto 15 de
+    /// `skin`); partiendo uno angosto (la toolbar, de 35 pt), un lado queda más angosto que su
+    /// panel. Ese frame se vuelve a dibujar (ver `show`). Solo ese: en reposo los mínimos no son
+    /// exactos para todos (la toolbar flotando, el timeline angosto de algunos tests) y lo de
+    /// adentro se acomoda en lo que hay, como siempre. El lienzo no (lleva el suyo), ni el
+    /// Preview solo en su ventana (su ventana es la de antes, de su tamaño).
+    fn squeeze(&self, ui: &egui::Ui, id: PanelId) -> Option<f32> {
+        if !self.dropping
+            || id == PanelId::Canvas
+            || (id == PanelId::Preview && self.preview_window.is_some())
+        {
+            return None;
+        }
+        let min = self.minima.get(&id)?.x - self.body_margin(&id).sum().x;
+        (ui.max_rect().width() + 0.5 < min).then_some(min)
+    }
+
+    /// Lo de adentro de `id` en `ui` (el cuerpo de su grupo).
+    fn panel(&mut self, ui: &mut egui::Ui, id: PanelId) {
         // El lienzo (y el panel 3D fijo de la pestaña de un modelo): lo de antes del
         // `CentralPanel`.
         if id == PanelId::Canvas {
@@ -267,7 +293,54 @@ impl TabViewer for Viewer<'_> {
             });
         }
     }
+}
 
+impl TabViewer for Viewer<'_> {
+    type Tab = PanelId;
+
+    fn id(&mut self, tab: &mut PanelId) -> egui::Id {
+        egui::Id::new(("workspace_tab", tab.key()))
+    }
+
+    /// Con Pixel UI, el título casi sin ancho (fuente de 1 pt, transparente): el ancho de la
+    /// pestaña lo pone `minimum_width` (el del kit) y no el texto más los 16 de aire de egui_dock.
+    /// El nombre para los lectores de pantalla va en `on_tab_button`... después del `DockArea`.
+    fn title(&mut self, tab: &mut PanelId) -> egui::WidgetText {
+        let title = tab.spec().title;
+        if self.skinned {
+            egui::RichText::new(title)
+                .size(1.0)
+                .color(egui::Color32::TRANSPARENT)
+                .into()
+        } else {
+            title.into()
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut PanelId) {
+        let id = *tab;
+        self.own_group.set(self.see_through == Some(id));
+        let spacing = ui.spacing().item_spacing;
+        ui.set_style(self.style.clone());
+        ui.spacing_mut().item_spacing = spacing;
+        // El frame en que egui_dock suelta, en un grupo más angosto que su mínimo (ver
+        // `squeeze`), lo de adentro va de su mínimo, recortado a su grupo: no se acomoda en menos
+        // (la caja de la paleta de Color, de 0 de ancho en la mitad de la toolbar, medía -6 sin
+        // sus bordes, y egui truena en debug con un tamaño negativo).
+        if let Some(min) = self.squeeze(ui, id) {
+            let body = ui.max_rect();
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(body.with_max_x(body.left() + min))
+                    .layout(*ui.layout()),
+            );
+            child.set_clip_rect(ui.clip_rect());
+            self.squeezed = true;
+            self.panel(&mut child, id);
+            return;
+        }
+        self.panel(ui, id);
+    }
     fn on_tab_button(&mut self, tab: &mut PanelId, response: &egui::Response) {
         self.hits.push(skin::TabHit {
             id: *tab,
@@ -310,25 +383,7 @@ impl TabViewer for Viewer<'_> {
         if self.skinned {
             style.minimum_width = self.widths.get(tab).copied();
         }
-        let mut margin = match tab {
-            // El lienzo, de borde a borde (sus márgenes son los del `CentralPanel` de antes).
-            PanelId::Canvas => egui::Margin::ZERO,
-            PanelId::Color => self.color_margin,
-            PanelId::Tools => self.tools_margin,
-            // Debajo del lienzo, el marco lo pone el timeline (el del panel de abajo de antes).
-            PanelId::Timeline if self.timeline_below => egui::Margin::ZERO,
-            PanelId::Timeline => self.timeline_margin,
-            // Solo en su ventana, lo de adentro donde va en su ventana de antes.
-            PanelId::Preview => match &self.preview_window {
-                Some(w) => w.margin,
-                None => egui::Margin::same(dock::FLYOUT_MARGIN),
-            },
-            _ => egui::Margin::same(dock::FLYOUT_MARGIN),
-        };
-        if self.beside.contains(tab) {
-            margin.left = (f32::from(margin.left) - self.sep).max(0.0) as i8;
-        }
-        style.tab_body.inner_margin = margin;
+        style.tab_body.inner_margin = self.body_margin(tab);
         Some(style)
     }
 
@@ -676,6 +731,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         style: ui.style().clone(),
         see_through: through.map(|(id, _)| id),
         own_group: Default::default(),
+        minima: &m,
+        dropping: ctx.input(|i| i.pointer.primary_released()) && dragged_tab(&ctx).is_some(),
+        squeezed: false,
     };
     let strip = workspace.strip_at(Edge::Right).to_vec();
     // Con un diálogo modal, lo que el `DockArea` cambiaría (ver `Frozen`) se repone después, y las
@@ -781,6 +839,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         mut closed,
         extents,
         mut canvas,
+        squeezed,
         ..
     } = viewer;
     // La tira de íconos, de alto completo a la derecha del lienzo (y del timeline justo debajo),
@@ -1068,6 +1127,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     // frame ya se dibujó con la de antes, así que se descarta y se vuelve a dibujar (sin el
     // parpadeo de un frame).
     changed |= workspace.refresh_tab_bars() | bars_moved;
+    // Un panel acomodado en su mínimo en un grupo más angosto (egui_dock acaba de soltar, ver
+    // `Viewer::squeeze`): con los lados en su mínimo, se vuelve a dibujar.
+    changed |= squeezed;
     if changed {
         ctx.request_discard("workspace layout changed");
     }
