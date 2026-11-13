@@ -10,7 +10,9 @@
 //!   encima, en su misma capa, con el rect de `TabViewer::on_tab_button` (ver [`paint_tabs`]).
 //!
 //! Además, [`snap`] y [`snap_windows`] dejan los divisores y las ventanas en puntos enteros
-//! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin).
+//! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin), y el mismo
+//! plugin pinta translúcida la ventana cuya única pestaña se arrastra (`Armed::faded`, con o sin
+//! Pixel UI; ver `drop::see_through`).
 //!
 //! **Depende de detalles internos de egui_dock 0.21.1** (por eso la versión va fija en
 //! `Cargo.toml`). Al subir de versión hay que revisarlos:
@@ -45,6 +47,19 @@
 //! 11. `separator.extra`: de fábrica, 175; `show_separator` lo impone cada frame como lo mínimo de
 //!     cada lado de un split (la toolbar o una columna angosta no cabrían). Va en 0: los mínimos
 //!     los pone `fit_splits`.
+//! 12. La ventana que se arrastra no es destino (`drop::see_through`, en `show`): cada grupo que
+//!     contiene el puntero sobrescribe el destino (`hover_data`, el último gana: la superficie
+//!     principal primero, las ventanas después) en `tab_body` de `show/leaf.rs`, justo después
+//!     de `TabViewer::ui` de su pestaña al frente, y solo si `TabViewer::allowed_in_windows` (o la
+//!     superficie principal) lo deja: es la primera llamada a `allowed_in_windows` después de ese
+//!     `ui` (el menú de las pestañas va apagado). El `Viewer` de `show` marca su grupo en `ui` y
+//!     `allowed_in_windows` gasta la marca (dice que no). La llamada de `show_drag_drop_overlay`
+//!     (al empezar el `DockArea`, antes de los grupos) no la ve.
+//! 13. El grupo recordado (punto 9) se cambia en `State::set_drag_and_drop`, al empezar el
+//!     `DockArea`, solo si pasó `overlay.feel.max_preference_time` del estilo de ese frame desde
+//!     que se fijó. Con el puntero sobre la ventana que se arrastra va en 0: al empezar a
+//!     arrastrar el grupo recordado es el suyo (antes de que haya destino, egui_dock no pregunta
+//!     `allowed_in_windows`), y ahí lo de debajo cuenta en cuanto llega.
 
 use std::sync::Arc;
 
@@ -90,6 +105,9 @@ const DROP_FILL: &str = "select.item.hover";
 /// La opacidad del relleno de la zona de destino y del contorno de "ventana nueva".
 const DROP_ALPHA: f32 = 0.45;
 const NEW_WINDOW_ALPHA: f32 = 0.6;
+/// La opacidad de la ventana flotante cuya única pestaña se arrastra (ver `drop::see_through`):
+/// lo de debajo se ve.
+pub(super) const SEE_THROUGH: f32 = 0.4;
 
 /// El estilo de egui_dock con la piel: barra y pestañas transparentes (las del kit van encima),
 /// divisores y zona de destino con colores marcador, sin los botones de egui_dock (son líneas).
@@ -209,7 +227,8 @@ pub(super) fn flyout_margin(skin: &Skin) -> Margin {
 #[derive(Default)]
 pub(super) struct SkinRewriter;
 
-/// Lo que el workspace le deja al plugin en un frame: el skin y dónde puede haber marcadores.
+/// Lo que el workspace le deja al plugin en un frame: el skin (sin Pixel UI, ninguno: solo se
+/// atenúa la ventana de `faded`), dónde puede haber marcadores y qué ventana se ve a través.
 #[derive(Clone, Default)]
 pub(super) struct Armed {
     skin: Option<Arc<Skin>>,
@@ -222,12 +241,15 @@ pub(super) struct Armed {
     /// verdad ocuparía lo soltado. egui_dock pinta el grupo entero ("como pestaña"), pero el lienzo
     /// no recibe pestañas: `tidy_canvas` lo parte al lado, del lado del cuadrante.
     pub canvas_drop: Option<(Rect, Rect)>,
+    /// Mientras se arrastra la única pestaña de una ventana flotante (ver `drop::see_through`):
+    /// la capa de esa ventana ([`window_layer`]), que va con [`SEE_THROUGH`] de opacidad.
+    pub faded: Option<LayerId>,
 }
 
 impl Armed {
-    pub(super) fn new(skin: Arc<Skin>) -> Armed {
+    pub(super) fn new(skin: Option<Arc<Skin>>) -> Armed {
         Armed {
-            skin: Some(skin),
+            skin,
             ..Default::default()
         }
     }
@@ -260,6 +282,36 @@ pub(super) fn arm(ctx: &egui::Context, armed: Armed) {
 impl egui::Plugin for SkinRewriter {
     fn debug_name(&self) -> &'static str {
         "workspace_skin_rewriter"
+    }
+
+    /// La ventana que se ve a través (`Armed::faded`), cuando ya se pintó todo lo de su capa en
+    /// el frame (las pestañas del kit y su « van después del `DockArea`) y antes de que egui junte
+    /// las capas: sus marcadores cambiados aquí (ya atenuados no se reconocerían) y todo a
+    /// [`SEE_THROUGH`] de opacidad. La pastilla que sigue al puntero va en otra capa: opaca.
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx();
+        let Some(armed) = ctx.data(|d| d.get_temp::<Armed>(rewriter_id())) else {
+            return;
+        };
+        let Some(layer) = armed.faded else {
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        ctx.graphics_mut(|g| {
+            let Some(list) = g.get_mut(layer) else {
+                return;
+            };
+            for i in 0..list.next_idx().0 {
+                list.mutate_shape(egui::layers::ShapeIdx(i), |c| {
+                    if let Some(skin) = &armed.skin
+                        && armed.in_scope(c.clip_rect)
+                    {
+                        rewrite(&mut c.shape, skin, ppp, &armed);
+                    }
+                    see_through(&mut c.shape, SEE_THROUGH);
+                });
+            }
+        });
     }
 
     fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
@@ -335,6 +387,17 @@ fn fade(shape: &mut Shape, alpha: f32) {
             .for_each(|v| v.color = v.color.gamma_multiply(alpha)),
         _ => {}
     }
+}
+
+/// Multiplica la opacidad de todo `shape` (como `Ui::multiply_opacity`: el texto y los trazos
+/// también; el color "el del texto" de las letras, `Color32::PLACEHOLDER`, se queda: lo cambia
+/// el teselador por el del texto, que sí se atenúa).
+fn see_through(shape: &mut Shape, alpha: f32) {
+    egui::epaint::shape_transform::adjust_colors(shape, move |c| {
+        if *c != Color32::PLACEHOLDER {
+            *c = c.gamma_multiply(alpha);
+        }
+    });
 }
 
 /// Una línea grabada a lo largo del rect: vertical si es alto, horizontal si es ancho.
@@ -1020,6 +1083,27 @@ mod tests {
             panic!("a piece is a mesh")
         };
         assert!(mesh.vertices.iter().all(|v| v.color.a() < 255), "{mesh:?}");
+    }
+
+    #[test]
+    fn seeing_through_fades_every_color_but_the_text_placeholder() {
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(10.0, 10.0));
+        let faded = Color32::RED.gamma_multiply(SEE_THROUGH);
+        let mut fill = Shape::rect_filled(rect, 0.0, Color32::RED);
+        see_through(&mut fill, SEE_THROUGH);
+        let Shape::Rect(r) = &fill else { panic!() };
+        assert_eq!(r.fill, faded);
+        // Las letras de un texto van con `PLACEHOLDER` ("el color del texto"): lo cambia el
+        // teselador, y el color del texto ya va atenuado.
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(rect.min, Color32::PLACEHOLDER);
+        mesh.colored_vertex(rect.max, Color32::RED);
+        let mut shape = Shape::Vec(vec![Shape::mesh(mesh)]);
+        see_through(&mut shape, SEE_THROUGH);
+        let Shape::Vec(v) = &shape else { panic!() };
+        let Shape::Mesh(mesh) = &v[0] else { panic!() };
+        let colors: Vec<Color32> = mesh.vertices.iter().map(|v| v.color).collect();
+        assert_eq!(colors, [Color32::PLACEHOLDER, faded]);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use eframe::egui;
 use egui_dock::{DockArea, TabViewer};
 
 use super::dividers::{cover_timeline_divider, cover_tools_divider, paint_crossings};
-use super::drop::{Bounds, dragged_tab, paint_tab_drop, tab_drag_released, tab_drop};
+use super::drop::{Bounds, dragged_tab, paint_tab_drop, see_through, tab_drag_released, tab_drop};
 use super::fit::{
     Minima, block_canvas_drag, chrome, fit_splits, fit_windows, fractions, half, minima, pin_sides,
     quadrant, record_sides, tidy_canvas, toolbar_width,
@@ -92,6 +92,12 @@ struct Viewer<'a> {
     /// toma el del contexto, y en el frame en que Pixel UI cambia el estilo los dos no coinciden
     /// (el panel derecho de antes usaba el del anfitrión, y de ese frame sale su ancho).
     style: std::sync::Arc<egui::Style>,
+    /// Mientras se arrastra la única pestaña de una ventana flotante, ese panel (ver
+    /// `drop::see_through`): el grupo de su ventana no es destino de egui_dock.
+    see_through: Option<PanelId>,
+    /// Si el grupo que egui_dock acaba de dibujar es el de `see_through`: la pone `ui` y la gasta
+    /// `allowed_in_windows` (ver el punto 12 de `skin`).
+    own_group: std::cell::Cell<bool>,
 }
 
 impl TabViewer for Viewer<'_> {
@@ -118,6 +124,7 @@ impl TabViewer for Viewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut PanelId) {
         let id = *tab;
+        self.own_group.set(self.see_through == Some(id));
         let spacing = ui.spacing().item_spacing;
         ui.set_style(self.style.clone());
         ui.spacing_mut().item_spacing = spacing;
@@ -285,8 +292,10 @@ impl TabViewer for Viewer<'_> {
     }
 
     /// El lienzo no flota (egui_dock tampoco lo deja arrastrar: ver `fit::block_canvas_drag`).
+    /// Justo después de dibujar el grupo de la ventana que se arrastra (`see_through`), no: así
+    /// egui_dock no lo toma como destino y queda el de debajo (ver el punto 12 de `skin`).
     fn allowed_in_windows(&self, tab: &mut PanelId) -> bool {
-        *tab != PanelId::Canvas
+        !self.own_group.take() && *tab != PanelId::Canvas
     }
 
     fn tab_style_override(
@@ -605,6 +614,18 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     if tab_drop.is_some() {
         skin::hide_drop_zone(&mut style);
     }
+    // La ventana cuya única pestaña se arrastra se ve a través y no es destino (ver
+    // `drop::see_through`). Con el puntero encima de ella, egui_dock no se queda con el grupo
+    // que recordaba (al empezar, el de ella misma): lo de debajo cuenta en cuanto llega (ver el
+    // punto 13 de `skin`).
+    let through = see_through(&workspace.state, dragged_tab(&ctx));
+    let over_own = through.zip(pointer).is_some_and(|((_, s), p)| {
+        ctx.memory(|m| m.area_rect(skin::window_area_id(s)))
+            .is_some_and(|r| r.contains(p))
+    });
+    if over_own {
+        style.overlay.feel.max_preference_time = 0.0;
+    }
     // Mientras se arrastra una pestaña sobre el lienzo: egui_dock pinta el lienzo entero ("como
     // pestaña"), pero lo que pasa es que se parte al lado (`tidy_canvas`): se pinta esa mitad.
     let canvas_drop = match (dragged_tab(&ctx).filter(|_| tab_drop.is_none()), pointer) {
@@ -650,6 +671,8 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         closed: Vec::new(),
         extents: Vec::new(),
         style: ui.style().clone(),
+        see_through: through.map(|(id, _)| id),
+        own_group: Default::default(),
     };
     let strip = workspace.strip_at(Edge::Right).to_vec();
     // Con un diálogo modal, lo que el `DockArea` cambiaría (ver `Frozen`) se repone después, y las
@@ -934,27 +957,29 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     {
         ctx.set_cursor_icon(egui::CursorIcon::Default);
     }
-    // Dónde puede haber marcadores este frame: el DockArea y sus ventanas, fuera del cuerpo de los
-    // grupos (ver `skin::Armed`).
-    if let Some(skin) = &shared_skin {
-        let mut armed = skin::Armed::new(skin.clone());
-        armed.areas.push(dock_rect);
-        for (s, _) in workspace.state.iter_surfaces_indexed() {
-            if !s.is_main()
-                && let Some(rect) = ctx.memory(|m| m.area_rect(skin::window_area_id(s)))
-            {
-                armed.areas.push(rect);
-            }
+    // Dónde puede haber marcadores este frame (con Pixel UI): el DockArea y sus ventanas, fuera
+    // del cuerpo de los grupos; y la ventana que se ve a través mientras se arrastra (hasta que
+    // se suelta), con o sin Pixel UI (ver `skin::Armed`).
+    let mut armed = skin::Armed::new(shared_skin.clone());
+    armed.areas.push(dock_rect);
+    for (s, _) in workspace.state.iter_surfaces_indexed() {
+        if !s.is_main()
+            && let Some(rect) = ctx.memory(|m| m.area_rect(skin::window_area_id(s)))
+        {
+            armed.areas.push(rect);
         }
-        armed.bodies = workspace
-            .state
-            .iter_leaves()
-            .map(|(_, leaf)| leaf.viewport)
-            .filter(|r| r.is_positive())
-            .collect();
-        armed.canvas_drop = canvas_drop;
-        skin::arm(&ctx, armed);
     }
+    armed.bodies = workspace
+        .state
+        .iter_leaves()
+        .map(|(_, leaf)| leaf.viewport)
+        .filter(|r| r.is_positive())
+        .collect();
+    armed.canvas_drop = canvas_drop;
+    armed.faded = through
+        .filter(|_| !ctx.input(|i| i.pointer.primary_released()))
+        .map(|(_, s)| skin::window_layer(s));
+    skin::arm(&ctx, armed);
     for id in closed {
         match id {
             // Cerrarlo es apagarlo (como su botón de la tira y View → Timeline): sale del árbol y
@@ -998,11 +1023,14 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
         }
         // Una pestaña (o un grupo sin barra) de egui_dock soltada fuera del árbol y de las
         // ventanas (en la barra de estado, la toolbar...): egui_dock no hace nada (solo suelta
-        // sobre sus grupos); aquí se pone a flotar donde se soltó, como un ícono de la tira.
+        // sobre sus grupos); aquí se pone a flotar donde se soltó, como un ícono de la tira. La
+        // ventana que se veía a través no cuenta (no es destino): sin nada debajo, su panel va
+        // donde se soltó.
+        let own = through.map(|(_, s)| s);
         let windows: Vec<egui::Rect> = workspace
             .state
             .iter_surfaces_indexed()
-            .filter(|(s, _)| !s.is_main())
+            .filter(|(s, _)| !s.is_main() && Some(*s) != own)
             .filter_map(|(s, _)| ctx.memory(|m| m.area_rect(skin::window_area_id(s))))
             .collect();
         let outside = !dock_rect.contains(at) && !windows.iter().any(|r| r.contains(at));

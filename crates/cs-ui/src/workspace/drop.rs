@@ -1,7 +1,8 @@
 //! Dónde cae un panel que se suelta ([`drop_target`]; sobre otra tira, [`strip_under`]), cómo se
 //! resalta mientras se arrastra ([`paint_drop_zone`] y, sobre otra tira, [`paint_strip_zone`]) y
 //! la pestaña de egui_dock que se suelta fuera de los grupos ([`tab_drag_released`]: el workspace
-//! la pone a flotar donde cayó).
+//! la pone a flotar donde cayó). La ventana cuya única pestaña se arrastra no es destino: se ve a
+//! través ([`see_through`]).
 
 use eframe::egui;
 use egui_dock::{DockState, NodePath};
@@ -107,11 +108,13 @@ pub(super) struct Bounds {
 impl Workspace {
     /// La orilla en cuya franja está `p` (ver [`edge_under`]), con lo dibujado en el último frame.
     /// La barra de pestañas de un grupo le gana a la franja (la de arriba pasa por las de los
-    /// grupos de hasta arriba): ahí se suelta como pestaña.
-    fn edge_at(&self, p: egui::Pos2) -> Option<Edge> {
+    /// grupos de hasta arriba): ahí se suelta como pestaña. Salvo las de la ventana `skip` (la que
+    /// se arrastra y no es destino: ver [`see_through`]).
+    fn edge_at(&self, p: egui::Pos2, skip: Option<SurfaceIndex>) -> Option<Edge> {
         let bounds = self.bounds.as_ref()?;
-        let on_tab_bar = self.state.iter_leaves().any(|(_, leaf)| {
-            !leaf.tab_bar_hidden
+        let on_tab_bar = self.state.iter_leaves().any(|(path, leaf)| {
+            Some(path.surface) != skip
+                && !leaf.tab_bar_hidden
                 && leaf
                     .rect
                     .with_max_y(leaf.rect.top() + self.sides.bar)
@@ -176,7 +179,7 @@ pub(crate) fn drop_target(w: &Workspace, pointer: egui::Pos2) -> DropTarget {
             })
     };
     if window.is_none()
-        && let Some(edge) = w.edge_at(pointer)
+        && let Some(edge) = w.edge_at(pointer, None)
     {
         return DropTarget::Edge(edge);
     }
@@ -303,7 +306,21 @@ pub(super) fn tab_drop(
             TabDrop::Edge(strip.edge)
         });
     }
-    w.edge_at(p).map(TabDrop::Edge)
+    let skip = see_through(&w.state, Some(id)).map(|(_, s)| s);
+    w.edge_at(p, skip).map(TabDrop::Edge)
+}
+
+/// La ventana flotante que se ve a través mientras se arrastra `dragged` (ver [`dragged_tab`]),
+/// si es su única pestaña: con su panel. Esa ventana se pinta translúcida
+/// (`skin::SEE_THROUGH`) y no es destino: soltar encima de ella cuenta lo de debajo (otro grupo,
+/// la franja de una orilla, una tira, el lienzo). Una ventana con más pestañas sí es destino.
+pub(super) fn see_through(
+    state: &DockState<PanelId>,
+    dragged: Option<PanelId>,
+) -> Option<(PanelId, SurfaceIndex)> {
+    let id = dragged?;
+    let surface = state.find_tab(&id)?.surface;
+    (!surface.is_main() && state[surface].num_tabs() == 1).then_some((id, surface))
 }
 
 /// Resalta dónde cae la pestaña de `id` arrastrada con el puntero en `p` (ver [`tab_drop`]): la

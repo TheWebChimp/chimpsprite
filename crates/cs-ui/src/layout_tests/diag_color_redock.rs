@@ -504,3 +504,290 @@ fn the_right_columns_width_preference_is_colors_only() {
         assert_eq!(h.app.palette_natural_width, natural);
     }
 }
+
+// --- Tarea 2: la ventana que se arrastra no tapa sus destinos ---
+
+/// La opacidad de la ventana flotante de `id` en el último frame (1: opaca): con Pixel UI, la
+/// del centro del 9-slice de su marco (`menu.side`, la malla más grande dentro de la ventana);
+/// sin él, la del relleno de su `Frame::window`.
+fn window_opacity(h: &LayoutHarness, id: PanelId) -> f32 {
+    fn walk(shape: &egui::Shape, out: &mut Vec<egui::Shape>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            s => out.push(s.clone()),
+        }
+    }
+    let window = h.window(id);
+    let mut shapes = Vec::new();
+    for clipped in &h.shapes {
+        walk(&clipped.shape, &mut shapes);
+    }
+    let alpha = match h.app.pixel.skin() {
+        Some(_) => {
+            let frame = h.piece("menu.side");
+            shapes.iter().find_map(|s| match s {
+                egui::Shape::Mesh(mesh) if mesh.texture_id == frame => {
+                    let bounds = mesh.calc_bounds();
+                    let inside = window.expand(0.5).contains_rect(bounds);
+                    (inside && bounds.area() > window.area() * 0.5)
+                        .then(|| mesh.vertices.iter().map(|v| v.color.a()).max().unwrap_or(0))
+                }
+                _ => None,
+            })
+        }
+        None => shapes.iter().find_map(|s| match s {
+            egui::Shape::Rect(r) if near(r.rect, window) && r.fill.a() > 0 => Some(r.fill.a()),
+            _ => None,
+        }),
+    };
+    let alpha = alpha.unwrap_or_else(|| panic!("no frame for {id:?}'s window {window:?}"));
+    f32::from(alpha) / 255.0
+}
+
+/// Si `a` es la opacidad de la ventana que se arrastra (el 40 %).
+fn see_through(a: f32) -> bool {
+    (a - 0.4).abs() < 0.02
+}
+
+/// Si en `h` Color quedó acoplado a la derecha del lienzo (solo del lienzo: el timeline sigue
+/// debajo de los dos), del ancho de la columna de Essentials (`column`).
+fn assert_split_right_of_the_canvas(h: &LayoutHarness, column: Rect, case: &str) {
+    let w = &h.app.workspace;
+    let why = || format!("{case}:\n{}", describe(h));
+    assert!(w.docked(PanelId::Color), "{}", why());
+    let (color, canvas) = (h.leaf(PanelId::Color), h.leaf(PanelId::Canvas));
+    assert!(color.left() > canvas.right(), "{}", why());
+    assert_eq!(
+        (color.top(), color.bottom()),
+        (canvas.top(), canvas.bottom()),
+        "{}",
+        why()
+    );
+    assert!(
+        h.leaf(PanelId::Timeline).top() > canvas.bottom(),
+        "{}",
+        why()
+    );
+    let got = w.column_rect().expect("a column");
+    assert_eq!(got.width(), column.width(), "{}", why());
+}
+
+#[test]
+fn the_floating_color_tab_dropped_over_its_own_window_counts_what_is_under_it() {
+    // Como la captura del usuario (960×505): Color flotando pegado a la orilla derecha, tapando
+    // la tira y el cuarto derecho del lienzo. Mientras se arrastra su única pestaña, su ventana
+    // se ve al 40 % y no es destino: con el puntero encima de ella, cuenta lo de debajo (y se
+    // pinta su zona). Antes, la tira ya funcionaba (tarea 1); el cuarto derecho del lienzo la
+    // volvía a flotar.
+    let size = vec2(960.0, 505.0);
+    let reference = essentials(size);
+    let column = reference.app.workspace.column_rect().unwrap();
+    let probe = color_floating(size, Start::Right);
+    let window = probe.window(PanelId::Color);
+    let canvas = probe.leaf(PanelId::Canvas);
+    let tab = probe.button("Color").center();
+    assert_eq!(
+        window_opacity(&probe, PanelId::Color),
+        1.0,
+        "opaque at rest"
+    );
+    // (i) Sobre la tira: Essentials.
+    let to = probe.panel("dock").center();
+    assert!(window.contains(to), "{window:?} covers {to:?}");
+    let mut h = color_floating(size, Start::Right);
+    hold_drag(&mut h, tab, to);
+    let opacity = window_opacity(&h, PanelId::Color);
+    assert!(see_through(opacity), "strip: {opacity}");
+    let zones = drop_zones(&h);
+    assert!(
+        zones.len() == 1 && near(zones[0], column),
+        "strip: {zones:?} vs {column:?}"
+    );
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_like(&h, &reference, "strip under its own window");
+    // (i') En la franja de la orilla, bajo su propia barra de pestañas (la barra de un grupo le
+    // gana a la franja, pero no la de la ventana que no es destino): Essentials.
+    let strip = probe.panel("dock");
+    let to = pos2(strip.left() - EDGE_BAND / 2.0, tab.y);
+    assert!(window.contains(to), "{window:?} covers {to:?}");
+    let mut h = color_floating(size, Start::Right);
+    hold_drag(&mut h, tab, to);
+    let zones = drop_zones(&h);
+    assert!(
+        zones.len() == 1 && near(zones[0], column),
+        "band: {zones:?} vs {column:?}"
+    );
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_like(&h, &reference, "band under its own tab bar");
+    // (ii) Sobre el cuarto derecho del lienzo: partido a la derecha del lienzo (como sin la
+    // ventana encima), con la zona de egui_dock de esa mitad.
+    let to = pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y);
+    assert!(window.contains(to), "{window:?} covers {to:?}");
+    let mut h = color_floating(size, Start::Right);
+    hold_drag(&mut h, tab, to);
+    let opacity = window_opacity(&h, PanelId::Color);
+    assert!(see_through(opacity), "canvas: {opacity}");
+    let half = canvas.with_min_x(canvas.center().x);
+    let zones = drop_zones(&h);
+    assert!(
+        zones.len() == 1 && near(zones[0], half),
+        "canvas: {zones:?} vs {half:?}"
+    );
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_split_right_of_the_canvas(&h, column, "canvas under its own window");
+    assert_eq!(drop_zones(&h), [], "nothing painted after");
+}
+
+#[test]
+fn the_floating_color_tab_dropped_over_its_own_window_with_nothing_under_it_floats_there() {
+    // Arrastrada desde la columna, la ventana llega hasta abajo de la pantalla y tapa la barra de
+    // estado: soltada ahí (fuera del árbol y de las demás ventanas) va donde se soltó, como
+    // fuera de todo. Antes su propia ventana contaba y no pasaba nada.
+    let size = vec2(960.0, 505.0);
+    let mut h = color_floating(size, Start::Dragged);
+    let window = h.window(PanelId::Color);
+    let tab = h.button("Color").center();
+    let to = pos2(window.center().x + 20.0, h.screen().bottom() - 8.0);
+    assert!(window.contains(to), "{window:?} covers {to:?}");
+    assert!(to.y > h.leaf(PanelId::Timeline).bottom(), "below the tree");
+    hold_drag(&mut h, tab, to);
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.workspace.floating(PanelId::Color), "{}", describe(&h));
+    let after = h.window(PanelId::Color);
+    assert!(
+        (after.left() - to.x.round()).abs() <= 1.0,
+        "{after:?} vs {to:?} (was {window:?})"
+    );
+}
+
+#[test]
+fn the_floating_color_tab_dropped_quickly_over_its_own_window_counts_what_is_under_it() {
+    // Sin quedarse quieto: egui_dock recuerda el grupo por el que pasó el puntero
+    // `max_preference_time` (0.3 s), y al empezar a arrastrar ese grupo es el de su propia
+    // ventana. Encima de ella, lo de debajo cuenta en cuanto llega.
+    let size = vec2(960.0, 505.0);
+    let reference = essentials(size);
+    let column = reference.app.workspace.column_rect().unwrap();
+    let mut h = color_floating(size, Start::Right);
+    let canvas = h.leaf(PanelId::Canvas);
+    let from = h.button("Color").center();
+    let to = pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y);
+    assert!(h.window(PanelId::Color).contains(to));
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    for t in [0.1, 0.4, 0.7, 1.0] {
+        h.frame_with(vec![Event::PointerMoved(from + (to - from) * t)]);
+    }
+    h.frame_with(vec![press(to, false)]);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_split_right_of_the_canvas(&h, column, "quick release");
+}
+
+#[test]
+fn the_dragged_window_is_opaque_again_when_the_drag_is_cancelled() {
+    // Escape corta el arrastre: la ventana vuelve a verse opaca (y no se pinta ninguna zona), y
+    // al soltar no pasa nada.
+    let size = vec2(960.0, 505.0);
+    let mut h = color_floating(size, Start::Right);
+    let window = h.window(PanelId::Color);
+    let canvas = h.leaf(PanelId::Canvas);
+    let tab = h.button("Color").center();
+    let to = pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y);
+    hold_drag(&mut h, tab, to);
+    assert!(see_through(window_opacity(&h, PanelId::Color)));
+    tap_key(&mut h, egui::Key::Escape);
+    assert_eq!(window_opacity(&h, PanelId::Color), 1.0, "cancelled");
+    assert_eq!(drop_zones(&h), [], "no zone once cancelled");
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.workspace.floating(PanelId::Color), "{}", describe(&h));
+    assert_eq!(h.window(PanelId::Color), window);
+    assert_eq!(window_opacity(&h, PanelId::Color), 1.0, "after");
+}
+
+#[test]
+fn a_window_with_two_tabs_is_not_faded_and_takes_what_is_dropped_on_it() {
+    // Library junto a Color en una ventana: arrastrar una de las dos no atenúa la ventana, que
+    // sigue siendo destino (soltada en su cuarto de abajo, la parte en dos).
+    let mut h = essentials(vec2(1200.0, 800.0));
+    h.app.workspace.float(PanelId::Color, pos2(500.0, 150.0));
+    for _ in 0..3 {
+        h.frame();
+    }
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Color).unwrap();
+    h.app
+        .workspace
+        .dock(PanelId::Library, DockTarget::Leaf(s, n));
+    for _ in 0..3 {
+        h.frame();
+    }
+    let leaf = h.leaf(PanelId::Color);
+    let tab = h.button("Library").center();
+    let to = pos2(leaf.center().x, leaf.bottom() - leaf.height() * 0.1);
+    hold_drag(&mut h, tab, to);
+    assert_eq!(window_opacity(&h, PanelId::Color), 1.0, "two tabs: opaque");
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let w = &h.app.workspace;
+    let (color, library) = (
+        w.leaf_of(PanelId::Color).unwrap(),
+        w.leaf_of(PanelId::Library).unwrap(),
+    );
+    assert!(
+        !color.0.is_main() && color.0 == library.0,
+        "{color:?} {library:?}"
+    );
+    assert_ne!(color.1, library.1, "split in its window");
+    assert!(h.leaf(PanelId::Library).top() > h.leaf(PanelId::Color).top());
+}
+
+#[test]
+fn the_dragged_window_is_translucent_without_pixel_ui_too() {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), plain(), palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, vec2(1200.0, 800.0));
+    let canvas = h.leaf(PanelId::Canvas);
+    let at = pos2(canvas.right() - 230.0, canvas.top() + 10.0);
+    h.app.workspace.float(PanelId::Color, at);
+    for _ in 0..5 {
+        h.frame();
+    }
+    assert_eq!(window_opacity(&h, PanelId::Color), 1.0, "opaque at rest");
+    let tab = h.button("Color").center();
+    let to = pos2(canvas.right() - canvas.width() * 0.12, canvas.center().y);
+    assert!(h.window(PanelId::Color).contains(to));
+    hold_drag(&mut h, tab, to);
+    let opacity = window_opacity(&h, PanelId::Color);
+    assert!(see_through(opacity), "{opacity}");
+    release_at(&mut h, to);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.workspace.docked(PanelId::Color), "{}", describe(&h));
+    assert!(h.leaf(PanelId::Color).left() > h.leaf(PanelId::Canvas).right());
+}
