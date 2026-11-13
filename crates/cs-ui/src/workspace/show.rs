@@ -1042,6 +1042,14 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     armed.faded = faded.map(|(_, s)| skin::window_layer(s));
     armed.faded_leaf = faded.and_then(|(id, _)| workspace.leaf_rect(id));
     skin::arm(&ctx, armed);
+    // "Dock" en el menú de la pestaña de lo que flota: se acopla más abajo (con el menú cerrado).
+    // Antes de cerrar lo que se cerró este frame: `hits` lleva los nodos de cuando se dibujó, y
+    // cerrar una pestaña puede recorrerlos.
+    let home = if modal {
+        None
+    } else {
+        dock_menus(&ctx, &workspace, &hits)
+    };
     for id in closed {
         match id {
             // Cerrarlo es apagarlo (como su botón de la tira y View → Timeline): sale del árbol y
@@ -1064,12 +1072,6 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             },
         }
     }
-    // "Dock" en el menú de la pestaña de lo que flota: se acopla más abajo (con el menú cerrado).
-    let home = if modal {
-        None
-    } else {
-        dock_menus(&ctx, &workspace, &hits)
-    };
     let released = tab_drag_released(&ctx, &workspace.state, &hits);
     // Lo que egui_dock soltó en el lienzo (como pestaña): al lado, del lado del cuadrante.
     let mut changed = tidy_canvas(&mut workspace.state, released.map(|(_, at)| at));

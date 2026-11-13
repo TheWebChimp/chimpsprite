@@ -76,6 +76,17 @@ pub(crate) use skin::painted_drop_zones;
 #[cfg(test)]
 pub(crate) use tabs::COLLAPSE;
 
+/// Lo mínimo de `id` en un grupo, como lo cuenta el workspace (ver `fit::minima`; sin lo que le
+/// cambia `show` según dónde va: el timeline debajo del lienzo, lo pegado a la columna).
+#[cfg(test)]
+pub(crate) fn panel_minimum(
+    ui: &egui::Ui,
+    skin: Option<&crate::skin::Skin>,
+    id: PanelId,
+) -> egui::Vec2 {
+    fit::minima(ui, skin)[&id]
+}
+
 /// El acomodo de los paneles: el árbol de egui_dock (acoplados y flotantes) y la tira de íconos.
 #[derive(Clone, Debug)]
 pub(crate) struct Workspace {

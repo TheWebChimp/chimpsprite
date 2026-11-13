@@ -838,6 +838,52 @@ fn a_long_press_or_a_short_slide_on_a_floating_lone_tab_off_the_tree_leaves_its_
 }
 
 #[test]
+fn a_drag_brought_back_within_the_threshold_and_released_off_the_tree_leaves_its_window() {
+    // egui_dock vuelve a mirar su umbral (30/6) cada frame: arrastrada 40 pt y de vuelta a 3 pt
+    // de donde se apretó, para egui_dock ya no hay arrastre y no suelta nada. El workspace
+    // tampoco: soltar fuera del árbol (sobre las barras de arriba: una ventana no baja hasta la
+    // barra de estado) no pone la ventana bajo el puntero.
+    let size = vec2(960.0, 505.0);
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let mut h = essentials(size);
+    h.app.workspace.float(PanelId::Color, pos2(300.0, 0.0));
+    for _ in 0..5 {
+        h.frame();
+    }
+    let window = h.window(PanelId::Color);
+    let tab = h.button("Color").center();
+    assert!(
+        tab.y < h.leaf(PanelId::Tools).top(),
+        "the tab is off the tree"
+    );
+    h.frame_with(vec![Event::PointerMoved(tab)]);
+    h.frame_with(vec![press(tab, true)]);
+    // egui lo da por arrastre a los 10 pt (pasada la distancia de un clic): de ahí cuenta
+    // egui_dock, y a los 50 ya va 40 pasado.
+    for k in 1..=5 {
+        h.frame_with(vec![Event::PointerMoved(tab + vec2(10.0 * k as f32, 0.0))]);
+    }
+    h.frame();
+    // Empezó (la ventana se ve translúcida).
+    let opacity = window_opacity(&h, PanelId::Color);
+    assert!(see_through(opacity), "{opacity}");
+    let back = tab + vec2(3.0, 0.0);
+    h.frame_with(vec![Event::PointerMoved(back)]);
+    h.frame();
+    release_at(&mut h, back);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.workspace.floating(PanelId::Color), "{}", describe(&h));
+    assert_eq!(h.window(PanelId::Color), window);
+}
+
+#[test]
 fn starting_to_drag_a_floating_lone_tab_paints_no_zone_on_its_own_window() {
     // El primer frame del arrastre de egui_dock, su destino es todavía la propia ventana (antes
     // de que haya arrastre no pregunta `allowed_in_windows`): su zona no se pinta (la ventana no
@@ -1018,7 +1064,14 @@ fn a_tab_dropped_on_the_right_of_the_toolbar_docks_beside_it() {
         let canvas = h.leaf(PanelId::Canvas);
         assert!(tools.right() < color.left(), "{case}");
         assert!(color.right() < canvas.left(), "{case}");
-        // Su mínimo (no la mitad de la toolbar).
-        assert!(color.width() >= 100.0, "{case}");
+        // Su mínimo (no la mitad de la toolbar), el que cuenta el workspace.
+        let skin = h.app.pixel.skin();
+        let mut min = Vec2::ZERO;
+        let mut output = h.ctx.run_ui(RawInput::default(), |ui| {
+            min = crate::workspace::panel_minimum(ui, skin, PanelId::Color);
+        });
+        output.textures_delta.clear();
+        assert!(min.x > 100.0, "{min:?}");
+        assert!(color.width() >= min.x, "{min:?} {case}");
     }
 }

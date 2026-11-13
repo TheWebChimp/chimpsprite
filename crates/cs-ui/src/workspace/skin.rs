@@ -70,7 +70,8 @@
 //!     (`try_initiate_tab_drag` en `show/leaf.rs`): con el puntero a más de 30 pt a lo ancho o de
 //!     6 a lo alto de donde estaba el primer frame en que egui lo dio por arrastre
 //!     (`drop::DOCK_DRAG_START`). Antes (una pulsación larga, un deslizón corto) no suelta nada, y
-//!     `workspace` tampoco (`drop::dragged_tab`).
+//!     `workspace` tampoco (`drop::dragged_tab`). Lo vuelve a mirar cada frame (`drag_data` se
+//!     borra al empezar `show_inside`): si el puntero regresa dentro del umbral, tampoco.
 //! 15. egui_dock mueve lo soltado al empezar `show_inside` y dibuja ese frame con el split nuevo a
 //!     la mitad (0.5), antes de que `workspace` acomode los lados (`pin_sides` y `fit_splits` van
 //!     fuera del `DockArea`): partiendo un grupo angosto (la toolbar, 35 pt), un lado queda más

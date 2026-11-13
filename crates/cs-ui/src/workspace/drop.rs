@@ -494,7 +494,8 @@ struct TabDrag {
     /// Dónde estaba el puntero el primer frame en que egui lo dio por arrastre: de ahí cuenta
     /// egui_dock.
     start: egui::Pos2,
-    /// Si egui_dock ya empezó el suyo ([`DOCK_DRAG_START`]).
+    /// Si egui_dock tiene el suyo este frame ([`DOCK_DRAG_START`], desde `start`): lo vuelve a
+    /// mirar cada frame, así que no es pegajoso.
     begun: bool,
 }
 
@@ -544,12 +545,12 @@ pub(super) fn tab_drag_released(
     let drag = dragged.zip(pointer).map(|(id, p)| {
         let start = before.filter(|d| d.id == id).map_or(p, |d| d.start);
         let delta = p - start;
+        // Como egui_dock, de este frame: si el puntero vuelve dentro del umbral, egui_dock ya no
+        // tiene arrastre (no suelta nada) y aquí tampoco.
         TabDrag {
             id,
             start,
-            begun: before.is_some_and(|d| d.id == id && d.begun)
-                || delta.x.abs() > DOCK_DRAG_START.x
-                || delta.y.abs() > DOCK_DRAG_START.y,
+            begun: delta.x.abs() > DOCK_DRAG_START.x || delta.y.abs() > DOCK_DRAG_START.y,
         }
     });
     ctx.data_mut(|d| d.insert_temp(memory, drag));
