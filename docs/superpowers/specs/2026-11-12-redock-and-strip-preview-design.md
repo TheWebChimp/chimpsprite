@@ -5,7 +5,7 @@ Pedido del usuario (2026-11-12), probando la pastilla y el reordenar:
 2. "En el reorganizar de los íconos, ¿podemos mostrar fantasma de dónde caería y cómo se vería?"
    (eligió la vista previa completa).
 
-## Diagnóstico (rama `color-redock`, `diag_color_redock.rs`, 4036dbb; informe en `.superpowers/sdd/color-redock-investigation.md`)
+## Diagnóstico (rama `color-redock`, `diag_color_redock.rs` en 4036dbb, hoy `color_redock.rs`; el informe fue una nota local, aquí va resumido)
 
 1. **Ningún destino regresa una columna de alto completo.** egui_dock solo parte o junta en la
    hoja bajo el puntero (`leaf.rs:1433`, `move_tab`) y `drop::drop_target` también solo mira hojas.
@@ -72,6 +72,45 @@ Pedido del usuario (2026-11-12), probando la pastilla y el reordenar:
 - **El crash en debug** al soltar a la derecha de Tools: reproducir con un test, encontrar la causa
   (tamaño negativo de un hijo en el `Viewer` o en `fit`) y arreglarla.
 
+## Lo que quedó
+
+Lo de arriba es el diseño de partida; lo construido difiere en esto (manda esta sección).
+
+### A. Orilla
+
+- `Edge` no parte la raíz: baja por `edge_node` y así queda exactamente el árbol de Essentials.
+  `Edge(Left)` pone la columna en la orilla, con la toolbar entre ella y el lienzo.
+- El ancho de siempre lo define `SidePoints::preferred`: Color, `palette + sep/2`; la toolbar, su
+  caja; el timeline, `sides.timeline`; los demás, `panel_reference`; tope del 45 % del split.
+- `palette_width` (y el ancho natural, y lo que escribe arrastrar el divisor) es solo de Color en
+  la columna; otro panel en la orilla derecha va de su ancho de siempre.
+- La zona pintada se calcula acoplando en una copia y corriendo el mismo `pin_sides`.
+- La barra de pestañas de un grupo le gana a la franja; la franja no rige sobre el propio grupo
+  acoplado. Una ventana encima gana, salvo la que se ve a través.
+- Causa 3 arreglada: lo que vuelve a flotar en una ventana nueva queda donde se soltó; juntarse a
+  una ventana existente no la mueve.
+
+### B. Ventana que se ve a través
+
+- Si no hay nada debajo, flota donde se soltó. Sobre su propia ventana, `max_preference_time`
+  va en 0. Una pulsación larga o un deslizón de menos de 30/6 pt no hacen nada (el umbral de
+  egui_dock, `DOCK_DRAG_START`).
+
+### C. Vista previa de la tira
+
+- El hueco se cierra durante todo el arrastre (también con el puntero sobre el árbol); dónde cae
+  se mide con los botones en reposo; el flyout abierto sigue a su botón; el menú de "More Panels"
+  solo lista los propios de la tira; la rayita de inserción se quitó.
+- Excepción: si una tira de orilla se queda vacía, desaparece al soltar (el árbol crece).
+
+### D. "Dock" y el crash
+
+- Causa real del crash: egui_dock dibuja el frame de soltar con el split a la mitad antes de
+  `fit_splits`; `Viewer::squeeze` pone el panel en su mínimo ese frame y pide `request_discard`.
+- Con Pixel UI, el "Dock" de la toolbar sola sale de su franja de agarre.
+- Los paneles del dock regresan a la tira derecha aunque su tira esté en otra orilla.
+- El menú se arma después de `DockArea::show_inside` (por el `allowed_in_windows` con estado de B).
+
 ## Pruebas
 
 - Los `diag_…` de `diag_color_redock.rs` se convierten en tests del comportamiento nuevo (sin
@@ -87,6 +126,8 @@ Pedido del usuario (2026-11-12), probando la pastilla y el reordenar:
 - Vista previa de la tira: durante el arrastre, los rects de los botones son los del orden final y el
   del destino va con opacidad 0.5; al soltar, los rects no cambian.
 - Essentials en reposo: 0 px contra main (escala 2, con y sin Pixel UI).
+- Alcance real: las orillas de arriba y abajo y el modo sin Pixel UI tienen tests de modelo, no de
+  la app; "Dock" de Tools, Timeline y Library solo se prueba a 1200×800.
 
 ## Decisiones que el usuario puede revisar
 
@@ -95,3 +136,8 @@ Pedido del usuario (2026-11-12), probando la pastilla y el reordenar:
   una columna de ese lado se suelta en la franja, justo antes de la tira.
 - "Dock" regresa al lugar de fábrica, no al último lugar donde estuvo.
 - La ventana arrastrada va al 40 % y el fantasma de la tira al 50 %.
+- Color soltado junto a la toolbar queda en su mínimo (136).
+- La franja de 16 pt también cubre los 16 pt izquierdos de la toolbar y las franjas de agarre de
+  los grupos de arriba.
+- Escape suelta los íconos de la tira (aplica la vista previa) pero cancela las pestañas.
+- Con un flyout abierto, su pestaña opaca tapa al ícono semitransparente durante el arrastre.

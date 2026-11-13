@@ -15578,4 +15578,4 @@ fn a_tab_dragged_over_a_strip_shows_in_it_where_it_would_fall() {
     assert_eq!(buttons_in_order(&h, Edge::Right, &want, name), during);
 }
 
-mod diag_color_redock;
+mod color_redock;

@@ -17,7 +17,9 @@
 //! **Depende de detalles internos de egui_dock 0.21.1** (por eso la versión va fija en
 //! `Cargo.toml`). Al subir de versión hay que revisarlos:
 //!
-//! 1. El id del área de cada ventana flotante, `"window {surface:?}"` ([`window_area_id`]).
+//! 1. El id del área de cada ventana flotante, `"window {surface:?}"` ([`window_area_id`]). La
+//!    ventana atenuada (`Armed::faded`) depende además de que todo lo de una ventana, incluidas
+//!    las pestañas del kit, se pinte en la capa `(Order::Middle, window_area_id)`.
 //! 2. La respuesta de la pestaña que se arrastra, `id.with("dragged")` ([`is_dragged_tab`]).
 //! 3. El id de la franja de agarre de un grupo sin barra, `hidden_tab_bar_drag`
 //!    ([`hidden_strip_id`]).
