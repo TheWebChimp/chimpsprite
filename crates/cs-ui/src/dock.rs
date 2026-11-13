@@ -274,6 +274,9 @@ fn faded_button(ui: &mut Ui, skin: Option<&Skin>, panel: DockPanel, on: bool) ->
     let (label, spec) = (panel.label(), panel.spec());
     let Some(skin) = skin else {
         // El botón de egui, en un `Ui` de id fijo como los de verdad (mide lo mismo que el suyo).
+        // Con el sentido de siempre (con otro, egui lo pinta como algo que no se aprieta), pero
+        // nunca recibe un clic: solo está mientras el botón principal sigue apretado en el
+        // arrastre y el frame en que se suelta.
         let builder = egui::UiBuilder::new().id(faded_id(panel));
         return ui
             .scope_builder(builder, |ui| {
