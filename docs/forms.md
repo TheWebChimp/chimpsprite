@@ -46,6 +46,15 @@ forms::form(ui, "mi_panel", 4.0, |tui| {
 3. Más angosto parte las filas, más ancho crecen los `grow`; bajo `MIN_WIDTH` hay scroll vertical.
 4. Capturas antes y después al ancho de referencia: 0 pixeles distintos.
 
+Una fila de `ui.horizontal` centrada (hijos de distinta altura a medio punto en y) pasa a una fila
+de alto fijo con caídas enteras (`min_height` + `air_above`), como la tarjeta de dafont o las
+filas de Lospec (`palette_ui::lospec_row`). Para que se vea igual, cada caída se redondea hacia
+donde ya se pintaba: los textos se pintaban a medio punto (se redondean hacia abajo: suben 1 px de
+pantalla), los botones del kit ya se pintaban en el punto redondeado (se redondean hacia arriba:
+iguales pixel por pixel). Lo de alto cambiante (una imagen que todavía carga) va entre dos formas,
+en el flujo de egui. Si la misma lista puede salir en dos lugares a la vez (la ventana Palette
+Presets y el panel de Lospec), el id de cada forma lleva `ui.id()` además del índice.
+
 ## Arnés de pruebas
 
 `forms::testing` es solo `#[cfg(test)]`. `forms::testing::run_at(width, |ui| ..)` dibuja en un

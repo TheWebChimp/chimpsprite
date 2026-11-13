@@ -12,6 +12,9 @@
 //! Si no entran, se achican parejo (las más anchas primero) hasta tres letras y "..."; si ni así
 //! entran, se recorren con las flechas `tab.arrow.prev` / `tab.arrow.next` (12×12, juntas 23 de
 //! ancho, 8 px después de la última que se ve) o con la rueda.
+//!
+//! Lo que se arrastra en el workspace se ve como la pastilla `tab.drag` con el nombre del panel
+//! ([`drag_tag_shapes`]).
 
 use std::sync::Arc;
 
@@ -37,6 +40,11 @@ pub const DIRTY_MARK: &str = "icon.tab_dirty";
 pub const CLOSE_MARK: &str = "icon.tab_close";
 /// El + de una tira (agregar), 5×5 de una tinta: va en un botón del kit del alto de las flechas.
 pub const ADD_MARK: &str = "icon.tab_add";
+
+/// La pastilla de lo que se arrastra en el workspace (ver [`drag_tag_shapes`]): nueve partes que
+/// se estiran a lo ancho, de alto fijo.
+pub const DRAG: &str = "tab.drag";
+pub const DRAG_HEIGHT: f32 = 18.0;
 
 /// Entre una pestaña y la siguiente (y entre la última y las flechas).
 pub const GAP: f32 = 8.0;
@@ -732,6 +740,44 @@ pub fn tab_strip(
     painter.set_opacity(1.0);
     painter.extend(shapes);
     event
+}
+
+/// El ancho y el alto de la pastilla de arrastre de `label`: la tinta y 6 de cada lado (el
+/// borde de 2 y 4 de aire, como las pestañas), [`DRAG_HEIGHT`] de alto. En puntos enteros.
+pub fn drag_tag_size(ui: &Ui, label: &str) -> Vec2 {
+    vec2((ink(ui, label) + 2.0 * (EDGE + PAD)).round(), DRAG_HEIGHT)
+}
+
+/// La pastilla de lo que se arrastra (una pestaña acoplada, la franja de agarre de un grupo, un
+/// ícono de la tira) con su esquina en `min` (redondeada a puntos enteros): la pieza [`DRAG`]
+/// estirada a lo ancho y `label` en el color `text`, con la tinta 6 px adentro y las mayúsculas
+/// en la fila 6. Sin la pieza, sus tres colores (ver [`flat_drag_tag`]).
+pub fn drag_tag_shapes(ui: &Ui, skin: &Skin, min: egui::Pos2, label: &str) -> Vec<Shape> {
+    let ppp = ui.ctx().pixels_per_point();
+    let colors = *skin.colors();
+    let rect = Rect::from_min_size(min.round(), drag_tag_size(ui, label));
+    let mut shapes = match skin.piece(DRAG, WidgetState::Normal) {
+        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
+        None => flat_drag_tag(rect, &colors),
+    };
+    let text = galley(ui, label);
+    let at = text_pos(&text, rect.left() + EDGE + PAD, rect.top() + CAPS_TOP, ppp);
+    shapes.push(Shape::galley(at, text, colors.text));
+    shapes
+}
+
+/// Respaldo de la pastilla (sin la pieza), como ella: el contorno `canvas` con las esquinas
+/// recortadas, el aro `highlight` de 1 y el relleno `background`. `rect` ya está en puntos
+/// enteros.
+fn flat_drag_tag(rect: Rect, colors: &crate::skin::SkinColors) -> Vec<Shape> {
+    let mut shapes = crate::panel_kit::notched_outline(rect, colors.canvas, 2.0);
+    shapes.extend(crate::panel_kit::notched_outline(
+        rect.shrink(1.0),
+        colors.highlight,
+        1.0,
+    ));
+    shapes.push(Shape::rect_filled(rect.shrink(2.0), 0.0, colors.background));
+    shapes
 }
 
 /// Respaldo de la caja de una pestaña: el fondo (la activa) o `canvas` (las demás) con un borde

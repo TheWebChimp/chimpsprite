@@ -89,6 +89,52 @@ pub(crate) fn factory(name: &str) -> Option<Workspace> {
     Some(w)
 }
 
+#[cfg(test)]
+impl Workspace {
+    /// Un acomodo de prueba (para medir lo de adentro de un panel sin importar dónde está): el
+    /// lienzo y `id` acoplado solo en el lado `edge` del lienzo, de alto (o de ancho) completo. Los
+    /// demás paneles del dock, en la tira de la derecha (como en Essentials); la toolbar, el
+    /// timeline y Color, en ningún lado si no son `id` (ojo: con `view.timeline` prendido, `show`
+    /// vuelve a poner el timeline debajo del lienzo; `LayoutHarness::with_workspace` lo apaga). Color
+    /// no va a las tiras: si no es `id`, queda fuera del acomodo (la app lo tolera; guardado y leído,
+    /// `Workspace::from_saved` lo volvería a acoplar junto al lienzo). El foco, en el grupo de `id`.
+    /// `id` no puede ser el lienzo.
+    ///
+    /// Lo que mide el lado lo pone `fit::pin_sides` en el primer frame (la fracción de aquí no
+    /// importa): la toolbar a un lado, el ancho de su caja; Color a la derecha es la columna
+    /// derecha (`view.palette_width`); el timeline arriba o abajo, `view.timeline_height`; lo
+    /// demás (también otro panel a la derecha), lo que pide de fábrica (a lo ancho, el de
+    /// referencia: Color, `color_panel::DEFAULT_WIDTH`; a lo alto, `default_size.y` de su ficha).
+    pub(crate) fn solo(id: PanelId, edge: crate::dock::Edge) -> Workspace {
+        use crate::dock::Edge;
+        use egui_dock::{DockState, NodePath};
+
+        use super::{NodeIndex, SurfaceIndex};
+
+        debug_assert_ne!(id, PanelId::Canvas, "the canvas is always there");
+        let mut state = DockState::new(vec![PanelId::Canvas]);
+        let tree = state.main_surface_mut();
+        let root = NodeIndex::root();
+        let [_, node] = match edge {
+            Edge::Left => tree.split_left(root, 0.5, vec![id]),
+            Edge::Right => tree.split_right(root, 0.5, vec![id]),
+            Edge::Top => tree.split_above(root, 0.5, vec![id]),
+            Edge::Bottom => tree.split_below(root, 0.5, vec![id]),
+        };
+        state.set_focused_node_and_surface(NodePath {
+            surface: SurfaceIndex::main(),
+            node,
+        });
+        let mut strips: [Vec<PanelId>; 4] = Default::default();
+        strips[Edge::Right.index()] = PanelId::DOCK.iter().copied().filter(|&p| p != id).collect();
+        Workspace {
+            state,
+            strips,
+            ..Workspace::essentials()
+        }
+    }
+}
+
 /// Lo que se ve en el de fábrica `name`: el timeline siempre; el Preview, en Animation.
 pub(crate) fn factory_shown(name: &str) -> Shown {
     Shown {
@@ -355,6 +401,77 @@ mod tests {
             }
         }
         assert!(factory("Nope").is_none());
+    }
+
+    #[test]
+    fn solo_puts_the_panel_beside_the_canvas() {
+        use crate::dock::Edge;
+        for (id, edge) in [
+            (PanelId::Color, Edge::Right),
+            (PanelId::Color, Edge::Left),
+            (PanelId::Timeline, Edge::Bottom),
+            (PanelId::Tools, Edge::Right),
+            (PanelId::Library, Edge::Left),
+        ] {
+            let case = format!("{id:?} {edge:?}");
+            let w = Workspace::solo(id, edge);
+            // El lienzo, `id` y lo del dock que no es `id` (en la tira de la derecha), una vez;
+            // lo demás, en ningún lado.
+            let want = |p: PanelId| {
+                usize::from(p == PanelId::Canvas || p == id || PanelId::DOCK.contains(&p))
+            };
+            for &p in PanelId::ALL {
+                assert_eq!(w.places(p), want(p), "{case}: {p:?}");
+            }
+            let dock: Vec<_> = PanelId::DOCK.iter().copied().filter(|&p| p != id).collect();
+            assert_eq!(w.strip(), dock, "{case}");
+            assert!(sound(&w.state), "{case}");
+            // Dibujado (el timeline, solo si es `id`): `id` acoplado solo en su grupo, pegado a
+            // la orilla `edge` y de lado a lado en la otra dirección; el lienzo, del otro lado.
+            let shown = Shown {
+                timeline: id == PanelId::Timeline,
+                preview: false,
+            };
+            let app = drawn(w, shown);
+            let w = &app.workspace;
+            for &p in PanelId::ALL {
+                assert_eq!(w.places(p), want(p), "{case}, drawn: {p:?}");
+            }
+            assert!(sound(&w.state), "{case}");
+            assert!(w.docked(id), "{case}");
+            let (surface, node) = w.leaf_of(id).unwrap();
+            assert_eq!(
+                w.state_leaf_tabs(surface, node),
+                Some((vec![id], id)),
+                "{case}"
+            );
+            let leaf = w.leaf_rect(id).unwrap();
+            let canvas = w.leaf_rect(PanelId::Canvas).unwrap();
+            let all = leaf.union(canvas);
+            match edge {
+                Edge::Left => {
+                    assert_eq!(leaf.left(), all.left(), "{case}");
+                    assert!(canvas.left() > leaf.right(), "{case}");
+                }
+                Edge::Right => {
+                    assert_eq!(leaf.right(), all.right(), "{case}");
+                    assert!(canvas.right() < leaf.left(), "{case}");
+                }
+                Edge::Top => {
+                    assert_eq!(leaf.top(), all.top(), "{case}");
+                    assert!(canvas.top() > leaf.bottom(), "{case}");
+                }
+                Edge::Bottom => {
+                    assert_eq!(leaf.bottom(), all.bottom(), "{case}");
+                    assert!(canvas.bottom() < leaf.top(), "{case}");
+                }
+            }
+            if edge.vertical() {
+                assert_eq!(leaf.y_range(), all.y_range(), "{case}");
+            } else {
+                assert_eq!(leaf.x_range(), all.x_range(), "{case}");
+            }
+        }
     }
 
     /// Los rects de lo que hay en Essentials (y la columna derecha) de la app `app` ya dibujada.

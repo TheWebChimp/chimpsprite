@@ -1,6 +1,7 @@
 # Workspace administrable (tipo Photoshop) y formas responsivas
 
-Fecha: 2026-11-09. Estado: diseño aprobado por el usuario en la conversación; falta el plan.
+Fecha: 2026-11-09. Estado: diseño aprobado por el usuario en la conversación; fases A a E hechas
+(ver cada una abajo).
 
 ## Objetivo
 
@@ -20,7 +21,9 @@ dejar de dibujarse con coordenadas absolutas para un ancho fijo y acomodarse al 
 - 6 de los 9 paneles del dock dibujan en coordenadas absolutas para un ancho fijo del mockup:
   Groom, Lumen y Library (434), Dafont y Lospec (364), FontForge (314: 304 de contenido + la
   barra de 10), Modelo (227).
-- 356 tests de layout (`layout_tests.rs`, 11 285 líneas) fijan posiciones exactas.
+- 356 tests de layout (`layout_tests.rs`, 11 285 líneas) fijan posiciones exactas. (Al cerrar la
+  fase E: 437 tests en 14 923 líneas, y solo `essentials_at_1200_by_800` y su variante `_plain`
+  fijan números de la ventana; los demás miden dentro de la hoja de su panel.)
 
 ## Decisiones del usuario
 
@@ -407,7 +410,8 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - [ ] La toolbar flotante y su « (queda fuera de la ventana), Groom debajo del lienzo en una
         ventana baja (el timeline y la tira siguen), ventana angosta (el lienzo gana).
 
-  **Se quedó para la fase E** (de las revisiones y los reportes de la fase D):
+  **Se quedó para la fase E** (de las revisiones y los reportes de la fase D; hecho salvo lo que
+  dice "Fuera de la fase E", abajo):
   - Reescribir los tests de layout por panel y en Essentials (hoy `layout_tests.rs` sigue midiendo
     posiciones absolutas de la ventana; los arneses de `timeline/tests.rs` y `color_panel/tests.rs`
     aún arman un `Panel::bottom("timeline")` / `Panel::right("palette")` propio, ya sin relación con
@@ -426,7 +430,134 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - Pendientes de interacción real: flotante de la toolbar más ancha con el mouse; íconos
     `icon.tools` / `icon.color` sin pieza del skin (la tira usa su texto).
 - **E. Tests de layout reescritos:** medir dentro de cada panel y en el preset Essentials, no en
-  posiciones absolutas de la ventana.
+  posiciones absolutas de la ventana. **HECHA** (ver "Fase E HECHA").
+
+  **Fase E HECHA** (rama `workspace-layout-e`, 9 tareas, cada una con su revisión; plan
+  `docs/superpowers/plans/2026-11-11-workspace-fase-e.md`):
+  1. **`show.rs` partido** en `workspace/{modal, tabs, dividers, preview_window}` (el modal:
+     `Frozen`, `hold_windows`, `modal_shields`; las pestañas: rueda, flechas, ×, «,
+     `dropped_past_last`, `to_the_end`; las cubiertas de los divisores y los cruces; el marco del
+     Preview), sin cambios de comportamiento. `show.rs` se queda con `Viewer`, `show` y sus ajustes
+     de tamaño (~1 380 líneas); los ayudantes de tests compartidos, en `workspace/test_util.rs`.
+  2. **Cómo se mide ahora.** Un solo lugar fija números de la ventana:
+     `essentials_at_1200_by_800` (Pixel UI) y `essentials_at_1200_by_800_plain` (las barras, las
+     hojas de Tools, lienzo, timeline y Color, la columna y la tira); `assert_pinned_essentials`
+     compara contra él sin repetir números. Lo demás es relativo: `h.leaf(id)` (la hoja, acoplada o
+     flotando), `h.window(id)` (la ventana flotante con su marco), `h.at(id, r)` (`r` menos el origen
+     de la hoja), `h.column()` (la columna derecha, solo en Essentials) y `h.tools_box()` /
+     `h.timeline_box()` (los rects de los paneles de antes, con su divisor). Cada número viejo pasó
+     a `número − origen de su hoja` (las tablas de origen van en los commits). `Workspace::solo(id,
+     edge)` (solo de tests) arma el lienzo con un panel solo a un lado, y `for_each_place(id, view,
+     body)` corre el mismo test en Essentials y en otro acomodo: Color exacto en `solo(Color,
+     Right)` (a la izquierda difiere por el divisor del margen de la columna), el timeline exacto en
+     `solo(Timeline, Bottom)`, la toolbar en `solo(Tools, Right)` corrida lo que dice
+     `show::tools_margin` (2 pt con Pixel UI, 1 sin él) y exacta en `solo(Tools, Left)` después de
+     una tira. Lo único absoluto que queda es geometría de las barras fijas o el ancho de la
+     columna de Essentials (cada test lo dice).
+  3. **Arneses de Timeline y Color** (`timeline/tests.rs`, `color_panel/tests.rs`): una `ChimpApp`
+     de verdad con `Workspace::solo` (el `Viewer` hospeda el panel, como en la app), con lo común en
+     `hosted_panel.rs` (`app`, `frame`, `to_window`, `panel_nodes`). Lo medido y los eventos van
+     relativos a la hoja, y solo cuentan los nodos del panel y de sus menús emergentes. Se fueron
+     los `Panel::bottom("timeline")` / `Panel::right("palette")` propios.
+  4. **Timeline angosto:** la fila de botones parte solo la unidad que no cabe sola en una fila
+     (los grupos botón por botón; Opacity y Duration, su etiqueta o reloj arriba de su stepper);
+     donde todo cabía, las filas son las de antes, al punto. Ancho mínimo `timeline::MIN_WIDTH` = 86
+     (`WIDEST_PART` 74, el stepper de la duración con 5 cifras) más el marco con Pixel UI: 89 a la
+     vista debajo del lienzo, 96 en un grupo o una ventana. Sin Pixel UI, el de antes (64,
+     `TIMELINE_PLAIN_MIN_WIDTH`: su timeline tiene scroll a lo ancho). Un acomodo guardado más
+     angosto se ensancha solo.
+  5. **Lospec con `forms`:** cada paleta son dos formas (título, autor y números + tira y
+     paginador; notas + Apply/Append/Save), con el ejemplo en el flujo de egui entre ellas; sin
+     `Align::Center`, todo en puntos enteros.
+  6. **Minors de la fase D:** `Frozen::restore(None)` repone el foco de cada árbol (un clic en una
+     ventana flotante con un diálogo abierto ya no la deja enfocada); la zona "lienzo entero" que
+     incluía el timeline no se reprodujo (queda el test), pero las zonas de soltado ahora van en
+     puntos enteros (`fit::whole`, también las que pinta egui_dock); arrastrar un ícono sobre otra
+     tira la resalta (`drop::strip_under`, `paint_strip_zone`; la de origen no).
+  7. **Barrido de anchos:** sin el tramo de Lospec (364–600) y con el del timeline reducido a
+     86–114 (ver "Límites conocidos").
+
+  Tests de `cs-ui`: 1746 `#[test]` en main → 1761 (ninguno perdió lo que verificaba).
+  Capturas a escala 2 de Essentials contra main (en reposo, con Preview, en la pestaña de un
+  modelo, con un diálogo, con y sin Pixel UI, más partido, flotando, timeline a la derecha y sin
+  timeline): 0 pixeles distintos.
+
+  **Cambios de pixeles a propósito** (ninguno se ve en Essentials en reposo):
+  - Color con Pixel UI: su mínimo baja 1 pt en cualquier lugar (columna, grupo o ventana:
+    `color_panel::panel_min_size` ya no suma la línea de 1 pt del panel viejo); en la columna,
+    136 (antes 137). Lo de adentro mide justo su `min_width` (120).
+  - Timeline de 127 a 135 pt de ancho a la vista (debajo del lienzo, su hoja sin la tira; flotando
+    o a un lado, lo de adentro de su marco: pasa igual): Playback se parte 4 + 1 (antes pisaba el
+    borde de su caja); más angosto, la fila se parte (antes se salía).
+  - Mínimos nuevos con Pixel UI (los pide la barra del timeline en su parte más ancha, 86): el lado
+    del lienzo con el timeline debajo no se angosta de 115 (antes 90, el del lienzo con la tira),
+    así que en ventanas angostas la columna derecha (o lo acoplado junto al lienzo) se ensancha
+    hasta 25 pt menos; el timeline a un lado del lienzo o flotando, de 64 a 96 (86 y el margen del
+    grupo a cada lado). Sin Pixel UI no cambian (90 y 64; lo fija
+    `the_canvas_side_minimum_with_the_timeline_below_is_fixed_per_mode`).
+  - Lospec: el autor ("CREATED BY …") sube medio punto (1 px de pantalla); los botones y Load more
+    quedan donde el kit ya los pintaba (iguales pixel por pixel). Su orden de Tab cambió: antes
+    Save → Append → Apply (se ponían de derecha a izquierda), ahora Apply → Append → Save, de
+    izquierda a derecha como se ven.
+  - Solo mientras se arrastra: las zonas de soltado (también las de egui_dock) en puntos enteros
+    (medio punto en grupos de tamaño impar) y la tira bajo el puntero resaltada.
+
+  **Decisiones tomadas** (el usuario puede revisarlas):
+  - El timeline parte solo la unidad que no cabe sola, no todo botón por botón: así nada cambia
+    donde ya cabía (el plan pedía botón por botón; habría movido el reloj y su stepper a 600 pt).
+  - El mínimo del timeline cubre la duración de 5 cifras (60000 ms, el tope), no el combo de
+    mezcla con un modo `Other (n)` de un archivo importado.
+  - Ese mínimo (86 y su marco) rige solo con Pixel UI, donde la barra se parte y lo necesita, aunque
+    con el timeline debajo ensanche el lado del lienzo (115 en vez de 90). Sin Pixel UI el timeline
+    tiene scroll a lo ancho y se queda con el de antes (64).
+  - Lospec: el autor se redondea hacia abajo y los botones hacia arriba (donde el kit ya los
+    pintaba), para que se vean igual. Las formas llevan `ui.id()` en su id: la ventana Palette
+    Presets y el panel pueden mostrar las mismas paletas a la vez.
+  - El arnés del timeline mide su ancho visible (la hoja menos la tira que baja junto a él: 26 con
+    Pixel UI), no la ventana: más estricto que antes. Tampoco recoge lo que dibuja esa tira.
+  - `essentials_at_1200_by_800` y `_plain` toman los números que ya fijaban los tests de antes de
+    la fase E (ninguno cambió).
+
+  **Límites conocidos:**
+  - En su mínimo, la barra del timeline tiene 12 filas (264 pt): en un timeline de 190 debajo del
+    lienzo lo que no cabe queda recortado dentro de su hoja (sin scroll vertical). Acoplado alto a
+    un lado del lienzo se ve entero.
+  - El combo de mezcla con "Other (n)" puede ser más ancho que el mínimo del timeline.
+  - Barrido de anchos: el único tramo conocido es el timeline de 86 a 114 ("Add Layer Mask", al
+    final de la columna del nombre, se alcanza corriendo la tabla de capas a lo ancho).
+
+  **Variables de demo nuevas** (`demo.rs`): `CHIMPSPRITE_DEMO_WORKSPACE=timeline-narrow` (el
+  timeline flotando en 106×420) y `=lospec-tab` (Lospec junto a Color, al frente);
+  `CHIMPSPRITE_DEMO_LOSPEC=offline` (Lospec con una página fija, sin red); `CHIMPSPRITE_DEMO_COLUMN=<pt>`
+  (el ancho de la columna; escribe `view.palette_width`, que se guarda en `app.ron`: respaldarlo
+  antes).
+
+  **Probar a mano** (los agentes solo inyectan eventos; se suma a las listas de C y D):
+  - [ ] **Timeline angosto** (`CHIMPSPRITE_DEMO_WORKSPACE=timeline-narrow`, o arrastrado a un lado
+        del lienzo y achicado): clic en los botones de la segunda fila de un grupo partido (Next,
+        Last frame, Play; New group, New tilemap), los steppers de opacidad y duración que bajaron
+        de fila y el combo de mezcla; al soltar el borde de su ventana más chica que el mínimo,
+        vuelve a él.
+  - [ ] **Lospec acoplado y flotando:** buscar, Load more, Apply / Append / Save, ◀ ▶ de los
+        ejemplos y el link del título, a varios anchos (las filas se parten sin encimarse).
+  - [ ] **Arrastrar un ícono sobre otra tira:** la de destino se resalta mientras está encima (la
+        de origen no) y, al soltar, el panel pasa a ella.
+  - [ ] Con un diálogo abierto, clic en una ventana flotante: al cerrarlo, el foco sigue donde
+        estaba.
+  - [ ] Arrastrar una pestaña a la mitad de abajo del lienzo: la zona resaltada no llega al
+        timeline.
+
+  **Fuera de la fase E** (pendientes):
+  - Íconos `icon.tools` / `icon.color` del skin (la tira usa su texto): los dibuja el usuario.
+  - La ventana flotante de la toolbar más ancha, con el mouse.
+  - Partir `workspace/fit.rs` (~1 890 líneas) y `workspace/model.rs` (~2 200).
+  - Menores de la bitácora: scroll vertical para la barra del timeline en su mínimo; ningún test
+    fija el tramo 127–135; `Workspace::solo` no prueba `Edge::Top`; `ROW_H` / `TEXT_DROP` /
+    `BUTTON_DROP` repetidos en dafont y Lospec (podrían vivir en `forms`);
+    `CHIMPSPRITE_DEMO_COLUMN` guarda el ancho en `app.ron`; los demás de la bitácora
+    (`workspace-e-progress.md`), todos "puede esperar" según la revisión final.
+  - Juntar los hospedadores de tests: `LayoutHarness::frame_with` / `with_workspace` con
+    `hosted_panel::{frame, app, leaf}`, y `width_sweep_tests::{app_for, draw}` a `hosted_panel`.
 
 ## Pruebas
 

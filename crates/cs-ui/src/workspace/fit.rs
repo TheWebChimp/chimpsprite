@@ -157,6 +157,70 @@ impl Workspace {
         )
     }
 
+    /// Lo que mide de siempre un lado del lienzo con `id` solo, a lo ancho (`horizontal`) o a lo
+    /// alto: [`SidePoints::preferred`] con lo que dio el anfitrión (para los tests).
+    #[cfg(test)]
+    pub(crate) fn preferred_side(&self, id: PanelId, horizontal: bool) -> f32 {
+        self.sides.preferred(id, horizontal)
+    }
+
+    /// El lado del lienzo con `id` solo (el de un split recién hecho, por el workspace o por
+    /// egui_dock), si lo hay, va como un lado nuevo: del ancho (o alto) de siempre del panel (ver
+    /// [`SidePoints::preferred`]; a lo más el 45 % de su split), no de lo que mida dibujado
+    /// (egui_dock parte a la mitad y dibuja así el frame en que suelta; ese ancho se quedaría).
+    /// La columna derecha, la toolbar y el timeline los pide el anfitrión (ver [`pin_sides`]):
+    /// ahí no cambia nada.
+    pub(super) fn pin_new_side(&mut self, id: PanelId) {
+        let tree = self.state.main_surface();
+        let Some(level) = chain(tree)
+            .into_iter()
+            .find(|level| panels_of(tree, level.other) == [id])
+        else {
+            return;
+        };
+        let side = Side {
+            horizontal: level.horizontal,
+            first: level.first,
+            panels: vec![id],
+        };
+        self.sides.sides.retain(|(s, _)| *s != side);
+        // Aunque la forma sea la de antes (lo soltado volvió a donde estaba: egui_dock lo había
+        // movido en este frame), `pin_sides` vuelve a acomodar los lados.
+        self.sides.last = None;
+        if !self.sides.fresh.contains(&side) {
+            self.sides.fresh.push(side);
+        }
+    }
+
+    /// El rect del lado del lienzo con `id` solo, con su divisor entero (como
+    /// [`Workspace::column_rect`]), en el área `area` y con las fracciones de ahora (las que deja
+    /// [`pin_sides`]): sin dibujar, con la misma cuenta que `pin_sides`. `None` si no hay.
+    pub(super) fn side_rect(&self, id: PanelId, area: egui::Rect) -> Option<egui::Rect> {
+        let tree = self.state.main_surface();
+        let half = self.sides.sep / 2.0;
+        let mut rect = area;
+        for level in chain(tree) {
+            let (_, f) = split_of(tree, level.parent)?;
+            let (start, len) = if level.horizontal {
+                (rect.left(), rect.width())
+            } else {
+                (rect.top(), rect.height())
+            };
+            let mid = start + len * f;
+            let (side, canvas_side) = match (level.horizontal, level.first) {
+                (true, true) => (rect.with_max_x(mid + half), rect.with_min_x(mid + half)),
+                (true, false) => (rect.with_min_x(mid - half), rect.with_max_x(mid - half)),
+                (false, true) => (rect.with_max_y(mid + half), rect.with_min_y(mid + half)),
+                (false, false) => (rect.with_min_y(mid - half), rect.with_max_y(mid - half)),
+            };
+            if panels_of(tree, level.other) == [id] {
+                return Some(side);
+            }
+            rect = canvas_side;
+        }
+        None
+    }
+
     /// Los paneles de la columna derecha (ver [`Workspace::column`]).
     pub(crate) fn column_panels(&self) -> Vec<PanelId> {
         let tree = self.state.main_surface();
@@ -291,7 +355,9 @@ pub(super) type Minima = HashMap<PanelId, egui::Vec2>;
 /// pide su panel con Pixel UI (el ancho de su fila más ancha y el alto del editor entero con la
 /// paleta en su mínimo); sin Pixel UI, nada (como su panel de antes). La toolbar, su ancho (el de
 /// su caja con su margen, del skin; sin Pixel UI, el de la barra con nombres). El lienzo y el
-/// timeline, el mínimo de su ficha (sin margen: su hoja va de borde a borde). El Preview, el alto
+/// timeline, el mínimo de su ficha (sin margen: la hoja del lienzo va de borde a borde; el marco
+/// del timeline, que depende de dónde va, lo suma `workspace_minima`; el ancho del timeline sin
+/// Pixel UI, `TIMELINE_PLAIN_MIN_WIDTH`). El Preview, el alto
 /// de su modo (`preview::min_height`) con el margen. Los demás, el `min_width`
 /// y el `min_height` de su ficha con el margen de los paneles del dock y, si su cuerpo va con
 /// scroll, la barra (así los acomoda el `Viewer` de `show`).
@@ -315,8 +381,14 @@ pub(super) fn minima(ui: &egui::Ui, skin: Option<&Skin>) -> Minima {
                 // La toolbar lleva su margen en su ancho (ver `toolbar_width`).
                 (PanelId::Tools, _) => egui::vec2(toolbar_width(skin), 0.0),
                 // El lienzo no tiene margen ni scroll: lo de su ficha (el workspace le suma lo
-                // que lleva su hoja, ver `ChimpApp::canvas_area_min`). El timeline tampoco (su
-                // margen es el de su marco; debajo del lienzo el workspace le suma la tira).
+                // que lleva su hoja, ver `ChimpApp::canvas_area_min`). El timeline tampoco: su
+                // marco y, debajo del lienzo, la tira se los suma `workspace_minima`. Sin Pixel
+                // UI, el ancho del timeline es el de antes (con scroll a lo ancho, ver
+                // `TIMELINE_PLAIN_MIN_WIDTH`).
+                (PanelId::Timeline, None) => egui::vec2(
+                    crate::panel_registry::TIMELINE_PLAIN_MIN_WIDTH,
+                    id.spec().min_height,
+                ),
                 (PanelId::Canvas | PanelId::Timeline, _) => {
                     egui::vec2(id.spec().min_width, id.spec().min_height)
                 }
@@ -598,15 +670,22 @@ pub(super) fn quadrant(rect: egui::Rect, p: egui::Pos2) -> Split {
     }
 }
 
-/// La mitad de `rect` del lado `side`.
+/// La mitad de `rect` del lado `side`, en puntos enteros (ver [`whole`]): la zona de destino de lo
+/// que parte un grupo (de un lienzo de alto impar, la mitad de abajo empieza en el punto de abajo
+/// del centro).
 pub(super) fn half(rect: egui::Rect, side: Split) -> egui::Rect {
     let c = rect.center();
-    match side {
+    whole(match side {
         Split::Left => rect.with_max_x(c.x),
         Split::Right => rect.with_min_x(c.x),
         Split::Above => rect.with_max_y(c.y),
         Split::Below => rect.with_min_y(c.y),
-    }
+    })
+}
+
+/// `rect` con sus esquinas en el punto entero más cercano.
+pub(super) fn whole(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(rect.min.round(), rect.max.round())
 }
 
 /// El lienzo está una vez, en la superficie principal y solo en su grupo (egui_dock no tiene hojas
@@ -726,9 +805,14 @@ pub(crate) struct SidePoints {
     /// Lo que mide cada lado que se conoce, por su identidad ([`Side`]): los índices del árbol se
     /// mueven.
     sides: Vec<(Side, f32)>,
-    /// Lo que mide la columna derecha (ver [`Workspace::column`]): la pide el anfitrión (de
-    /// `view.palette_width`); sin ella, como los demás lados.
+    /// Lo que mide la columna derecha (ver [`Workspace::column`]) con Color en ella: la pide el
+    /// anfitrión (de `view.palette_width`; ver `colors_column`). Sin ella, o con otro panel en la
+    /// columna, como los demás lados.
     pub column: Option<f32>,
+    /// Lo que mide un lado con Color solo fuera de la columna, hasta el centro de su divisor: su
+    /// grupo, del ancho de siempre de Color (`view.palette_width` o el que tomó sola), como lo
+    /// de adentro de la columna (ver [`SidePoints::preferred`]). Lo da el anfitrión.
+    pub palette: Option<f32>,
     /// El ancho de la toolbar (ver [`toolbar_width`]): lo da el anfitrión. Su lado del lienzo
     /// (ver [`Workspace::tools_side`]) mide eso hasta el borde de su divisor, siempre (no se
     /// arrastra); sin él, como los demás lados.
@@ -755,6 +839,9 @@ pub(crate) struct SidePoints {
     /// estos paneles, como parte de su split: lo pide un workspace de fábrica (la franja del
     /// timeline y el Preview de Animation, ver `presets::factory`).
     pub shares: Vec<(Vec<PanelId>, f32)>,
+    /// Los lados recién hechos que van como nuevos aunque ya se hayan dibujado (ver
+    /// [`Workspace::pin_new_side`]): de lo que piden de fábrica, no de lo que miden.
+    fresh: Vec<Side>,
     /// Con qué se acomodaron por última vez.
     last: Option<Pinned>,
 }
@@ -773,6 +860,24 @@ struct Pinned {
 }
 
 impl SidePoints {
+    /// Lo que mide de siempre un lado del lienzo con `id` solo, a lo ancho (`horizontal`) o a lo
+    /// alto, hasta el centro de su divisor (como los demás lados, ver [`SidePoints`]): Color, el
+    /// ancho de la columna (`view.palette_width` o el que tomó sola, [`SidePoints::palette`]); la
+    /// toolbar, el de su caja; los demás, lo que piden de fábrica (su `reference_width` con su
+    /// margen y la barra de scroll, ver [`reference`]). A lo alto, el timeline lo suyo
+    /// (`view.timeline_height`) y los demás su `default_size`. Es lo que toma un lado nuevo con
+    /// él solo (ver [`pin_sides`], a lo más el 45 % de su split).
+    pub(super) fn preferred(&self, id: PanelId, horizontal: bool) -> f32 {
+        let half = self.sep / 2.0;
+        let fallback = panel_reference(id, horizontal) + half;
+        match (id, horizontal) {
+            (PanelId::Color, true) => self.palette.unwrap_or(fallback),
+            (PanelId::Tools, true) => self.toolbar.map_or(fallback, |w| w - half),
+            (PanelId::Timeline, false) => self.timeline.unwrap_or(fallback),
+            _ => fallback,
+        }
+    }
+
     fn get(&self, side: &Side) -> Option<f32> {
         self.sides.iter().find(|(s, _)| s == side).map(|(_, p)| *p)
     }
@@ -814,9 +919,9 @@ struct Side {
 
 /// La forma de la superficie principal: cada nodo (su clase y sus paneles), sin rects ni
 /// fracciones.
-type Shape = Vec<(u8, Vec<PanelId>)>;
+pub(super) type Shape = Vec<(u8, Vec<PanelId>)>;
 
-fn shape(tree: &Tree<PanelId>) -> Shape {
+pub(super) fn shape(tree: &Tree<PanelId>) -> Shape {
     tree.iter()
         .map(|node| match node {
             Node::Empty => (0, Vec::new()),
@@ -857,6 +962,14 @@ fn timeline_level(tree: &Tree<PanelId>, level: &Level) -> bool {
     !level.horizontal
         && level.other.0 < tree.len()
         && matches!(&tree[level.other], Node::Leaf(leaf) if leaf.tabs == [PanelId::Timeline])
+}
+
+/// Si el lado `level` del lienzo es la columna derecha con Color en ella: el ancho de la columna
+/// (`view.palette_width`, el que tomó sola, lo que se arrastra de su divisor) es de Color y solo
+/// rige así (`SidePoints::column`). Con otro panel en la columna (Color flotando, o por dentro de
+/// otro en la orilla), ese lado va como los demás: de lo que pide su panel, en puntos.
+fn colors_column(tree: &Tree<PanelId>, level: &Level) -> bool {
+    level.column && panels_of(tree, level.other).contains(&PanelId::Color)
 }
 
 /// El split del lienzo con el timeline solo justo debajo (`V[Canvas / Timeline]`), si lo hay (ver
@@ -929,23 +1042,7 @@ fn reference(tree: &Tree<PanelId>, node: NodeIndex, horizontal: bool) -> f32 {
     if node.0 >= tree.len() {
         return 0.0;
     }
-    let of = |id: PanelId| {
-        let spec = id.spec();
-        if !horizontal {
-            return spec.default_size.y;
-        }
-        match id {
-            PanelId::Color => crate::color_panel::DEFAULT_WIDTH,
-            PanelId::Tools => spec.reference_width,
-            _ => {
-                let bar = match spec.body {
-                    Body::Fit | Body::Tall => pixel_ui::SCROLL_BAR,
-                    Body::Fixed => 0.0,
-                };
-                spec.reference_width + 2.0 * f32::from(dock::FLYOUT_MARGIN) + bar
-            }
-        }
-    };
+    let of = |id: PanelId| panel_reference(id, horizontal);
     match &tree[node] {
         Node::Empty => 0.0,
         Node::Leaf(leaf) => leaf.tabs.iter().map(|&t| of(t)).fold(0.0, f32::max),
@@ -956,6 +1053,26 @@ fn reference(tree: &Tree<PanelId>, node: NodeIndex, horizontal: bool) -> f32 {
             );
             let along = matches!(tree[node], Node::Horizontal(_)) == horizontal;
             if along { a + b } else { a.max(b) }
+        }
+    }
+}
+
+/// Lo que pide de fábrica el panel `id` en un grupo a lo ancho (`horizontal`) o a lo alto (ver
+/// [`reference`]).
+fn panel_reference(id: PanelId, horizontal: bool) -> f32 {
+    let spec = id.spec();
+    if !horizontal {
+        return spec.default_size.y;
+    }
+    match id {
+        PanelId::Color => crate::color_panel::DEFAULT_WIDTH,
+        PanelId::Tools => spec.reference_width,
+        _ => {
+            let bar = match spec.body {
+                Body::Fit | Body::Tall => pixel_ui::SCROLL_BAR,
+                Body::Fixed => 0.0,
+            };
+            spec.reference_width + 2.0 * f32::from(dock::FLYOUT_MARGIN) + bar
         }
     }
 }
@@ -1044,14 +1161,22 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             .map(|width| width - sides.sep / 2.0);
         // El del timeline lo da el anfitrión ya hasta el centro del divisor.
         let host = toolbar.or(sides.timeline.filter(|_| timeline_level(tree, &level)));
-        let points = match (level.column, sides.column, host) {
+        let points = match (colors_column(tree, &level), sides.column, host) {
             (_, _, Some(points)) => points,
             (true, Some(points), _) => points,
             _ => match sides.get(&side) {
                 Some(points) => points,
                 None => {
+                    // Un panel solo, lo de siempre suyo (Color, el ancho de la columna); varios,
+                    // lo que piden de fábrica.
+                    let alone = match side.panels[..] {
+                        [id] => Some(sides.preferred(id, level.horizontal)),
+                        _ => None,
+                    };
                     let fresh = || {
-                        let r = reference(tree, level.other, level.horizontal) + sides.sep / 2.0;
+                        let r = alone.unwrap_or_else(|| {
+                            reference(tree, level.other, level.horizontal) + sides.sep / 2.0
+                        });
                         r.min(len * 0.45)
                     };
                     // Lo que pide un workspace de fábrica, solo la primera vez (si el lado se
@@ -1061,8 +1186,10 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
                         .iter()
                         .position(|(panels, _)| *panels == side.panels)
                         .map(|i| (len * sides.shares.remove(i).1).round());
+                    // Uno recién hecho, como nuevo (ver `Workspace::pin_new_side`).
+                    let new = sides.fresh.contains(&side);
                     let points = share
-                        .or_else(|| measured(tree, &level))
+                        .or_else(|| (!new).then(|| measured(tree, &level)).flatten())
                         .unwrap_or_else(fresh);
                     sides.set(side, points);
                     points
@@ -1088,8 +1215,9 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
             (false, false) => rect.with_max_y(rect.top() + len * f - half),
         };
     }
-    // Los lados que ya no existen se olvidan.
+    // Los lados que ya no existen se olvidan; los recién hechos ya se acomodaron.
     sides.sides.retain(|(side, _)| alive.contains(side));
+    sides.fresh.clear();
     sides.last = Some(now);
 }
 
@@ -1098,6 +1226,14 @@ pub(super) fn pin_sides(state: &mut DockState<PanelId>, area: egui::Rect, sides:
 pub(super) struct Fractions {
     shape: Shape,
     of: Vec<(NodeIndex, f32)>,
+}
+
+impl Fractions {
+    /// Si la superficie principal de `state` cambió de forma desde que se tomaron (un panel se
+    /// soltó en el `DockArea`).
+    pub(super) fn reshaped(&self, state: &DockState<PanelId>) -> bool {
+        shape(state.main_surface()) != self.shape
+    }
 }
 
 pub(super) fn fractions(state: &DockState<PanelId>) -> Fractions {
@@ -1172,7 +1308,7 @@ pub(super) fn record_sides(
         sides.set(side, points);
         // El anfitrión los va a pedir así: no hay que volver a acomodarlos (de una fracción a
         // puntos y de vuelta, un arrastre lento se correría medio punto por frame).
-        if level.column {
+        if colors_column(tree, &level) {
             dragged.column = Some(points);
             if let Some(last) = &mut sides.last {
                 last.column = Some(points);
@@ -1729,6 +1865,78 @@ mod tests {
             library.width() >= min_of(&ctx, &app, PanelId::Library).x,
             "{library:?}"
         );
+    }
+
+    #[test]
+    fn a_saved_timeline_narrower_than_its_minimum_is_widened() {
+        // Un acomodo guardado de cuando el mínimo del timeline era 64 (el del lienzo): a la
+        // derecha del lienzo casi sin ancho, o flotando en una ventana angosta. El ajuste de
+        // siempre (`fit_splits`, `fit_windows`) le da su mínimo con el margen de su grupo.
+        let room = crate::timeline::MIN_WIDTH + 2.0 * f32::from(pixel_ui::WORKSPACE_MARGIN);
+        let mut app = test_app();
+        app.view.timeline = true;
+        let ctx = egui::Context::default();
+        let mut w = Workspace::demo("timeline-right").unwrap();
+        let split = split_of_panel(&w, PanelId::Timeline);
+        if let Node::Horizontal(s) = &mut w.state.main_surface_mut()[split] {
+            s.fraction = 0.99;
+        }
+        let saved = ron::to_string(&w.to_saved()).unwrap();
+        app.workspace = Workspace::from_saved(ron::from_str(&saved).unwrap());
+        frames(&ctx, &mut app);
+        let leaf = app.workspace.leaf_rect(PanelId::Timeline).unwrap();
+        assert!(leaf.width() >= room, "docked: {leaf:?} vs {room}");
+        // Flotando en una ventana de 40 de ancho.
+        let mut w = Workspace::demo("timeline-narrow").unwrap();
+        let (surface, _) = w.leaf_of(PanelId::Timeline).unwrap();
+        w.state
+            .get_window_state_mut(surface)
+            .unwrap()
+            .set_size(egui::vec2(40.0, 420.0));
+        let saved = ron::to_string(&w.to_saved()).unwrap();
+        app.workspace = Workspace::from_saved(ron::from_str(&saved).unwrap());
+        frames(&ctx, &mut app);
+        let (surface, _) = app.workspace.leaf_of(PanelId::Timeline).unwrap();
+        let inner = app
+            .workspace
+            .root_rect(surface)
+            .expect("the timeline's window");
+        assert!(inner.width() >= room, "floating: {inner:?} vs {room}");
+        // La demo angosta ya entra: su ventana se queda del ancho que pide.
+        app.workspace = Workspace::demo("timeline-narrow").unwrap();
+        frames(&ctx, &mut app);
+        let (surface, _) = app.workspace.leaf_of(PanelId::Timeline).unwrap();
+        let inner = app.workspace.root_rect(surface).expect("the demo's window");
+        let area = ctx
+            .memory(|m| m.area_rect(skin::window_area_id(surface)))
+            .expect("the demo's window");
+        assert!(inner.width() >= room, "demo: {inner:?} vs {room}");
+        assert_eq!(
+            area.width(),
+            super::super::model::TIMELINE_NARROW_DEMO.x,
+            "demo: not widened ({inner:?})"
+        );
+    }
+
+    #[test]
+    fn the_canvas_side_minimum_with_the_timeline_below_is_fixed_per_mode() {
+        // El split [lienzo / timeline] de Essentials, lo más angosto que puede quedar: con Pixel
+        // UI, el timeline (su barra, `timeline::MIN_WIDTH` 86, el aire de su marco, 3, y la tira,
+        // 26) le gana al lienzo (64 + la tira); sin Pixel UI su timeline tiene scroll a lo ancho y
+        // pide lo de main 45dc2da (64 + la tira, lo mismo que el lienzo).
+        for (pixel_ui, want) in [(true, 115.0), (false, 90.0)] {
+            let mut app = test_app();
+            app.view.pixel_ui = pixel_ui;
+            app.view.timeline = true;
+            let ctx = egui::Context::default();
+            frames(&ctx, &mut app);
+            assert_eq!(app.pixel.skin().is_some(), pixel_ui);
+            let w = &app.workspace;
+            let tree = w.state.main_surface();
+            let node = stack(tree).expect("the timeline below the canvas");
+            let min = node_min(tree, node, &w.sides.mins, w.sides.sep, w.sides.bar);
+            assert_eq!(min.x, want, "pixel_ui {pixel_ui}");
+        }
     }
 
     #[test]

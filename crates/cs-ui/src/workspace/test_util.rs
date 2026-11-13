@@ -1,11 +1,14 @@
 //! Lo que comparten los tests del workspace para dibujarlo en un frame sin ventana.
 
 use eframe::egui;
+use egui_dock::NodePath;
 
 use super::show::show;
+use super::{DockTarget, skin};
 use crate::ChimpApp;
 use crate::palette_library::PaletteLibrary;
 use crate::palette_library::test_util::NoPresets;
+use crate::panel_registry::PanelId;
 use crate::view::ViewSettings;
 
 /// La app con Pixel UI y una pestaña nueva.
@@ -186,4 +189,114 @@ pub(super) fn click(target: egui::accesskit::NodeId) -> egui::Event {
         target_node: target,
         data: None,
     })
+}
+
+/// La ventana de los tests del modal, de las pestañas y de las tiras.
+pub(super) const SIZE: egui::Vec2 = egui::vec2(1280.0, 800.0);
+
+/// Lo que se ve del acomodo: cada grupo (su superficie, sus pestañas, la activa y su rect), el
+/// rect de cada ventana flotante, las tiras, el ancho de la columna, el flyout abierto y si
+/// hay un menú abierto.
+pub(super) fn snapshot(ctx: &egui::Context, app: &ChimpApp) -> String {
+    let w = &app.workspace;
+    let leaves: Vec<_> = w
+        .state
+        .iter_leaves()
+        .map(|(path, leaf)| (path.surface, leaf.tabs.clone(), leaf.active.0, leaf.rect))
+        .collect();
+    let windows: Vec<_> = PanelId::ALL
+        .iter()
+        .filter(|&&p| w.floating(p))
+        .map(|&p| (p, w.window_rect(ctx, p)))
+        .collect();
+    let menu = egui::Popup::is_any_open(ctx);
+    format!(
+        "{leaves:?}\n{windows:?}\n{:?}\n{:?} {:?} menu {menu}",
+        w.strips,
+        app.view.palette_width,
+        crate::dock::open_panel(ctx),
+    )
+}
+
+pub(super) fn leaf(app: &ChimpApp, id: PanelId) -> egui::Rect {
+    app.workspace
+        .leaf_rect(id)
+        .unwrap_or_else(|| panic!("{id:?} in the tree"))
+}
+
+/// El nombre del ícono de `id` en la tira: su título con Pixel UI; sin él, lo que dice el
+/// botón de egui.
+pub(super) fn icon_label(app: &ChimpApp, id: PanelId) -> &'static str {
+    if app.pixel.skin().is_some() {
+        id.spec().title
+    } else {
+        id.spec().plain
+    }
+}
+
+/// La × de la pestaña `id` (con Pixel UI, la del kit; sin él, la de egui_dock, al final de
+/// su pestaña).
+pub(super) fn close_tab(
+    ctx: &egui::Context,
+    app: &mut ChimpApp,
+    out: &egui::FullOutput,
+    size: egui::Vec2,
+    id: PanelId,
+) {
+    let title = id.spec().title;
+    let at = if app.pixel.skin().is_some() {
+        node_rect(out, &format!("Close {title}")).unwrap().center()
+    } else {
+        let tab = node_rect(out, title).unwrap();
+        egui::pos2(tab.right() - 12.0, tab.center().y)
+    };
+    click_at(ctx, app, at, egui::PointerButton::Primary, size);
+}
+
+/// Library con siete paneles más en su grupo, debajo de Color en la columna (Library al
+/// frente): sus pestañas no caben y su barra queda a media altura (algo puede ir encima).
+pub(super) fn many_tabs_below_color(app: &mut ChimpApp) {
+    let (s, n) = app.workspace.leaf_of(PanelId::Color).unwrap();
+    let below = DockTarget::Split(s, n, egui_dock::Split::Below);
+    app.workspace.dock(PanelId::Library, below);
+    let (s, n) = app.workspace.leaf_of(PanelId::Library).unwrap();
+    for id in [
+        PanelId::Slices,
+        PanelId::Artboards,
+        PanelId::Lospec,
+        PanelId::Groom,
+        PanelId::Lumen,
+        PanelId::Model,
+        PanelId::Font,
+    ] {
+        app.workspace.dock(id, DockTarget::Leaf(s, n));
+    }
+    let (s, n) = app.workspace.leaf_of(PanelId::Library).unwrap();
+    let path = NodePath {
+        surface: s,
+        node: n,
+    };
+    app.workspace.state.leaf_mut(path).unwrap().active = egui_dock::TabIndex(0);
+}
+
+/// Desde cuál pestaña se ve la barra del grupo de `id` (`None` sin Pixel UI: no hay flechas).
+pub(super) fn tabs_offset(ctx: &egui::Context, app: &ChimpApp, id: PanelId) -> Option<usize> {
+    let (surface, node) = app.workspace.leaf_of(id)?;
+    let path = NodePath { surface, node };
+    ctx.data(|d| d.get_temp::<(usize, Option<PanelId>)>(skin::tabs_offset_id(path)))
+        .map(|(o, _)| o)
+}
+
+/// Un evento de la rueda (`delta` hacia arriba si es positivo) en `unit`, con `modifiers`.
+pub(super) fn wheel(
+    unit: egui::MouseWheelUnit,
+    dy: f32,
+    modifiers: egui::Modifiers,
+) -> egui::Event {
+    egui::Event::MouseWheel {
+        unit,
+        delta: egui::vec2(0.0, dy),
+        phase: egui::TouchPhase::Move,
+        modifiers,
+    }
 }

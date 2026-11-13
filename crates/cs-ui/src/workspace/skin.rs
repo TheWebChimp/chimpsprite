@@ -10,12 +10,16 @@
 //!   encima, en su misma capa, con el rect de `TabViewer::on_tab_button` (ver [`paint_tabs`]).
 //!
 //! Además, [`snap`] y [`snap_windows`] dejan los divisores y las ventanas en puntos enteros
-//! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin).
+//! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin), y el mismo
+//! plugin pinta translúcida la ventana cuya única pestaña se arrastra (`Armed::faded`, con o sin
+//! Pixel UI; ver `drop::see_through`).
 //!
 //! **Depende de detalles internos de egui_dock 0.21.1** (por eso la versión va fija en
 //! `Cargo.toml`). Al subir de versión hay que revisarlos:
 //!
-//! 1. El id del área de cada ventana flotante, `"window {surface:?}"` ([`window_area_id`]).
+//! 1. El id del área de cada ventana flotante, `"window {surface:?}"` ([`window_area_id`]). La
+//!    ventana atenuada (`Armed::faded`) depende además de que todo lo de una ventana, incluidas
+//!    las pestañas del kit, se pinte en la capa `(Order::Middle, window_area_id)`.
 //! 2. La respuesta de la pestaña que se arrastra, `id.with("dragged")` ([`is_dragged_tab`]).
 //! 3. El id de la franja de agarre de un grupo sin barra, `hidden_tab_bar_drag`
 //!    ([`hidden_strip_id`]).
@@ -23,6 +27,8 @@
 //!    [`dock_style`] (divisores, zona de destino; el contorno de "ventana nueva" como trazo), que
 //!    el marco de sus ventanas sea `Frame::window` del `Ui` que recibe el `DockArea` (ver
 //!    [`window_visuals`]) y que los atenúe con `linear_multiply` (ver el test de los marcadores).
+//!    La zona de destino y el contorno de "ventana nueva" van los dos de
+//!    `overlay.selection_color`: transparente, no se ven ([`hide_drop_zone`]).
 //! 5. Dónde los pinta: la zona de destino en la capa `Foreground` "overlay" recortada a la
 //!    pantalla, los divisores recortados al `DockArea` o a su ventana (de eso depende
 //!    `Armed::in_scope`).
@@ -43,6 +49,37 @@
 //! 11. `separator.extra`: de fábrica, 175; `show_separator` lo impone cada frame como lo mínimo de
 //!     cada lado de un split (la toolbar o una columna angosta no cabrían). Va en 0: los mínimos
 //!     los pone `fit_splits`.
+//! 12. La ventana que se arrastra no es destino (`drop::see_through`, en `show`): cada grupo que
+//!     contiene el puntero sobrescribe el destino (`hover_data`, el último gana: la superficie
+//!     principal primero, las ventanas después) en `tab_body` de `show/leaf.rs`, justo después
+//!     de `TabViewer::ui` de su pestaña al frente, y solo si `TabViewer::allowed_in_windows` (o la
+//!     superficie principal) lo deja. El `Viewer` de `show` marca su grupo en `ui` y
+//!     `allowed_in_windows` gasta la marca (dice que no). El invariante: nada puede llamar
+//!     `Viewer::allowed_in_windows` entre el `ui` de un grupo y esa comprobación, ni usarlo como
+//!     predicado puro (fuera de egui_dock: `model::floats`). Por eso el menú de las pestañas de
+//!     egui_dock va apagado (`tab_context_menus(false)`: el suyo llama `allowed_in_windows`) y el
+//!     "Dock" de las pestañas de lo que flota es de `workspace` (`tabs::dock_menus`, después del
+//!     `DockArea`). La llamada de `show_drag_drop_overlay` (al empezar el `DockArea`, antes de los
+//!     grupos) no ve la marca. El frame en que egui_dock empieza
+//!     el arrastre todavía no hay `dnd` (no pregunta `allowed_in_windows`) y el destino es la
+//!     propia ventana: su zona (el grupo entero o su barra, `Armed::faded_leaf`) no se pinta.
+//! 13. El grupo recordado (punto 9) se cambia en `State::set_drag_and_drop`, al empezar el
+//!     `DockArea`, solo si pasó `overlay.feel.max_preference_time` del estilo de ese frame desde
+//!     que se fijó. Con el puntero sobre la ventana que se arrastra va en 0: al empezar a
+//!     arrastrar el grupo recordado es el suyo (antes de que haya destino, egui_dock no pregunta
+//!     `allowed_in_windows`), y ahí lo de debajo cuenta en cuanto llega.
+//! 14. Cuándo empieza egui_dock el arrastre de una pestaña o de la franja de agarre
+//!     (`try_initiate_tab_drag` en `show/leaf.rs`): con el puntero a más de 30 pt a lo ancho o de
+//!     6 a lo alto de donde estaba el primer frame en que egui lo dio por arrastre
+//!     (`drop::DOCK_DRAG_START`). Antes (una pulsación larga, un deslizón corto) no suelta nada, y
+//!     `workspace` tampoco (`drop::dragged_tab`). Lo vuelve a mirar cada frame (`drag_data` se
+//!     borra al empezar `show_inside`): si el puntero regresa dentro del umbral, tampoco.
+//! 15. egui_dock mueve lo soltado al empezar `show_inside` y dibuja ese frame con el split nuevo a
+//!     la mitad (0.5), antes de que `workspace` acomode los lados (`pin_sides` y `fit_splits` van
+//!     fuera del `DockArea`): partiendo un grupo angosto (la toolbar, 35 pt), un lado queda más
+//!     angosto que su panel. Ese frame (el de soltar) el `Viewer` acomoda lo de adentro en su
+//!     mínimo, recortado (`Viewer::squeeze`), y se vuelve a dibujar. La segunda pasada de egui
+//!     no trae el soltar (su entrada va vacía).
 
 use std::sync::Arc;
 
@@ -51,6 +88,7 @@ use eframe::egui::{
 };
 use egui_dock::{DockState, Node, NodePath, OverlayType, SurfaceIndex};
 
+use super::fit::whole;
 use crate::kit;
 use crate::kit::tabs::{Strip, TabItem, TabLook};
 use crate::panel_registry::PanelId;
@@ -87,6 +125,9 @@ const DROP_FILL: &str = "select.item.hover";
 /// La opacidad del relleno de la zona de destino y del contorno de "ventana nueva".
 const DROP_ALPHA: f32 = 0.45;
 const NEW_WINDOW_ALPHA: f32 = 0.6;
+/// La opacidad de la ventana flotante cuya única pestaña se arrastra (ver `drop::see_through`):
+/// lo de debajo se ve.
+pub(super) const SEE_THROUGH: f32 = 0.4;
 
 /// El estilo de egui_dock con la piel: barra y pestañas transparentes (las del kit van encima),
 /// divisores y zona de destino con colores marcador, sin los botones de egui_dock (son líneas).
@@ -128,6 +169,13 @@ pub(super) fn dock_style(ui_style: &egui::Style, skin: &Skin) -> egui_dock::Styl
     style.overlay.selection_color = M_DROP;
     style.overlay.selection_stroke_width = 2.0;
     style
+}
+
+/// Sin la zona de destino de egui_dock ni su contorno de "ventana nueva" (los dos van del color
+/// `overlay.selection_color`): mientras rige la de una orilla o una tira (ver `drop::TabDrop`), se
+/// pinta solo esa.
+pub(super) fn hide_drop_zone(style: &mut egui_dock::Style) {
+    style.overlay.selection_color = Color32::TRANSPARENT;
 }
 
 /// Lo que va igual con y sin Pixel UI: sin borde ni aire alrededor, la franja para agarrar un
@@ -199,7 +247,8 @@ pub(super) fn flyout_margin(skin: &Skin) -> Margin {
 #[derive(Default)]
 pub(super) struct SkinRewriter;
 
-/// Lo que el workspace le deja al plugin en un frame: el skin y dónde puede haber marcadores.
+/// Lo que el workspace le deja al plugin en un frame: el skin (sin Pixel UI, ninguno: solo se
+/// atenúa la ventana de `faded`), dónde puede haber marcadores y qué ventana se ve a través.
 #[derive(Clone, Default)]
 pub(super) struct Armed {
     skin: Option<Arc<Skin>>,
@@ -212,12 +261,18 @@ pub(super) struct Armed {
     /// verdad ocuparía lo soltado. egui_dock pinta el grupo entero ("como pestaña"), pero el lienzo
     /// no recibe pestañas: `tidy_canvas` lo parte al lado, del lado del cuadrante.
     pub canvas_drop: Option<(Rect, Rect)>,
+    /// Mientras se arrastra la única pestaña de una ventana flotante (ver `drop::see_through`):
+    /// la capa de esa ventana ([`window_layer`]), que va con [`SEE_THROUGH`] de opacidad.
+    pub faded: Option<LayerId>,
+    /// Y el rect de su grupo: la zona de destino de egui_dock que es ese grupo o su barra no se
+    /// pinta (ver [`own_zone`]).
+    pub faded_leaf: Option<Rect>,
 }
 
 impl Armed {
-    pub(super) fn new(skin: Arc<Skin>) -> Armed {
+    pub(super) fn new(skin: Option<Arc<Skin>>) -> Armed {
         Armed {
-            skin: Some(skin),
+            skin,
             ..Default::default()
         }
     }
@@ -250,6 +305,36 @@ pub(super) fn arm(ctx: &egui::Context, armed: Armed) {
 impl egui::Plugin for SkinRewriter {
     fn debug_name(&self) -> &'static str {
         "workspace_skin_rewriter"
+    }
+
+    /// La ventana que se ve a través (`Armed::faded`), cuando ya se pintó todo lo de su capa en
+    /// el frame (las pestañas del kit y su « van después del `DockArea`) y antes de que egui junte
+    /// las capas: sus marcadores cambiados aquí (ya atenuados no se reconocerían) y todo a
+    /// [`SEE_THROUGH`] de opacidad. La pastilla que sigue al puntero va en otra capa: opaca.
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx();
+        let Some(armed) = ctx.data(|d| d.get_temp::<Armed>(rewriter_id())) else {
+            return;
+        };
+        let Some(layer) = armed.faded else {
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        ctx.graphics_mut(|g| {
+            let Some(list) = g.get_mut(layer) else {
+                return;
+            };
+            for i in 0..list.next_idx().0 {
+                list.mutate_shape(egui::layers::ShapeIdx(i), |c| {
+                    if let Some(skin) = &armed.skin
+                        && armed.in_scope(c.clip_rect)
+                    {
+                        rewrite(&mut c.shape, skin, ppp, &armed);
+                    }
+                    see_through(&mut c.shape, SEE_THROUGH);
+                });
+            }
+        });
     }
 
     fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
@@ -288,9 +373,17 @@ fn rewrite(shape: &mut Shape, skin: &Skin, ppp: f32, armed: &Armed) {
                 }
                 *shape = etched_in(r.rect, &c, ppp);
             } else if r.fill == M_DROP {
+                // La de la ventana que se ve a través: no es destino (el primer frame del
+                // arrastre egui_dock todavía apunta a ella, ver el punto 12 del módulo).
+                if armed.faded_leaf.is_some_and(|leaf| own_zone(r.rect, leaf)) {
+                    *shape = Shape::Noop;
+                    return;
+                }
+                // En puntos enteros, como las de la tira (`drop::drop_zone`): egui_dock parte un
+                // grupo de alto impar a medio punto.
                 let rect = match armed.canvas_drop {
                     Some((canvas, half)) if same_rect(r.rect, canvas) => half,
-                    _ => r.rect,
+                    _ => whole(r.rect),
                 };
                 *shape = Shape::Vec(drop_shapes(skin, rect, ppp));
             } else if r.fill == M_WINDOW {
@@ -311,6 +404,15 @@ fn same_rect(a: Rect, b: Rect) -> bool {
     (a.min - b.min).length() < 1.5 && (a.max - b.max).length() < 1.5
 }
 
+/// Si la zona de destino `zone` de egui_dock es el grupo `leaf` entero (soltar como pestaña en su
+/// cuerpo) o su barra de pestañas (o la franja de agarre, sin barra): lo de arriba del grupo, de
+/// su orilla izquierda, a lo más tan ancho como él y del alto de una barra.
+fn own_zone(zone: Rect, leaf: Rect) -> bool {
+    let top = (zone.min - leaf.min).length() < 1.5;
+    top && (same_rect(zone, leaf)
+        || (zone.height() <= TAB_BAR_H + 1.5 && zone.right() <= leaf.right() + 1.5))
+}
+
 /// Multiplica la opacidad de los rects llenos y de las mallas de `shape` (las piezas del skin son
 /// mallas con textura: su tinte va en los vértices).
 fn fade(shape: &mut Shape, alpha: f32) {
@@ -323,6 +425,17 @@ fn fade(shape: &mut Shape, alpha: f32) {
             .for_each(|v| v.color = v.color.gamma_multiply(alpha)),
         _ => {}
     }
+}
+
+/// Multiplica la opacidad de todo `shape` (como `Ui::multiply_opacity`: el texto y los trazos
+/// también; el color "el del texto" de las letras, `Color32::PLACEHOLDER`, se queda: lo cambia
+/// el teselador por el del texto, que sí se atenúa).
+fn see_through(shape: &mut Shape, alpha: f32) {
+    egui::epaint::shape_transform::adjust_colors(shape, move |c| {
+        if *c != Color32::PLACEHOLDER {
+            *c = c.gamma_multiply(alpha);
+        }
+    });
 }
 
 /// Una línea grabada a lo largo del rect: vertical si es alto, horizontal si es ancho.
@@ -350,6 +463,33 @@ pub(super) fn drop_shapes(skin: &Skin, rect: Rect, ppp: f32) -> Vec<Shape> {
     let mut fill = Shape::Vec(fill);
     fade(&mut fill, DROP_ALPHA);
     out.push(fill);
+    out
+}
+
+/// Las zonas de destino de [`drop_shapes`] pintadas en `shapes`: el rect de cada una. Se
+/// reconocen por su relleno (lo último de `drop_shapes`, siempre un `Shape::Vec`, se pinten todas
+/// juntas, como en [`rewrite`], o una por una).
+#[cfg(test)]
+pub(crate) fn painted_drop_zones(
+    shapes: &[egui::epaint::ClippedShape],
+    skin: &Skin,
+    ppp: f32,
+) -> Vec<Rect> {
+    fn walk(shape: &Shape, skin: &Skin, ppp: f32, out: &mut Vec<Rect>) {
+        let Shape::Vec(v) = shape else {
+            return;
+        };
+        let zone = shape.visual_bounding_rect() + flyout_margin(skin);
+        if zone.is_positive() && drop_shapes(skin, zone, ppp).last() == Some(shape) {
+            out.push(zone);
+            return;
+        }
+        v.iter().for_each(|s| walk(s, skin, ppp, out));
+    }
+    let mut out = Vec::new();
+    for clipped in shapes {
+        walk(&clipped.shape, skin, ppp, &mut out);
+    }
     out
 }
 
@@ -555,7 +695,7 @@ const ARROWS_AIR: f32 = 1.0;
 /// ocupan las de antes de la primera que se ve (`LeafNode::scroll`). egui_dock no las deja correr
 /// más que hasta que la última toca el final de su barra y el kit deja la última pegada a la
 /// izquierda (con lugar libre después): la última lleva de más lo que falte (`tail`), que queda
-/// bajo las flechas y el aire de antes de ellas (ver `show::tab_arrows`, que les ganan el puntero).
+/// bajo las flechas y el aire de antes de ellas (ver `tabs::tab_arrows`, que les ganan el puntero).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TabBar {
     pub path: NodePath,
@@ -780,9 +920,9 @@ pub(super) fn plan_bars(
 /// Las pestañas del kit sobre las de egui_dock, en su misma capa: por cada grupo con barra (ver
 /// [`TabBar`]), la línea grabada cortada debajo de la activa y las pestañas que se ven, con su
 /// nombre como entra (la activa al final, tapa a sus vecinas; las flechas las pone
-/// `show::tab_arrows`); la que se arrastra, además, como fantasma bajo el puntero. En los grupos
-/// sin barra (`hidden`), la franja de arriba resaltada con el puntero encima, y su fantasma al
-/// arrastrarla.
+/// `tabs::tab_arrows`); la que se arrastra, además, como fantasma (la pastilla del kit con su
+/// nombre, `kit::tabs::drag_tag_shapes`). En los grupos sin barra (`hidden`), la franja de arriba
+/// resaltada con el puntero encima, y su fantasma (la misma pastilla) al arrastrarla.
 pub(super) fn paint_tabs(
     ui: &egui::Ui,
     skin: &Skin,
@@ -794,25 +934,14 @@ pub(super) fn paint_tabs(
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let press = ui.input(|i| i.pointer.press_origin());
     let hit_of = |p: PanelId| hits.iter().find(|h| h.id == p);
-    let ghost = |row: Rect, id: PanelId| {
+    // La pastilla del kit con el nombre del panel, con su esquina donde estaba la de lo agarrado
+    // (`grabbed`), corrida lo arrastrado.
+    let ghost = |grabbed: egui::Pos2, id: PanelId| {
         if let (Some(p), Some(o)) = (pointer, press) {
             let painter =
                 ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("workspace_ghost")));
-            let item = tab_item(id);
-            let look = TabLook {
-                active: true,
-                hovered: false,
-                mark_hovered: false,
-            };
-            let row = row.translate((p - o).round());
-            painter.extend(kit::tabs::tab_shapes(
-                ui,
-                skin,
-                row,
-                &item,
-                &item.label,
-                look,
-            ));
+            let at = grabbed + (p - o).round();
+            painter.extend(kit::tabs::drag_tag_shapes(ui, skin, at, id.spec().title));
         }
     };
     for (path, leaf) in state.iter_leaves() {
@@ -838,11 +967,7 @@ pub(super) fn paint_tabs(
                 ui.painter().with_clip_rect(strip).add(line);
             }
             if dragged {
-                let width = kit::tabs::natural_width(ui, &tab_item(active));
-                ghost(
-                    Rect::from_min_size(strip.min, vec2(width, kit::tabs::HEIGHT)),
-                    active,
-                );
+                ghost(strip.min, active);
             }
             continue;
         }
@@ -896,16 +1021,13 @@ pub(super) fn paint_tabs(
                 look,
             ));
         }
-        // La que se arrastra (solo se agarra una que se ve), del ancho del kit.
-        for (i, &id) in plan.tabs.iter().enumerate() {
+        // La que se arrastra (solo se agarra una que se ve), desde la esquina de su pestaña del
+        // kit (la de egui_dock no cuenta el aire entre pestañas).
+        for &id in &plan.tabs {
             if let Some(h) = hit_of(id)
                 && is_dragged_tab(&h.response)
             {
-                let row = Rect::from_min_size(
-                    h.response.rect.min,
-                    vec2(plan.widths[i], kit::tabs::HEIGHT),
-                );
-                ghost(row, id);
+                ghost(plan.row(id).map_or(h.response.rect.min, |r| r.min), id);
             }
         }
     }
@@ -1002,6 +1124,45 @@ mod tests {
     }
 
     #[test]
+    fn seeing_through_fades_every_color_but_the_text_placeholder() {
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(10.0, 10.0));
+        let faded = Color32::RED.gamma_multiply(SEE_THROUGH);
+        let mut fill = Shape::rect_filled(rect, 0.0, Color32::RED);
+        see_through(&mut fill, SEE_THROUGH);
+        let Shape::Rect(r) = &fill else { panic!() };
+        assert_eq!(r.fill, faded);
+        // Las letras de un texto van con `PLACEHOLDER` ("el color del texto"): lo cambia el
+        // teselador, y el color del texto ya va atenuado.
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(rect.min, Color32::PLACEHOLDER);
+        mesh.colored_vertex(rect.max, Color32::RED);
+        let mut shape = Shape::Vec(vec![Shape::mesh(mesh)]);
+        see_through(&mut shape, SEE_THROUGH);
+        let Shape::Vec(v) = &shape else { panic!() };
+        let Shape::Mesh(mesh) = &v[0] else { panic!() };
+        let colors: Vec<Color32> = mesh.vertices.iter().map(|v| v.color).collect();
+        assert_eq!(colors, [Color32::PLACEHOLDER, faded]);
+    }
+
+    #[test]
+    fn the_zone_of_the_faded_window_is_its_group_or_its_tab_bar_only() {
+        let leaf = Rect::from_min_max(egui::pos2(429.0, 95.0), egui::pos2(649.0, 393.0));
+        let at = |x0, y0, x1, y1| Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+        // El grupo entero, su barra (sin lo del «) y la franja de agarre de un grupo sin barra, a
+        // medio punto.
+        assert!(own_zone(leaf, leaf));
+        assert!(own_zone(leaf.translate(vec2(0.5, 0.5)), leaf));
+        assert!(own_zone(at(429.0, 95.0, 632.0, 112.0), leaf));
+        assert!(own_zone(at(429.0, 95.0, 649.0, 98.0), leaf));
+        // Lo de otro grupo (debajo o encima de ella), no: la mitad de abajo, una barra más abajo,
+        // uno más ancho o el lienzo entero.
+        assert!(!own_zone(leaf.with_min_y(leaf.center().y), leaf));
+        assert!(!own_zone(at(429.0, 120.0, 632.0, 137.0), leaf));
+        assert!(!own_zone(at(429.0, 95.0, 900.0, 112.0), leaf));
+        assert!(!own_zone(at(37.0, 63.0, 937.0, 780.0), leaf));
+    }
+
+    #[test]
     fn the_drop_zone_over_the_whole_canvas_is_painted_as_the_half_that_results() {
         let skin = crate::skin::Skin::embedded(&egui::Context::default());
         let canvas = Rect::from_min_max(egui::pos2(37.0, 63.0), egui::pos2(937.0, 780.0));
@@ -1015,11 +1176,13 @@ mod tests {
         let mut zone = Shape::rect_filled(canvas.translate(vec2(0.5, 0.0)), 0.0, M_DROP);
         rewrite(&mut zone, &skin, 2.0, &armed);
         assert_eq!(bounds(&zone), half);
-        // Otra zona (un borde del lienzo, un grupo) queda como la pinta egui_dock.
+        // Otra zona (un borde del lienzo, un grupo) queda como la pinta egui_dock, en puntos
+        // enteros (el lienzo es de alto impar: egui_dock lo parte en 421.5).
         let other = canvas.with_min_y(canvas.center().y);
+        assert_eq!(other.top(), 421.5);
         let mut zone = Shape::rect_filled(other, 0.0, M_DROP);
         rewrite(&mut zone, &skin, 2.0, &armed);
-        assert_eq!(bounds(&zone), other);
+        assert_eq!(bounds(&zone), other.with_min_y(422.0));
     }
 
     #[test]

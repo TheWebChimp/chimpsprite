@@ -519,11 +519,14 @@ fn inputs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
 
 /// Sección Tabs, como en el mockup: las pestañas de documento (la activa "Design.chimp" y la otra
 /// "Otro.chimp", con cambios) sobre su línea grabada, que sigue 5 px antes y después; la misma
-/// tira con las flechas; y una tira de verdad.
+/// tira con las flechas; una tira de verdad; y la pastilla de lo que se arrastra ("Color").
 const DOC_TABS: [&str; 2] = ["Design.chimp", "Otro.chimp"];
 const LINE_OVERHANG: f32 = 5.0;
 const ARROWS_LINE_OVERHANG: f32 = 6.0;
 const TABS_PITCH: f32 = 30.0;
+/// La fila de la pastilla de arrastre: el aire sobre ella y dónde empieza, después de su nombre.
+const DRAG_TAG_GAP: f32 = 8.0;
+const DRAG_TAG_LEFT: f32 = 50.0;
 const LIVE_TABS: [&str; 9] = [
     "Sprite.chimp",
     "Tiles.chimp",
@@ -651,7 +654,20 @@ fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         colors.text_dim,
     );
     ui.painter().add(note);
-    top + 10.0
+    top += 10.0 + DRAG_TAG_GAP;
+    // La pastilla de lo que se arrastra en el workspace (una pestaña, una franja, un ícono).
+    let (name, _) = pixel_draw::caps_text_in(
+        ui,
+        TextStyle::Small,
+        "dragged",
+        left,
+        top + tabs::CAPS_TOP,
+        colors.text_dim,
+    );
+    ui.painter().add(name);
+    let shapes = tabs::drag_tag_shapes(ui, skin, pos2(left + DRAG_TAG_LEFT, top), "Color");
+    ui.painter().extend(shapes);
+    top + tabs::DRAG_HEIGHT
 }
 
 /// Sección Checks, como en el mockup: las casillas marcada, intermedia y vacía (una cada 16) y,

@@ -127,6 +127,14 @@ impl ExampleCache {
         }
     }
 
+    /// Sin red (el panel abierto con una página ya llegada, ver `open_lospec_offline`): los
+    /// ejemplos de `p` no se piden, cuentan como fallados (su paginador sí se ve).
+    pub fn skip(&mut self, p: &LospecPalette) {
+        for url in &p.examples {
+            self.images.insert(url.clone(), Example::Failed);
+        }
+    }
+
     pub fn is_busy(&self) -> bool {
         self.in_flight() > 0
     }

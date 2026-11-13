@@ -14,6 +14,11 @@ use crate::panel_registry::PanelId;
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
 pub(super) const FLOAT_HEIGHT: f32 = crate::panel_registry::DEFAULT_HEIGHT;
 
+/// La ventana del timeline de la demo `timeline-narrow` (ver [`Workspace::demo`]): angosta, pero
+/// sin que `fit_windows` la tenga que ensanchar (su barra de pestañas y su borde, 7, y el margen
+/// del grupo a cada lado alrededor de `timeline::MIN_WIDTH`).
+pub(super) const TIMELINE_NARROW_DEMO: egui::Vec2 = egui::vec2(106.0, 420.0);
+
 /// Dónde estaba un panel cuando se ocultó (el timeline o el Preview, ver
 /// [`Workspace::sync_panel`]): ahí vuelve.
 #[derive(Clone, Debug)]
@@ -46,6 +51,11 @@ pub(crate) enum DockTarget {
     /// En el grupo con el foco de la superficie principal (o el primero que haya), nunca en el
     /// del lienzo (ver [`Workspace::push_focused`]).
     Focused,
+    /// En la orilla `Edge` de la superficie principal, de lado a lado: una columna de alto
+    /// completo (a la izquierda o a la derecha) o una fila de ancho completo (arriba o abajo), por
+    /// fuera de lo que ya va en esa orilla y del ancho (o alto) de siempre del panel (ver
+    /// `fit::SidePoints::preferred` y `edge_node`).
+    Edge(Edge),
 }
 
 /// El acomodo como se guarda en la configuración de la app (`chimpsprite.workspace`): cada panel
@@ -154,6 +164,7 @@ impl Workspace {
             spots: Vec::new(),
             preview_anchored: false,
             pending_focus: None,
+            bounds: None,
         }
     }
 
@@ -417,16 +428,15 @@ impl Workspace {
                 }
             }
         }
+        // En el orden en que se guardaron (se pueden reordenar); los que faltan, en su lugar.
         for id in PanelId::ALL.iter().copied() {
             if Workspace::goes_to_strip(id)
                 && w.state.find_tab(&id).is_none()
                 && w.strip_of(id).is_none()
             {
-                w.strips[Edge::Right.index()].push(id);
+                let strip = &mut w.strips[Edge::Right.index()];
+                strip.insert(ranked_place(strip, id), id);
             }
-        }
-        for strip in &mut w.strips {
-            strip.sort_by_key(|p| PanelId::ALL.iter().position(|q| q == p));
         }
         w
     }
@@ -654,8 +664,9 @@ impl Workspace {
     /// en la tira del lado más cercano: la de la derecha), `tools-float` (la toolbar flotando),
     /// `timeline-right` (el timeline a la derecha del lienzo), `preview-docked` (el Preview
     /// acoplado debajo de Color; se ve con `view.preview`), `left-strip` (la toolbar y Groom en la
-    /// tira de la izquierda) o `groom-below` (Groom debajo del lienzo: la tira de la derecha, solo
-    /// junto a él). `None` si no es ninguno de esos.
+    /// tira de la izquierda), `groom-below` (Groom debajo del lienzo: la tira de la derecha, solo
+    /// junto a él) o `timeline-narrow` (el timeline flotando, angosto). `None` si no es ninguno de
+    /// esos.
     pub(crate) fn demo(name: &str) -> Option<Workspace> {
         let mut w = Workspace::essentials();
         let (surface, node) = w.leaf_of(PanelId::Color)?;
@@ -668,6 +679,12 @@ impl Workspace {
             "tools-float" => w.float(PanelId::Tools, egui::pos2(320.0, 120.0)),
             "timeline-right" => w.dock(PanelId::Timeline, DockTarget::Split(cs, cn, Split::Right)),
             "library-tab" => w.dock(PanelId::Library, DockTarget::Leaf(surface, node)),
+            // Lospec junto a Color, al frente: la columna del ancho de Lospec (o el de
+            // `CHIMPSPRITE_DEMO_COLUMN`).
+            "lospec-tab" => {
+                w.dock(PanelId::Lospec, DockTarget::Leaf(surface, node));
+                let _ = w.focus(PanelId::Lospec);
+            }
             "preview-docked" => w.dock(
                 PanelId::Preview,
                 DockTarget::Split(surface, node, Split::Below),
@@ -677,6 +694,14 @@ impl Workspace {
                 DockTarget::Split(surface, node, Split::Below),
             ),
             "float" => w.float(PanelId::Lumen, egui::pos2(320.0, 120.0)),
+            // El timeline flotando angosto (su fila de botones partida por botón) y alto.
+            "timeline-narrow" => {
+                w.float(PanelId::Timeline, egui::pos2(560.0, 90.0));
+                let surface = w.state.find_tab(&PanelId::Timeline)?.surface;
+                w.state
+                    .get_window_state_mut(surface)?
+                    .set_size(TIMELINE_NARROW_DEMO);
+            }
             "left-strip" => {
                 w.to_strip_at(PanelId::Tools, Edge::Left);
                 w.to_strip_at(PanelId::Groom, Edge::Left);
@@ -726,6 +751,10 @@ impl Workspace {
         if id == PanelId::Canvas {
             return;
         }
+        if let DockTarget::Edge(edge) = into {
+            self.dock_at_edge(id, edge);
+            return;
+        }
         let into = match into {
             DockTarget::Leaf(surface, node) if self.is_canvas_leaf(surface, node) => {
                 DockTarget::Split(surface, node, Split::Right)
@@ -741,7 +770,7 @@ impl Workspace {
                 .leaf(NodePath { surface, node })
                 .ok()
                 .map(|leaf| leaf.tabs.iter().copied().find(|&t| t != id)),
-            DockTarget::Focused => None,
+            DockTarget::Focused | DockTarget::Edge(_) => None,
         };
         match (target, into) {
             // Su propio grupo, donde ya está solo: nada que hacer.
@@ -770,6 +799,46 @@ impl Workspace {
         if self.state.find_tab(&id).is_none() {
             self.push_focused(id);
         }
+    }
+
+    /// [`DockTarget::Edge`]: `id` solo, de lado a lado en la orilla `edge` de la superficie
+    /// principal (partiendo el nodo de [`edge_node`] hacia esa orilla), con su lado del ancho (o
+    /// alto) de siempre del panel, en puntos (ver [`Workspace::pin_new_side`]).
+    fn dock_at_edge(&mut self, id: PanelId, edge: Edge) {
+        // Ya ahí (la misma forma de antes): nada que hacer, con sus fracciones como estaban.
+        let before = self.state.clone();
+        let shape = super::fit::shape(before.main_surface());
+        self.dock_at_edge_anew(id, edge);
+        if self.state.find_main_surface_tab(&id).is_some()
+            && super::fit::shape(self.state.main_surface()) == shape
+        {
+            self.state = before;
+            self.leave_strips(id);
+            return;
+        }
+        self.pin_new_side(id);
+    }
+
+    /// [`Workspace::dock_at_edge`] sin ver si ya estaba ahí.
+    fn dock_at_edge_anew(&mut self, id: PanelId, edge: Edge) {
+        self.take(id);
+        let main = self.state.main_surface_mut();
+        if main.num_tabs() == 0 {
+            *main = Tree::new(vec![id]);
+            return;
+        }
+        let node = edge_node(main, edge);
+        let split = match edge {
+            Edge::Left => Split::Left,
+            Edge::Right => Split::Right,
+            Edge::Top => Split::Above,
+            Edge::Bottom => Split::Below,
+        };
+        let path = NodePath {
+            surface: SurfaceIndex::main(),
+            node,
+        };
+        self.state.split(path, split, 0.5, Node::leaf(id));
     }
 
     /// Si `(surface, node)` es el grupo del lienzo.
@@ -840,7 +909,8 @@ impl Workspace {
         self.to_strip_at(id, edge);
     }
 
-    /// Manda `id` a la tira de la orilla `edge`, en su lugar (el orden de `PanelId::ALL`).
+    /// Manda `id` a la tira de la orilla `edge`, en su lugar (el orden de `PanelId::ALL`: antes
+    /// del primero que va después de él; la tira puede estar reordenada).
     #[allow(
         clippy::wrong_self_convention,
         reason = "no es una conversión: manda el panel a la tira"
@@ -850,10 +920,25 @@ impl Workspace {
             return;
         }
         self.take(id);
-        let rank = |p: &PanelId| PanelId::ALL.iter().position(|q| q == p);
         let strip = &mut self.strips[edge.index()];
-        let at = strip.partition_point(|p| rank(p) < rank(&id));
+        let at = ranked_place(strip, id);
         strip.insert(at, id);
+    }
+
+    /// Pone `id` en la tira de la orilla `edge` en el lugar `index`, contado sin él (más allá del
+    /// final, al final): lo reordena, si ya estaba en ella, o lo saca de donde esté (ver
+    /// [`Workspace::to_strip_at`]).
+    pub(crate) fn move_in_strip(&mut self, id: PanelId, edge: Edge, index: usize) {
+        if id == PanelId::Canvas {
+            return;
+        }
+        // En la misma tira solo cambia el orden: nada más se mueve.
+        if self.strip_of(id) != Some(edge) {
+            self.take(id);
+        }
+        // Como lo muestra la vista previa de la tira mientras se arrastra (`dock::show`).
+        let strip = &mut self.strips[edge.index()];
+        *strip = crate::dock::landed(strip, id, index);
     }
 
     /// La orilla de `id`: la de su tira, si está en una; la de su grupo, si está en el árbol (ver
@@ -957,6 +1042,12 @@ impl Workspace {
             self.dock(id, DockTarget::Split(s, n, Split::Right));
             return;
         }
+        self.tools_home();
+    }
+
+    /// La toolbar a su lugar de fábrica: a la izquierda de todo (junto al lienzo, en Essentials).
+    fn tools_home(&mut self) {
+        let id = PanelId::Tools;
         let focus = self.focused_panel();
         self.take(id);
         let main = self.state.main_surface_mut();
@@ -966,6 +1057,34 @@ impl Workspace {
             main.split_left(NodeIndex::root(), 0.5, vec![id]);
         }
         self.refocus(focus);
+    }
+
+    /// Si `id` tiene un lugar de fábrica al que "Dock" lo regresa ([`Workspace::dock_home`]):
+    /// todos los que flotan salvo el Preview (flota por diseño).
+    pub(crate) fn has_home(id: PanelId) -> bool {
+        floats(id) && id != PanelId::Preview
+    }
+
+    /// "Dock" del menú de la pestaña de una ventana flotante: `id` a su lugar de fábrica (el de
+    /// Essentials), no al último donde estuvo. Color, la columna derecha (la orilla derecha:
+    /// [`DockTarget::Edge`], del ancho de la columna); la toolbar, a la izquierda de todo, junto al
+    /// lienzo (como "Dock" desde una tira que no es la de la derecha, ver
+    /// [`Workspace::dock_from_strip`]); el timeline, debajo del lienzo; los del dock, a la tira de
+    /// la derecha, en su lugar (ver [`Workspace::to_strip_at`]). Los que no tienen
+    /// ([`Workspace::has_home`]), nada.
+    pub(crate) fn dock_home(&mut self, id: PanelId) {
+        match id {
+            _ if !Workspace::has_home(id) => {}
+            PanelId::Color => self.dock(id, DockTarget::Edge(Edge::Right)),
+            PanelId::Tools => self.tools_home(),
+            PanelId::Timeline => {
+                let focus = self.focused_panel();
+                self.take(id);
+                put_below_canvas(&mut self.state);
+                self.refocus(focus);
+            }
+            _ => self.to_strip_at(id, Edge::Right),
+        }
     }
 
     /// Los paneles del grupo `(surface, node)` (ninguno si no existe).
@@ -1062,7 +1181,7 @@ impl Workspace {
 
     /// La ventana del Preview solo (un solo grupo, con él solo): su ventana es la de antes (con
     /// Pixel UI la del diseño, sin él la `egui::Window`: su marco y su barra de título, sin
-    /// pestañas; ver `show::PreviewWindow`).
+    /// pestañas; ver `preview_window::PreviewWindow`).
     pub(crate) fn bare_preview(&self) -> Option<SurfaceIndex> {
         self.lone_window(PanelId::Preview)
     }
@@ -1116,9 +1235,59 @@ fn tree_sound<T>(tree: &Tree<T>) -> bool {
     })
 }
 
+/// El nodo de `tree` que parte lo que se acopla en la orilla `edge` ([`DockTarget::Edge`]): de la
+/// raíz se baja por los splits a lo largo de esa orilla (a lo ancho para la izquierda y la
+/// derecha, a lo alto para arriba y abajo) mientras el lado de la orilla lleve el lienzo; así lo
+/// que va pegado a la orilla de enfrente queda afuera y lo que ya va en esta, adentro. Cada nodo
+/// por el que se baja toca la orilla y va de lado a lado (solo se cruzan splits del otro eje del
+/// que se parte), así que lo nuevo queda en la orilla, de lado a lado, y por fuera de lo que ya
+/// estaba en ella.
+///
+/// En Essentials sin Color (`H[Tools | V[Canvas / Timeline]]`), a la derecha se baja de la raíz a
+/// la pila del lienzo y el timeline (la toolbar va en la orilla de enfrente): queda
+/// `H[Tools | H[V[Canvas / Timeline] | Color]]`, el árbol de Essentials. A la izquierda, la
+/// toolbar ya está en esa orilla: se parte la raíz y lo nuevo queda a la izquierda de la toolbar,
+/// que sigue junto al lienzo (un lado del lienzo, del ancho de su caja).
+fn edge_node(tree: &Tree<PanelId>, edge: Edge) -> NodeIndex {
+    let mut n = NodeIndex::root();
+    loop {
+        let along = match &tree[n] {
+            Node::Horizontal(_) => edge.vertical(),
+            Node::Vertical(_) => !edge.vertical(),
+            _ => false,
+        };
+        if !along {
+            return n;
+        }
+        let toward = match edge {
+            Edge::Left | Edge::Top => n.left(),
+            Edge::Right | Edge::Bottom => n.right(),
+        };
+        if !super::fit::panels_of(tree, toward).contains(&PanelId::Canvas) {
+            return n;
+        }
+        n = toward;
+    }
+}
+
 /// El primer grupo de `tree` (por índice), si tiene alguno.
 fn first_leaf<T>(tree: &Tree<T>) -> Option<NodeIndex> {
     (0..tree.len()).map(NodeIndex).find(|&n| tree[n].is_leaf())
+}
+
+/// Dónde va `id` en la tira `strip` por su lugar de fábrica (el orden de `PanelId::ALL`): antes
+/// del primero que va después de él (en una tira sin reordenar, entre los suyos).
+fn ranked_place(strip: &[PanelId], id: PanelId) -> usize {
+    let rank = |p: &PanelId| PanelId::ALL.iter().position(|q| q == p);
+    strip
+        .iter()
+        .position(|p| rank(p) > rank(&id))
+        .unwrap_or(strip.len())
+}
+
+/// Si `id` puede ir en una ventana flotante: todos menos el lienzo (ver `fit::block_canvas_drag`).
+pub(super) fn floats(id: PanelId) -> bool {
+    id != PanelId::Canvas
 }
 
 /// Si a un grupo con `tabs` va lo que se acopla "con el foco": no al del lienzo (no recibe
@@ -1324,6 +1493,83 @@ mod tests {
         assert_eq!(leaf_tabs(&w, root.right().left().left()), [PanelId::Canvas]);
         assert_eq!(leaf_tabs(&w, root.right().right()), [PanelId::Color]);
         assert_eq!(w.tools_side(), Some(true));
+    }
+
+    #[test]
+    fn color_docked_at_the_right_edge_is_the_essentials_column_again() {
+        // Flotando (o en cualquier otro lado) y acoplado en la orilla derecha: el árbol de
+        // Essentials, `H[Tools | H[V[Canvas / Timeline] | Color]]` (la columna, no a la derecha
+        // de la toolbar y del lienzo juntos).
+        let essentials = Workspace::essentials();
+        let mut w = Workspace::essentials();
+        w.float(PanelId::Color, egui::pos2(300.0, 100.0));
+        assert_ne!(w.main_shape(), essentials.main_shape());
+        w.dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        assert_eq!(w.main_shape(), essentials.main_shape());
+        assert!(w.docked(PanelId::Color) && !w.floating(PanelId::Color));
+        assert_eq!(w.places(PanelId::Color), 1);
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert!(w.timeline_below());
+        // Desde donde ya está, igual.
+        let mut again = w.clone();
+        again.dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        assert_eq!(again.main_shape(), essentials.main_shape());
+        // Desde junto al timeline (lo que dejaba egui_dock): también.
+        let mut beside = Workspace::essentials();
+        let (s, n) = beside.leaf_of(PanelId::Timeline).unwrap();
+        beside.dock(PanelId::Color, DockTarget::Split(s, n, Split::Right));
+        assert!(!beside.timeline_below());
+        beside.dock(PanelId::Color, DockTarget::Edge(Edge::Right));
+        assert_eq!(beside.main_shape(), essentials.main_shape());
+    }
+
+    #[test]
+    fn a_panel_docked_at_an_edge_goes_outside_everything_on_it_from_side_to_side() {
+        let root = NodeIndex::root();
+        // A la izquierda: la columna en la orilla, la toolbar entre ella y el lienzo (sigue siendo
+        // un lado del lienzo, del ancho de su caja).
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Library, DockTarget::Edge(Edge::Left));
+        assert!(matches!(w.state.main_surface()[root], Node::Horizontal(_)));
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Library]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Tools]);
+        assert_eq!(w.tools_side(), Some(true));
+        assert!(w.tools_beside_canvas());
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        assert!(w.timeline_below());
+        assert!(!w.strip().contains(&PanelId::Library));
+        assert_eq!(w.places(PanelId::Library), 1);
+        // Abajo: una fila debajo de todo (también de la toolbar, el timeline y Color).
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Lumen, DockTarget::Edge(Edge::Bottom));
+        assert!(matches!(w.state.main_surface()[root], Node::Vertical(_)));
+        assert_eq!(leaf_tabs(&w, root.right()), [PanelId::Lumen]);
+        assert_eq!(leaf_tabs(&w, root.left().left()), [PanelId::Tools]);
+        assert!(w.timeline_below());
+        assert_eq!(w.column_panels(), [PanelId::Color]);
+        // Arriba: una fila encima de todo.
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Groom, DockTarget::Edge(Edge::Top));
+        assert!(matches!(w.state.main_surface()[root], Node::Vertical(_)));
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Groom]);
+        assert_eq!(leaf_tabs(&w, root.right().left()), [PanelId::Tools]);
+        // A la derecha con Color en la columna: por fuera de Color (es la columna nueva).
+        let mut w = Workspace::essentials();
+        w.dock(PanelId::Library, DockTarget::Edge(Edge::Right));
+        let column = root.right();
+        assert_eq!(leaf_tabs(&w, column.right()), [PanelId::Library]);
+        assert_eq!(leaf_tabs(&w, column.left().right()), [PanelId::Color]);
+        assert_eq!(w.column_panels(), [PanelId::Library]);
+        assert_eq!(w.tools_side(), Some(true));
+        // Sin nada más en el árbol que el lienzo: a su lado.
+        let mut w = Workspace::essentials();
+        for id in [PanelId::Tools, PanelId::Color] {
+            w.float(id, egui::pos2(300.0, 100.0));
+        }
+        let _ = w.sync_timeline(false);
+        w.dock(PanelId::Color, DockTarget::Edge(Edge::Left));
+        assert_eq!(leaf_tabs(&w, root.left()), [PanelId::Color]);
+        assert_eq!(leaf_tabs(&w, root.right()), [PanelId::Canvas]);
     }
 
     #[test]
@@ -1655,6 +1901,12 @@ mod tests {
         assert_ne!(w.leaf_of(PanelId::Groom), w.leaf_of(PanelId::Color));
         let w = Workspace::demo("float").unwrap();
         assert!(w.floating(PanelId::Lumen));
+        let w = Workspace::demo("timeline-narrow").unwrap();
+        assert!(w.floating(PanelId::Timeline));
+        // Su ventana, no menos que el mínimo del timeline flotando (con el margen del grupo).
+        let floating_min =
+            crate::timeline::MIN_WIDTH + 2.0 * f32::from(crate::pixel_ui::WORKSPACE_MARGIN);
+        assert!(TIMELINE_NARROW_DEMO.x >= floating_min);
         assert!(Workspace::demo("nope").is_none());
     }
 

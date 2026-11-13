@@ -338,6 +338,9 @@ pub(crate) mod testing {
         /// Las imágenes pintadas (las piezas del skin también): su textura y lo que se ve de
         /// ellas (con su recorte).
         pub images: Vec<(egui::TextureId, Rect)>,
+        /// Los rects rellenos pintados (los cuadros de una tira de colores, por ejemplo): su color
+        /// y su rect.
+        pub fills: Vec<(egui::Color32, Rect)>,
         /// Los nombres de los controles de `widgets` que los lectores de pantalla ven
         /// deshabilitados.
         pub disabled: Vec<String>,
@@ -395,9 +398,11 @@ pub(crate) mod testing {
         output.textures_delta.clear();
         let mut texts = Vec::new();
         let mut images = Vec::new();
+        let mut fills = Vec::new();
         for clipped in &output.shapes {
             collect_texts(&clipped.shape, &mut texts);
             collect_images(&clipped.shape, clipped.clip_rect, &mut images);
+            collect_fills(&clipped.shape, &mut fills);
         }
         let nodes = output
             .platform_output
@@ -429,7 +434,20 @@ pub(crate) mod testing {
             widgets,
             texts,
             images,
+            fills,
             disabled,
+        }
+    }
+
+    /// Los rects rellenos de `shape` (sin textura): su color y su rect, desde la esquina del
+    /// panel.
+    fn collect_fills(shape: &egui::Shape, out: &mut Vec<(egui::Color32, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_fills(s, out)),
+            egui::Shape::Rect(r) if r.fill.a() > 0 => {
+                out.push((r.fill, r.rect.translate(Vec2::splat(-10.0))));
+            }
+            _ => {}
         }
     }
 

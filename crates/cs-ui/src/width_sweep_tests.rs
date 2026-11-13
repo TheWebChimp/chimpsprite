@@ -50,27 +50,17 @@ struct Gap {
 }
 
 const KNOWN_GAPS: &[Gap] = &[
-    // La fila de botones de arriba del timeline (los de reproducir, los de frames y los de capas)
-    // no se parte: más angosto se sale. Pide rediseñarla (que se parta o que vaya a un menú);
-    // de fábrica el timeline va a lo ancho, debajo del lienzo.
+    // La tabla de capas del timeline va en un scroll a lo ancho (las columnas de la izquierda no
+    // se quedan fijas): el botón "Add Layer Mask" de la capa activa, al final de la columna del
+    // nombre (x 104..115), queda fuera hasta que se desplaza, desde su mínimo (86) hasta 114. La
+    // fila de botones de arriba ya no: se parte por botón y su mínimo es el de su parte más ancha
+    // (fase E, tarea 6).
     Gap {
         panel: PanelId::Timeline,
-        from: 64.0,
-        to: 126.0,
+        from: crate::timeline::MIN_WIDTH,
+        to: 114.0,
         kind: Kind::Outside,
-        why: "its top row of buttons does not wrap",
-    },
-    // Lospec no se migró a `forms` (filas de `ui.horizontal` con textos de alturas distintas): las
-    // filas de cada paleta de la lista (su título y "CREATED BY …", sus Apply, Append y Save) caen
-    // a medio punto a lo alto, a cualquier ancho. Pide migrarlo. (Antes el barrido dependía de
-    // cuándo respondía la red y solo lo veía desde 568; ahora la lista ya llegó: ver `app_for`.)
-    // Solo a lo alto: a lo ancho, todo cuenta.
-    Gap {
-        panel: PanelId::Lospec,
-        from: crate::palette_ui::LOSPEC_PANEL_W,
-        to: WIDEST,
-        kind: Kind::HalfPointY,
-        why: "not migrated to forms: its result rows fall on half points (y)",
+        why: "the layer table scrolls sideways: Add Layer Mask is reachable by scrolling",
     },
 ];
 
@@ -220,7 +210,7 @@ fn problems(panel: PanelId, probe: &Probe, width: f32) -> Vec<(Kind, String)> {
 
 /// La app con Pixel UI, una pestaña nueva y lo que necesita `id` para mostrar su forma entera: una
 /// fuente para FontForge y un modelo para el panel 3D.
-fn app_for(id: PanelId) -> ChimpApp {
+pub(crate) fn app_for(id: PanelId) -> ChimpApp {
     let view = ViewSettings {
         pixel_ui: true,
         ..Default::default()
@@ -241,7 +231,7 @@ fn app_for(id: PanelId) -> ChimpApp {
         // Las listas de Lospec y de dafont, ya llegadas y sin red (si no, llegan cuando la red
         // quiere, a la mitad del barrido).
         #[cfg(not(target_arch = "wasm32"))]
-        PanelId::Lospec => app.open_lospec_offline(lospec_page()),
+        PanelId::Lospec => app.open_lospec_offline(crate::demo::lospec_page()),
         #[cfg(not(target_arch = "wasm32"))]
         PanelId::Dafont => app.dafont = crate::dafont::DafontPanel::offline(),
         _ => {}
@@ -249,39 +239,9 @@ fn app_for(id: PanelId) -> ChimpApp {
     app
 }
 
-/// Una página de Lospec como las de verdad: paletas de varios tamaños, con autor, likes y
-/// descargas (sin imágenes de ejemplo, que se pedirían a la red).
-#[cfg(not(target_arch = "wasm32"))]
-fn lospec_page() -> cs_io::lospec::LospecPage {
-    let palette = |k: usize, colors: usize| cs_io::lospec::LospecPalette {
-        slug: format!("palette-{k}"),
-        title: format!("Palette Number {k}"),
-        author: Some(format!("Somebody {k}")),
-        palette: cs_core::Palette::new(
-            (0..colors)
-                .map(|c| cs_core::Rgba::from_hex(0x10_20_30 + (c as u32) * 0x05_07_09))
-                .collect(),
-        ),
-        likes: Some(12 * k as u32),
-        downloads: Some(345 * k as u32),
-        examples: Vec::new(),
-        source: None,
-    };
-    let palettes: Vec<_> = [4, 8, 16, 32, 64, 5]
-        .iter()
-        .enumerate()
-        .map(|(k, &n)| palette(k + 1, n))
-        .collect();
-    cs_io::lospec::LospecPage {
-        raw_count: palettes.len(),
-        total: 120,
-        palettes,
-    }
-}
-
 /// El panel `id` como lo hospeda el workspace acoplado: con todo el alto (los de cuerpo fijo) y
 /// hasta el fondo de su grupo (la lista de Lospec).
-fn draw(app: &mut ChimpApp, ui: &mut egui::Ui, id: PanelId) {
+pub(crate) fn draw(app: &mut ChimpApp, ui: &mut egui::Ui, id: PanelId) {
     app.pixel.update(ui.ctx(), &app.view);
     app.begin_panel_frame();
     let panel = PanelCtx {

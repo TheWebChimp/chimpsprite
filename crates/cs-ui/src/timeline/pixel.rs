@@ -5,7 +5,9 @@
 //! - **Caja:** `workspace.box`, la misma del área de trabajo, con 5 de fondo a la derecha y abajo.
 //! - **Barra:** filas de 22 (3 de aire, los grupos de 16, su brillo y 2 de aire), con los grupos
 //!   a 3 del interior de la caja. Entre secciones, 3 de aire, la línea grabada y 3 de aire. Si no
-//!   entra a lo ancho, las secciones pasan a la fila siguiente (`pixel_ui::wrap_rows`).
+//!   entra a lo ancho, las secciones pasan a la fila siguiente (`pixel_ui::wrap_rows`); la que no
+//!   entra ni sola en una fila (el timeline acoplado angosto) se parte por botón (o la etiqueta y
+//!   su stepper), con un grupo del kit por fila (`Widths::rows`).
 //!   - Grupos de botones: `timeline.group` alrededor de celdas `timeline.button` de 23×14
 //!     separadas por `timeline.button.sep`, con el ícono `timeline.icon.*` de 21×11 adentro.
 //!   - Onion skin: el botón (`timeline.icon.onion` apagado; prendido, la cebolla entera
@@ -29,6 +31,7 @@ use eframe::egui::{
     self, Color32, Mesh, Pos2, Rect, Response, Sense, Shape, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
+use std::ops::Range;
 
 use cs_core::LayerKind;
 
@@ -233,7 +236,9 @@ fn ink(ui: &Ui, text: &str) -> f32 {
 
 // ---- Barra ----
 
-/// Lo que va en la barra, en orden. Cada una es una pieza que no se parte al pasar de fila.
+/// Lo que va en la barra, en orden. Cada una pasa entera a la fila siguiente si no entra en la
+/// suya; solo si no entra ni sola en una fila se parte en sus partes ([`Widths::parts`]): un
+/// botón de un grupo, o la etiqueta (o el reloj) y su stepper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Unit {
     Playback,
@@ -266,9 +271,46 @@ fn join(a: Unit) -> (f32, bool) {
 }
 
 /// Ancho de un grupo de `n` botones: los bordes, las celdas y las líneas entre celdas.
-fn group_width(n: usize) -> f32 {
+const fn group_width(n: usize) -> f32 {
     BUTTON_PITCH * n as f32 + 1.0
 }
+
+/// La parte más ancha de la barra que no se parte: el stepper de la duración con su número más
+/// largo, de 5 cifras (la duración llega a 60000 ms): 15 + 44 + 15. Con hasta 3 cifras mide 64
+/// (el campo de "100ms", 34) y con 4, 69; el combo, 59 (64 con "Difference"). No cubre el combo
+/// con un modo que la app no conoce (`BlendMode::Other(n)`, "Other (n)", de archivos importados),
+/// que puede ser más ancho.
+const WIDEST_PART: f32 = 74.0;
+/// El borde de la caja (`workspace.box`) a cada lado.
+const BOX_BORDER: f32 = 3.0;
+/// Lo más angosto del timeline con Pixel UI, sin su marco (lo que recibe `show`: la caja con la
+/// barra): [`WIDEST_PART`] con el aire de la barra y el borde de la caja a cada lado. Más angosto,
+/// esa parte saldría de la caja. El workspace le suma su marco (ver `workspace_minima`).
+pub(crate) const MIN_WIDTH: f32 = WIDEST_PART + 2.0 * (BAR_PAD + BOX_BORDER);
+
+/// Lo que cambia el ancho de una fila cuando dos botones de un grupo van juntos: comparten la
+/// columna de su borde (−1).
+const SHARED_EDGE: f32 = BUTTON_PITCH - group_width(1);
+
+/// Cuántos botones tiene el grupo de `unit` (0 si no es un grupo).
+fn button_count(unit: Unit) -> usize {
+    match unit {
+        Unit::Playback => 5,
+        Unit::Frames => 2,
+        Unit::Layers => 4,
+        Unit::Onion => 1,
+        _ => 0,
+    }
+}
+
+/// Ancho de − \[campo\] + con un campo de `field_w`.
+fn stepper_width(field_w: f32) -> f32 {
+    2.0 * STEP_W + field_w
+}
+
+/// Una fila de la barra: cada unidad que va en ella con el tramo de sus partes
+/// ([`Widths::parts`]) que le toca (todas, si no se partió).
+type BarRow = Vec<(Unit, Range<usize>)>;
 
 /// Lo que mide cada campo y el combo en este frame (depende de lo que muestran).
 struct Widths {
@@ -297,38 +339,80 @@ impl Widths {
 
     fn of(&self, unit: Unit) -> f32 {
         match unit {
-            Unit::Playback => group_width(5),
-            Unit::Frames => group_width(2),
-            Unit::Layers => group_width(4),
-            Unit::Onion => group_width(1),
+            Unit::Playback | Unit::Frames | Unit::Layers | Unit::Onion => {
+                group_width(button_count(unit))
+            }
             Unit::OnionRange => RANGE_W,
             Unit::Opacity => self.opacity_label + LABEL_GAP + 2.0 * STEP_W + OPACITY_FIELD_W,
             Unit::Blend => self.combo,
             Unit::Duration => CLOCK_W + CLOCK_GAP + 2.0 * STEP_W + self.duration_field,
         }
     }
+
+    /// Las partes de `unit` que pueden ir en filas distintas (cada botón de un grupo; la etiqueta
+    /// de la opacidad y su stepper; el reloj y el stepper de la duración; lo demás, entero) y lo
+    /// que cambia el ancho de una fila cuando dos seguidas van juntas (como en
+    /// [`pixel_ui::wrap_rows`]). Juntas todas, miden [`Self::of`].
+    fn parts(&self, unit: Unit) -> (Vec<f32>, Vec<f32>) {
+        match unit {
+            Unit::Playback | Unit::Frames | Unit::Layers | Unit::Onion => {
+                let n = button_count(unit);
+                (vec![group_width(1); n], vec![SHARED_EDGE; n - 1])
+            }
+            Unit::Opacity => (
+                vec![self.opacity_label, stepper_width(OPACITY_FIELD_W)],
+                vec![LABEL_GAP],
+            ),
+            Unit::Duration => (
+                vec![CLOCK_W, stepper_width(self.duration_field)],
+                vec![CLOCK_GAP],
+            ),
+            Unit::OnionRange | Unit::Blend => (vec![self.of(unit)], Vec::new()),
+        }
+    }
+
+    /// Las filas de la barra en `available` de ancho: las unidades enteras como entran
+    /// ([`pixel_ui::wrap_rows`]); la que no entra ni sola en una fila (va sola en la suya), partida
+    /// en sus partes en filas que sí entran. Las que siguen empiezan en la fila siguiente, como
+    /// antes; si todas entran enteras, las filas son las de siempre.
+    fn rows(&self, available: f32) -> Vec<BarRow> {
+        let sizes: Vec<f32> = UNITS.iter().map(|&u| self.of(u)).collect();
+        let joins: Vec<f32> = UNITS[..UNITS.len() - 1]
+            .iter()
+            .map(|&u| join(u).0)
+            .collect();
+        let whole = |u: Unit| (u, 0..self.parts(u).0.len());
+        let mut rows = Vec::new();
+        for range in pixel_ui::wrap_rows(available, &sizes, &joins) {
+            let first = UNITS[range.start];
+            if range.len() == 1 && sizes[range.start] > available {
+                let (parts, part_joins) = self.parts(first);
+                for piece in pixel_ui::wrap_rows(available, &parts, &part_joins) {
+                    rows.push(vec![(first, piece)]);
+                }
+            } else {
+                rows.push(range.map(|i| whole(UNITS[i])).collect());
+            }
+        }
+        rows
+    }
 }
 
-/// La barra: las unidades en filas que entran a lo ancho. Devuelve su rect.
+/// La barra: las unidades en filas que entran a lo ancho ([`Widths::rows`]). Devuelve su rect.
 fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut TimelineState, skin: &Skin) -> Rect {
     let widths = Widths::new(ui, editor, state);
-    let sizes: Vec<f32> = UNITS.iter().map(|&u| widths.of(u)).collect();
-    let joins: Vec<f32> = UNITS[..UNITS.len() - 1]
-        .iter()
-        .map(|&u| join(u).0)
-        .collect();
     let available = (ui.available_width() - 2.0 * BAR_PAD).max(0.0);
-    let rows = pixel_ui::wrap_rows(available, &sizes, &joins);
+    let rows = widths.rows(available);
     let height = BAR_ROW_H * rows.len().max(1) as f32;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let ppp = ui.ctx().pixels_per_point();
     let colors = *skin.colors();
-    for (r, range) in rows.into_iter().enumerate() {
+    for (r, row) in rows.into_iter().enumerate() {
         let top = rect.top() + BAR_ROW_H * r as f32;
         let mut x = rect.left() + BAR_PAD;
-        for i in range.clone() {
-            if i > range.start {
-                let (gap, etched) = join(UNITS[i - 1]);
+        for (k, (u, parts)) in row.iter().enumerate() {
+            if k > 0 {
+                let (gap, etched) = join(row[k - 1].0);
                 if etched {
                     let line = x + (gap - pixel_ui::ETCHED_SIZE) / 2.0;
                     let y = egui::Rangef::new(top, top + BAR_ROW_H);
@@ -337,28 +421,93 @@ fn toolbar(ui: &mut Ui, editor: &mut Editor, state: &mut TimelineState, skin: &S
                 }
                 x += gap;
             }
-            let origin = pos2(x, top + BAR_PAD);
-            unit(ui, editor, state, skin, UNITS[i], origin, &widths);
-            x += sizes[i];
+            // La esquina de cada parte del tramo: juntas, como la unidad entera.
+            let (sizes, joins) = widths.parts(*u);
+            let mut origins = Vec::with_capacity(parts.len());
+            for p in parts.clone() {
+                if p > parts.start {
+                    x += joins[p - 1];
+                }
+                origins.push(pos2(x, top + BAR_PAD));
+                x += sizes[p];
+            }
+            let at = |p: usize| parts.contains(&p).then(|| origins[p - parts.start]);
+            unit(ui, editor, state, skin, *u, &at, &widths);
         }
     }
     rect
 }
 
+/// Las partes de `unit` que van en esta fila: `at(p)` es la esquina de la parte `p` si va en ella.
 fn unit(
     ui: &mut Ui,
     editor: &mut Editor,
     state: &mut TimelineState,
     skin: &Skin,
     unit: Unit,
-    origin: Pos2,
+    at: &dyn Fn(usize) -> Option<Pos2>,
     widths: &Widths,
 ) {
     match unit {
-        Unit::Playback => playback(ui, editor, skin, origin),
+        Unit::Playback | Unit::Frames | Unit::Layers | Unit::Onion => {
+            let buttons = buttons(editor, unit);
+            let Some(a) = (0..buttons.len()).find(|&i| at(i).is_some()) else {
+                return;
+            };
+            let b = (a..buttons.len())
+                .find(|&i| at(i).is_none())
+                .unwrap_or(buttons.len());
+            let origin = at(a).expect("the first button of the stretch");
+            let r = group(ui, skin, origin, &buttons, a..b);
+            for (i, response) in (a..b).zip(r) {
+                if response.clicked() {
+                    press(editor, state, unit, i);
+                }
+            }
+        }
+        Unit::OnionRange => {
+            if let Some(origin) = at(0) {
+                onion_range(ui, editor, skin, origin);
+            }
+        }
+        Unit::Opacity => opacity(ui, editor, state, skin, [at(0), at(1)], widths),
+        Unit::Blend => {
+            if let Some(origin) = at(0) {
+                blend(ui, editor, skin, origin, widths.combo);
+            }
+        }
+        Unit::Duration => duration(
+            ui,
+            editor,
+            state,
+            skin,
+            [at(0), at(1)],
+            widths.duration_field,
+        ),
+    }
+}
+
+/// Los botones del grupo de `unit`, en orden.
+fn buttons(editor: &Editor, unit: Unit) -> Vec<Btn> {
+    let buttons = match unit {
+        Unit::Playback => {
+            let play = if editor.playing { "Pause" } else { "Play" };
+            let mut play_button = Btn::new("timeline.icon.play", play, "Play / pause (Enter)");
+            if editor.playing {
+                // El diseño no tiene pausa: dos barras con la tinta de los íconos.
+                play_button.icon = PAUSE;
+            }
+            vec![
+                Btn::new("timeline.icon.first", "First frame", "First frame"),
+                Btn::new("timeline.icon.prev", "Previous frame", "Previous frame (,)"),
+                play_button,
+                Btn::new("timeline.icon.next", "Next frame", "Next frame (.)"),
+                Btn::new("timeline.icon.last", "Last frame", "Last frame"),
+            ]
+        }
         Unit::Frames => {
             let can_remove = editor.frame_count() > 1;
-            let buttons = [
+            vec![
                 Btn::new(
                     "timeline.icon.frame_add",
                     "New frame",
@@ -366,21 +515,14 @@ fn unit(
                 ),
                 Btn::new("timeline.icon.frame_remove", "Delete frame", "Delete frame")
                     .enabled(can_remove),
-            ];
-            let r = group(ui, skin, origin, &buttons);
-            if r[0].clicked() {
-                editor.duplicate_frame();
-            }
-            if r[1].clicked() {
-                editor.remove_frame();
-            }
+            ]
         }
         Unit::Layers => {
             let can_remove = editor
                 .sprite()
                 .subtree_range(editor.layer)
                 .is_some_and(|r| r.len() < editor.sprite().layers.len());
-            let buttons = [
+            vec![
                 Btn::new(
                     "timeline.icon.layer_add",
                     "New layer",
@@ -394,65 +536,56 @@ fn unit(
                     "New tilemap layer",
                     "New tilemap layer",
                 ),
-            ];
-            let r = group(ui, skin, origin, &buttons);
-            if r[0].clicked() {
-                editor.add_layer(LayerKind::Image);
-            }
-            if r[1].clicked() {
-                editor.remove_layer();
-            }
-            if r[2].clicked() {
-                editor.add_layer(LayerKind::Group);
-            }
-            if r[3].clicked() {
-                state.new_tilemap = true;
-            }
+            ]
         }
         Unit::Onion => {
             let on = editor.onion_enabled;
-            let button = Btn::new("timeline.icon.onion", "Onion skin", "Onion skin (F3)").on(on);
-            if group(ui, skin, origin, &[button])[0].clicked() {
-                editor.onion_enabled = !on;
-            }
+            vec![Btn::new("timeline.icon.onion", "Onion skin", "Onion skin (F3)").on(on)]
         }
-        Unit::OnionRange => onion_range(ui, editor, skin, origin),
-        Unit::Opacity => opacity(ui, editor, state, skin, origin, widths),
-        Unit::Blend => blend(ui, editor, skin, origin, widths.combo),
-        Unit::Duration => duration(ui, editor, state, skin, origin, widths.duration_field),
-    }
+        _ => Vec::new(),
+    };
+    // Los anchos de la barra (`Widths`) cuentan con `button_count` botones.
+    debug_assert_eq!(buttons.len(), button_count(unit), "{unit:?}");
+    buttons
 }
 
-fn playback(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2) {
-    let last = editor.frame_count() - 1;
-    let play = if editor.playing { "Pause" } else { "Play" };
-    let mut play_button = Btn::new("timeline.icon.play", play, "Play / pause (Enter)");
-    if editor.playing {
-        // El diseño no tiene pausa: dos barras con la tinta de los íconos.
-        play_button.icon = PAUSE;
-    }
-    let buttons = [
-        Btn::new("timeline.icon.first", "First frame", "First frame"),
-        Btn::new("timeline.icon.prev", "Previous frame", "Previous frame (,)"),
-        play_button,
-        Btn::new("timeline.icon.next", "Next frame", "Next frame (.)"),
-        Btn::new("timeline.icon.last", "Last frame", "Last frame"),
-    ];
-    let r = group(ui, skin, origin, &buttons);
-    if r[0].clicked() {
-        editor.set_frame(0);
-    }
-    if r[1].clicked() {
-        editor.prev_frame();
-    }
-    if r[2].clicked() {
-        editor.toggle_play();
-    }
-    if r[3].clicked() {
-        editor.next_frame();
-    }
-    if r[4].clicked() {
-        editor.set_frame(last);
+/// Lo que hace el botón `i` del grupo de `unit`.
+fn press(editor: &mut Editor, state: &mut TimelineState, unit: Unit, i: usize) {
+    match (unit, i) {
+        (Unit::Playback, 0) => {
+            editor.set_frame(0);
+        }
+        (Unit::Playback, 1) => {
+            editor.prev_frame();
+        }
+        (Unit::Playback, 2) => {
+            editor.toggle_play();
+        }
+        (Unit::Playback, 3) => {
+            editor.next_frame();
+        }
+        (Unit::Playback, 4) => {
+            let last = editor.frame_count() - 1;
+            editor.set_frame(last);
+        }
+        (Unit::Frames, 0) => {
+            editor.duplicate_frame();
+        }
+        (Unit::Frames, 1) => {
+            editor.remove_frame();
+        }
+        (Unit::Layers, 0) => {
+            editor.add_layer(LayerKind::Image);
+        }
+        (Unit::Layers, 1) => {
+            editor.remove_layer();
+        }
+        (Unit::Layers, 2) => {
+            editor.add_layer(LayerKind::Group);
+        }
+        (Unit::Layers, 3) => state.new_tilemap = true,
+        (Unit::Onion, 0) => editor.onion_enabled = !editor.onion_enabled,
+        _ => {}
     }
 }
 
@@ -497,7 +630,23 @@ impl Btn {
 /// ([`kit::group`]) con un segmento de ícono por botón, con sus estados; los que se prenden y
 /// apagan, prendidos, se ven presionados (la cebolla prendida lleva su ícono entero). Devuelve
 /// una respuesta por botón; los deshabilitados no responden.
-fn group(ui: &mut Ui, skin: &Skin, origin: Pos2, buttons: &[Btn]) -> Vec<Response> {
+///
+/// Dibuja solo el tramo `stretch` de `buttons` (un grupo partido en filas va en un grupo del kit
+/// por fila). Su id es el del grupo (su primer botón) y dónde empieza el tramo: no cambia con lo
+/// que dice un botón (Play / Pause) y es el mismo frame a frame mientras el grupo se parta igual.
+fn group(
+    ui: &mut Ui,
+    skin: &Skin,
+    origin: Pos2,
+    buttons: &[Btn],
+    stretch: Range<usize>,
+) -> Vec<Response> {
+    let id = ui.id().with((
+        "timeline_buttons",
+        buttons.first().map(|b| b.label),
+        stretch.start,
+    ));
+    let buttons = &buttons[stretch];
     let items: Vec<kit::group::GroupItem> = buttons
         .iter()
         .map(|b| {
@@ -510,9 +659,6 @@ fn group(ui: &mut Ui, skin: &Skin, origin: Pos2, buttons: &[Btn]) -> Vec<Respons
         })
         .collect();
     let painter = ui.painter().clone();
-    let id = ui
-        .id()
-        .with(("timeline_buttons", buttons.first().map(|b| b.label)));
     let responses = kit::group::group_responses_at(ui, skin, &painter, id, origin, &items, &|i| {
         buttons[i].on == Some(true)
     });
@@ -652,35 +798,40 @@ fn step_of(ui: &Ui, step: i32, big: i32) -> i32 {
 }
 
 /// "Opacity" − [0..255] +: la opacidad de la capa. Lo que se arrastra o se escribe se confirma al
-/// soltar (un paso de undo); − y + la cambian de a 1 (de a 10 con Shift).
+/// soltar (un paso de undo); − y + la cambian de a 1 (de a 10 con Shift). `[label, stepper]`: la
+/// esquina de cada parte, si va en esta fila (ver [`Widths::parts`]).
 fn opacity(
     ui: &mut Ui,
     editor: &mut Editor,
     state: &mut TimelineState,
     skin: &Skin,
-    origin: Pos2,
+    [label_at, stepper_at]: [Option<Pos2>; 2],
     widths: &Widths,
 ) {
-    let colors = *skin.colors();
-    let painter = ui.painter().clone();
-    let shown = menus::galley(ui, "Opacity", colors.field_text);
-    let label = Rect::from_min_size(origin, vec2(widths.opacity_label, GROUP_H));
-    let label_response = ui.interact(
-        label,
-        ui.id().with("timeline_opacity_label"),
-        Sense::hover(),
-    );
-    label_response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Opacity"));
-    let ppp = ui.ctx().pixels_per_point();
-    let at = tab_bar::text_pos(&shown, origin.x, origin.y + LABEL_CAPS, ppp);
-    painter.galley(at, shown, colors.field_text);
+    if let Some(origin) = label_at {
+        let colors = *skin.colors();
+        let painter = ui.painter().clone();
+        let shown = menus::galley(ui, "Opacity", colors.field_text);
+        let label = Rect::from_min_size(origin, vec2(widths.opacity_label, GROUP_H));
+        let label_response = ui.interact(
+            label,
+            ui.id().with("timeline_opacity_label"),
+            Sense::hover(),
+        );
+        label_response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Opacity"));
+        let ppp = ui.ctx().pixels_per_point();
+        let at = tab_bar::text_pos(&shown, origin.x, origin.y + LABEL_CAPS, ppp);
+        painter.galley(at, shown, colors.field_text);
+    }
 
     let layer = editor.layer;
     let Some(current) = editor.sprite().layer(layer).map(|l| l.opacity) else {
         return;
     };
-    let at = pos2(origin.x + widths.opacity_label + LABEL_GAP, origin.y);
+    let Some(at) = stepper_at else {
+        return;
+    };
     let (minus, field, plus) = stepper(
         ui,
         skin,
@@ -690,7 +841,7 @@ fn opacity(
     );
     let mut value = state.opacity_edit.unwrap_or(current);
     let before = value;
-    let inner = number_rect(ui, field.left(), field.right(), origin.y);
+    let inner = number_rect(ui, field.left(), field.right(), at.y);
     let (response, zone) = bar_fields::drag_number(
         ui,
         field,
@@ -746,15 +897,18 @@ fn duration_ink(ui: &Ui, ms: u16) -> f32 {
 
 /// El reloj y − \[ms\] +: la duración de los frames elegidos. Como la opacidad: lo que se arrastra
 /// o se escribe se confirma al soltar; − y + la cambian de a 10 ms (de a 100 con Shift).
+/// `[clock, stepper]`: la esquina de cada parte, si va en esta fila (ver [`Widths::parts`]).
 fn duration(
     ui: &mut Ui,
     editor: &mut Editor,
     state: &mut TimelineState,
     skin: &Skin,
-    origin: Pos2,
+    [clock_at, stepper_at]: [Option<Pos2>; 2],
     field_w: f32,
 ) {
-    if !piece_at(ui, skin, CLOCK, origin) {
+    if let Some(origin) = clock_at
+        && !piece_at(ui, skin, CLOCK, origin)
+    {
         let clock = Rect::from_min_size(origin, vec2(CLOCK_W, GROUP_H));
         text(
             ui,
@@ -765,8 +919,11 @@ fn duration(
             skin.colors().text,
         );
     }
-    let at = pos2(origin.x + CLOCK_W + CLOCK_GAP, origin.y);
-    let (minus, field, plus) = stepper(ui, skin, at, field_w, ["Shorter frame", "Longer frame"]);
+    let Some(origin) = stepper_at else {
+        return;
+    };
+    let (minus, field, plus) =
+        stepper(ui, skin, origin, field_w, ["Shorter frame", "Longer frame"]);
     let current = editor.sprite().frames[editor.frame].duration_ms;
     let mut ms = state.duration_edit.unwrap_or(current);
     let before = ms;

@@ -60,6 +60,8 @@ use cs_io::files;
 mod groom;
 mod guides;
 mod home;
+#[cfg(test)]
+mod hosted_panel;
 mod instance_ops;
 mod keyboard_shortcuts;
 mod keymap;
@@ -1526,13 +1528,20 @@ impl ChimpApp {
             strips,
         } = canvas_area.unwrap_or_default();
         // Sacar un panel de la tira: soltado en el árbol (como pestaña, partiendo un grupo o junto
-        // al lienzo), en el lienzo (en una ventana) o en otra tira, o desde su menú contextual.
-        // Mientras se arrastra, dónde caería en el árbol (sobre una tira, nada).
-        if let Some((_, pointer)) = dock_out.dragging
-            && !strips.iter().any(|(_, r)| r.contains(pointer))
-        {
-            let target = workspace::drop_target(&self.workspace, pointer);
-            workspace::paint_drop_zone(ui, skin, &self.workspace, target);
+        // al lienzo), en el lienzo (en una ventana) o en otra tira (entre sus botones), o desde su
+        // menú contextual. Mientras se arrastra, dónde caería: sobre otra tira, esa tira (que ya
+        // se ve como quedaría, con el ícono entre sus botones: ver `dock::show`); si no, en el
+        // árbol. (Dentro de su tira, la tira misma.)
+        if let Some((id, pointer)) = dock_out.dragging {
+            match workspace::strip_under(&strips, pointer) {
+                Some(strip) => workspace::paint_strip_zone(ui, skin, strip.rect),
+                // Fuera de las tiras: donde cae en el árbol (en la franja de una orilla, la
+                // columna o fila que deja ahí, del ancho del panel arrastrado).
+                None => {
+                    let target = workspace::drop_target(&self.workspace, pointer);
+                    workspace::paint_drop_zone(ui, skin, &self.workspace, id, target);
+                }
+            }
         }
         if let Some(request) = dock_out.request {
             self.workspace.apply_strip_request(request, &strips);
@@ -1658,14 +1667,15 @@ impl ChimpApp {
     /// completo, con el marco de siempre (el del panel derecho `"dock"` que iba dentro de la hoja
     /// del lienzo) y los botones del timeline y del Preview; las demás, en su orilla (`"dock_left"`,
     /// `"dock_top"`, `"dock_bottom"`), con sus flyouts dentro de `room` (el área del workspace).
-    /// Con un diálogo abierto, apagada.
+    /// Con un diálogo abierto, apagada. `incoming`: la pestaña que se arrastra sobre ella y cae en
+    /// ella (se ve en su vista previa, ver `dock::show`).
     pub(crate) fn strip_area(
         &mut self,
         ui: &mut egui::Ui,
         (rect, room): (egui::Rect, egui::Rect),
         modal: bool,
-        edge: dock::Edge,
-        strip: &[panel_registry::PanelId],
+        (edge, strip): (dock::Edge, &[panel_registry::PanelId]),
+        incoming: Option<panel_registry::PanelId>,
     ) -> dock::DockOutput {
         let shared_skin = self.pixel.shared_skin();
         let skin = shared_skin.as_deref();
@@ -1694,10 +1704,12 @@ impl ChimpApp {
                 ui.add_enabled_ui(!modal, |ui| {
                     let strip = dock::StripCtx {
                         edge,
+                        rect,
                         panels: strip,
                         toggles,
                         room,
                         flyout_width: &width,
+                        incoming,
                     };
                     dock::show(ui, skin, strip)
                 })
@@ -1713,8 +1725,9 @@ pub(crate) struct CanvasArea {
     pub rect: egui::Rect,
     /// Lo de la tira de íconos: lo que se arrastra, lo que se pide y el flyout abierto.
     pub dock: dock::DockOutput,
-    /// Las tiras de íconos dibujadas, con su orilla (un ícono soltado sobre otra pasa a ella).
-    pub strips: Vec<(dock::Edge, egui::Rect)>,
+    /// Las tiras de íconos dibujadas, con su orilla y sus botones (un ícono soltado sobre otra
+    /// pasa a ella, entre sus botones).
+    pub strips: Vec<dock::StripArea>,
 }
 
 /// Sin la hoja del lienzo (no cupo): sin lienzo ni tira.

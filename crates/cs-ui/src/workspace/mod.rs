@@ -26,26 +26,33 @@
 //! delgada para agarrarlo. Con dos o más, la barra con las pestañas del kit. Las ventanas flotantes
 //! siempre llevan su barra: es su título y de ahí se arrastran. Salvo una: el Preview solo en su
 //! ventana lleva la suya de antes (con su barra de título: de ahí se mueve y, con Pixel UI, de su
-//! franja de arriba se lleva a acoplar, como un grupo solo; ver `show::PreviewWindow`).
+//! franja de arriba se lleva a acoplar, como un grupo solo; ver `preview_window::PreviewWindow`).
 //!
 //! Solo este módulo usa egui_dock.
 //!
 //! Se parte por responsabilidad: [`model`] (las operaciones sobre el acomodo, sus invariantes y lo
 //! que se guarda), [`drop`](mod@drop) (dónde cae un panel que se suelta), [`fit`] (los mínimos y su
-//! ajuste a los splits y a las ventanas), [`show`](mod@show) (el `DockArea` y lo que lo rodea) y
-//! [`presets`] (los workspaces con nombre de Window → Workspace: los de fábrica y los del usuario).
+//! ajuste a los splits y a las ventanas), [`show`](mod@show) (el `DockArea` y lo que lo rodea),
+//! lo que `show` pega encima de egui_dock: [`tabs`] (las pestañas del kit, sus flechas y el «),
+//! [`dividers`] (los divisores tapados y sus cruces), [`preview_window`] (la ventana de antes del
+//! Preview) y [`modal`] (lo que no se toca con un diálogo), y [`presets`] (los workspaces con
+//! nombre de Window → Workspace: los de fábrica y los del usuario).
 //!
 //! El marco de las ventanas flotantes se viste con un `ui.scope` alrededor del `DockArea` cuyo
 //! estilo lleva el color marcador (`skin::window_visuals`): funciona porque egui_dock 0.21.1 arma
 //! el marco con `Frame::window(ui.style())` del `Ui` que se le pasa, mientras que el contenido de
 //! cada pestaña usa el estilo del contexto. Si eso cambia al subir de versión, hay que revisarlo.
 
+mod dividers;
 mod drop;
 mod fit;
+mod modal;
 mod model;
 mod presets;
+mod preview_window;
 mod show;
 mod skin;
+mod tabs;
 #[cfg(test)]
 mod test_util;
 
@@ -56,12 +63,29 @@ pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 use crate::dock::Edge;
 use crate::panel_registry::PanelId;
 
-pub(crate) use drop::{drop_target, paint_drop_zone};
+#[cfg(test)]
+pub(crate) use drop::EDGE_BAND;
+pub(crate) use drop::{drop_target, paint_drop_zone, paint_strip_zone, strip_under};
 pub(crate) use model::{DockTarget, SAVED_VERSION, SavedWorkspace};
 pub(crate) use presets::{FACTORY, Shown, Workspaces};
 pub(crate) use show::show;
 #[cfg(test)]
-pub(crate) use show::{COLLAPSE, MODEL_ELSEWHERE, has_marker};
+pub(crate) use show::{MODEL_ELSEWHERE, has_marker};
+#[cfg(test)]
+pub(crate) use skin::painted_drop_zones;
+#[cfg(test)]
+pub(crate) use tabs::COLLAPSE;
+
+/// Lo mínimo de `id` en un grupo, como lo cuenta el workspace (ver `fit::minima`; sin lo que le
+/// cambia `show` según dónde va: el timeline debajo del lienzo, lo pegado a la columna).
+#[cfg(test)]
+pub(crate) fn panel_minimum(
+    ui: &egui::Ui,
+    skin: Option<&crate::skin::Skin>,
+    id: PanelId,
+) -> egui::Vec2 {
+    fit::minima(ui, skin)[&id]
+}
 
 /// El acomodo de los paneles: el árbol de egui_dock (acoplados y flotantes) y la tira de íconos.
 #[derive(Clone, Debug)]
@@ -96,6 +120,9 @@ pub(crate) struct Workspace {
     /// Un panel que Window pidió mostrar (el timeline o el Preview apagados): `show` lo enfoca y
     /// sube su ventana ([`Workspace::bring_forward`]) en cuanto vuelve al árbol, en el mismo frame.
     pub(crate) pending_focus: Option<PanelId>,
+    /// Lo dibujado en el último frame que dice dónde cae lo que se suelta en una orilla (el área
+    /// del workspace, la del árbol y las tiras; ver `drop::Bounds`). Lo pone `show`.
+    bounds: Option<drop::Bounds>,
 }
 
 impl Default for Workspace {
@@ -159,7 +186,6 @@ impl Workspace {
     }
 
     /// El rect del grupo de `id` (el del frame pasado), si está en el árbol.
-    #[cfg(test)]
     pub(crate) fn leaf_rect(&self, id: PanelId) -> Option<egui::Rect> {
         let path = self.state.find_tab(&id)?;
         self.state.leaf(path.node_path()).ok().map(|leaf| leaf.rect)
@@ -193,6 +219,13 @@ impl Workspace {
     #[cfg(test)]
     pub(crate) fn window_layer(&self, surface: SurfaceIndex) -> egui::LayerId {
         egui::LayerId::new(egui::Order::Middle, skin::window_area_id(surface))
+    }
+
+    /// La forma de la superficie principal: cada nodo (su clase y sus paneles), sin rects ni
+    /// fracciones (dos acomodos con la misma son el mismo árbol).
+    #[cfg(test)]
+    pub(crate) fn main_shape(&self) -> fit::Shape {
+        fit::shape(self.state.main_surface())
     }
 
     /// Si el grupo de `id` va sin barra de pestañas.

@@ -98,7 +98,7 @@ pub fn skin_button(
     info: ButtonInfo,
     content: impl FnOnce(Rect) -> Vec<Shape>,
 ) -> Response {
-    use crate::kit::button::{self, ButtonState};
+    use crate::kit::button::ButtonState;
     let ButtonInfo {
         id,
         label,
@@ -121,6 +121,23 @@ pub fn skin_button(
         _ if selected == Some(true) => ButtonState::Pressed,
         state => state,
     };
+    let shapes = button_shapes(ui, skin, rect, state, content);
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
+    painter.extend(shapes);
+    response
+}
+
+/// Lo que pinta [`skin_button`] en el estado `state`: la pieza del kit (con la línea clara debajo
+/// de `rect`) y `content` (una fila más abajo con la cara presionada).
+fn button_shapes(
+    ui: &Ui,
+    skin: &Skin,
+    rect: Rect,
+    state: crate::kit::button::ButtonState,
+    content: impl FnOnce(Rect) -> Vec<Shape>,
+) -> Vec<Shape> {
+    use crate::kit::button::{self, ButtonState};
     let ppp = ui.ctx().pixels_per_point();
     let drawn = rect.with_max_y(rect.bottom() + 1.0);
     let mut shapes = button::frame_shapes(skin, drawn, state, ppp);
@@ -130,8 +147,35 @@ pub fn skin_button(
         0.0
     };
     shapes.extend(content(rect.translate(vec2(0.0, down))));
+    shapes
+}
+
+/// El fantasma de un [`skin_button`]: el mismo botón del kit, solo pintado (no responde a nada),
+/// con `opacity`. Se ve normal o, si `selected`, presionado (como el elegido de un grupo). Su
+/// nombre accesible es el de `info` (sin poder apretarse: el id de `info` no es el del botón de
+/// verdad).
+pub fn faded_skin_button(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    info: ButtonInfo,
+    opacity: f32,
+    content: impl FnOnce(Rect) -> Vec<Shape>,
+) -> Response {
+    use crate::kit::button::ButtonState;
+    let response = ui.interact(rect, info.id, Sense::hover());
+    let on = info.selected == Some(true);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, info.label)
+    });
+    let state = if on {
+        ButtonState::Pressed
+    } else {
+        ButtonState::Normal
+    };
+    let shapes = button_shapes(ui, skin, rect, state, content);
     let mut painter = ui.painter().clone();
-    painter.set_opacity(1.0);
+    painter.set_opacity(opacity);
     painter.extend(shapes);
     response
 }

@@ -8,6 +8,7 @@ use cs_io::palette_files::{self, NamedPalette, PaletteFormat};
 use eframe::egui;
 
 use crate::ChimpApp;
+use crate::forms::{self, TuiBuilderLogic as _};
 use crate::lospec_client::{self, FetchError, Pending};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::lospec_examples::{self, ExampleCache};
@@ -377,14 +378,18 @@ impl ChimpApp {
         action
     }
 
-    /// Para los tests: el panel Lospec abierto con `page` ya llegada (como al abrirlo, las más
-    /// nuevas), sin red: lo que se dibuja no depende de cuándo responde Lospec.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
+    /// Para los tests y las capturas (`CHIMPSPRITE_DEMO_LOSPEC=offline`): el panel Lospec abierto
+    /// con `page` ya llegada (como al abrirlo, las más nuevas), sin red: lo que se dibuja no
+    /// depende de cuándo responde Lospec (sus ejemplos no se piden).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn open_lospec_offline(&mut self, page: LospecPage) {
         let mut window = PresetsWindow {
             tab: PresetsTab::Lospec,
             ..Default::default()
         };
+        for p in &page.palettes {
+            window.examples.skip(p);
+        }
         window.lospec.sort = LospecSort::Newest;
         let start = window.lospec.start_search();
         window.lospec.finish_listing(start.generation, Ok(page));
@@ -925,6 +930,7 @@ fn lospec_ui(
             #[cfg(not(target_arch = "wasm32"))]
             lospec_row(
                 ui,
+                None,
                 p,
                 false,
                 in_library(&p.title),
@@ -933,12 +939,13 @@ fn lospec_ui(
                 now,
             );
             #[cfg(target_arch = "wasm32")]
-            lospec_row(ui, p, false, in_library(&p.title), &mut action);
+            lospec_row(ui, None, p, false, in_library(&p.title), &mut action);
         }
-        for p in tab.results() {
+        for (i, p) in tab.results().iter().enumerate() {
             #[cfg(not(target_arch = "wasm32"))]
             lospec_row(
                 ui,
+                Some(i),
                 p,
                 tab.is_exact(&p.slug),
                 in_library(&p.title),
@@ -949,6 +956,7 @@ fn lospec_ui(
             #[cfg(target_arch = "wasm32")]
             lospec_row(
                 ui,
+                Some(i),
                 p,
                 tab.is_exact(&p.slug),
                 in_library(&p.title),
@@ -975,12 +983,16 @@ fn lospec_ui(
             };
             match pixel_ui::frame_skin(ui.ctx()) {
                 // Centrado en puntos enteros (`vertical_centered` lo dejaba a medio punto con
-                // un ancho non de más).
+                // un ancho non de más), 1 abajo en su fila de 18 como los botones de las filas
+                // (centrado caía a medio punto; el kit lo pintaba ahí).
                 Some(_) if !loading => {
                     let free = ui.available_width() - crate::kit::button::width(ui, &label);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_top(|ui| {
                         ui.add_space((free / 2.0).floor().max(0.0));
-                        load(ui);
+                        ui.vertical(|ui| {
+                            ui.add_space(BUTTON_DROP);
+                            load(ui);
+                        });
                     });
                 }
                 _ => {
@@ -1345,11 +1357,32 @@ const SWATCH: f32 = 16.0;
 #[cfg(not(target_arch = "wasm32"))]
 const PAGER_W: f32 = 62.0;
 
+/// Las filas de una paleta, de 18 de alto (las de `ui.horizontal` de antes) y en puntos enteros:
+/// los textos de 14 caen 2, el autor (más chico, de 15) 1 y los botones de 17, 1. Antes, centrados,
+/// el autor y los botones caían a medio punto: el autor queda medio punto más arriba (su texto
+/// sube 1 px de pantalla) y los botones medio más abajo, donde ya se pintaban (el kit los pinta
+/// en el punto redondeado: se ven igual que antes).
+const ROW_H: f32 = 18.0;
+const TEXT_DROP: f32 = 2.0;
+const AUTHOR_DROP: f32 = 1.0;
+const BUTTON_DROP: f32 = 1.0;
+/// Entre el título y su autor.
+const TITLE_GAP: f32 = 4.0;
+/// Entre el ícono de un número y su número, y entre un número y el ícono del siguiente.
+const STAT_ICON_GAP: f32 = 1.0;
+const STAT_GAP: f32 = 6.0;
+/// Entre las notas y los botones de abajo y entre los botones (y entre las líneas de una fila
+/// partida).
+const BUTTON_GAP: f32 = 5.0;
+
 /// Una paleta: el título (clic: su página en lospec.com) y "CREATED BY" el autor; a la derecha
 /// sus colores, likes y descargas. Debajo la tira de colores y ◀ 1/5 ▶, el ejemplo a todo el
-/// ancho y abajo Apply y Save.
+/// ancho y abajo Apply y Save. Arriba y abajo son formas (`index`: su lugar en la lista; `None`,
+/// la del link): lo que no cabe a lo ancho baja, a la derecha.
+#[allow(clippy::too_many_arguments)]
 fn lospec_row(
     ui: &mut egui::Ui,
+    index: Option<usize>,
     p: &LospecPalette,
     exact: bool,
     in_library: bool,
@@ -1360,125 +1393,170 @@ fn lospec_row(
     let skin = pixel_ui::frame_skin(ui.ctx());
     let text = ui.visuals().text_color();
     let ppp = ui.ctx().pixels_per_point();
+    // Entre las filas, lo de egui (lo que había entre las de antes).
+    let gap = ui.spacing().item_spacing.y;
+    // El ancho de las formas (en puntos enteros, como las pone `forms::form`): la tira llega
+    // hasta el paginador (o hasta el borde si no hay).
+    let width = ui.available_width().floor();
+    #[cfg(not(target_arch = "wasm32"))]
+    let pager_w = if p.examples.len() > 1 {
+        PAGER_W + 5.0
+    } else {
+        0.0
+    };
+    #[cfg(target_arch = "wasm32")]
+    let pager_w = 0.0;
+    // Las formas de cada fila, con id propio (la lista de la ventana de presets y la del panel
+    // pueden tener las mismas paletas).
+    let list = ui.id();
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let title = ui.add(egui::Label::new(&p.title).sense(egui::Sense::click()));
-        if let Some(author) = p.author.as_deref().filter(|a| !a.is_empty()) {
-            ui.label(
-                egui::RichText::new(format!("CREATED BY {}", author.to_uppercase()))
-                    .small()
-                    .color(text),
-            );
-        }
-        // El link solo se abre con un slug validado (o una página de Coolors armada con los hex):
-        // la URL va a `explorer`/`open`/`xdg-open`.
-        let url = match &p.source {
-            Some(source) => cs_io::coolors::is_coolors_url(source).then(|| source.clone()),
-            None => cs_io::lospec::is_valid_slug(&p.slug).then(|| cs_io::lospec::page_url(&p.slug)),
-        };
-        if let Some(url) = url {
-            let title = title
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .tip(&url);
-            if title.clicked()
-                && let Err(e) = platform::open_url(ui.ctx(), &url)
-            {
-                log::warn!("could not open {url}: {e}");
-            }
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 1.0;
-            let stat = |ui: &mut egui::Ui, icon: &str, plain: &str, value: String| {
-                ui.label(value);
-                match skin
-                    .as_ref()
-                    .and_then(|s| s.piece(icon, crate::skin::WidgetState::Normal))
-                {
-                    Some(piece) => {
-                        let size = egui::vec2(piece.size[0] as f32, piece.size[1] as f32);
-                        let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(size.x, ui.spacing().interact_size.y.min(13.0)),
-                            egui::Sense::hover(),
-                        );
-                        let at = egui::Rect::from_min_size(
-                            egui::pos2(rect.left(), (rect.center().y - size.y / 2.0).round()),
-                            size,
-                        );
-                        ui.painter().extend(pixel_ui::piece_shapes(piece, at, ppp));
+    forms::form(ui, ("lospec_row", list, index, &p.slug), gap, |tui| {
+        tui.style(forms::min_height(ROW_H, forms::row_lines(gap)))
+            .add(|tui| {
+                let title = forms::air_above(TEXT_DROP, forms::natural());
+                tui.style(forms::air_right(TITLE_GAP, title)).ui(|ui| {
+                    let title = ui.add(
+                        egui::Label::new(&p.title)
+                            .sense(egui::Sense::click())
+                            .extend(),
+                    );
+                    // El link solo se abre con un slug validado (o una página de Coolors armada
+                    // con los hex): la URL va a `explorer`/`open`/`xdg-open`.
+                    let url = match &p.source {
+                        Some(source) => {
+                            cs_io::coolors::is_coolors_url(source).then(|| source.clone())
+                        }
+                        None => cs_io::lospec::is_valid_slug(&p.slug)
+                            .then(|| cs_io::lospec::page_url(&p.slug)),
+                    };
+                    if let Some(url) = url {
+                        let title = title
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .tip(&url);
+                        if title.clicked()
+                            && let Err(e) = platform::open_url(ui.ctx(), &url)
+                        {
+                            log::warn!("could not open {url}: {e}");
+                        }
                     }
-                    None => {
-                        ui.label(plain);
-                    }
+                });
+                if let Some(author) = p.author.as_deref().filter(|a| !a.is_empty()) {
+                    tui.style(forms::air_above(AUTHOR_DROP, forms::natural()))
+                        .ui(|ui| {
+                            let by = egui::RichText::new(format!(
+                                "CREATED BY {}",
+                                author.to_uppercase()
+                            ));
+                            ui.add(egui::Label::new(by.small().color(text)).extend());
+                        });
                 }
-                ui.add_space(5.0);
-            };
-            if let Some(d) = p.downloads {
-                stat(ui, "icon.lospec.downloads", "⬇", d.to_string());
-            }
-            if let Some(l) = p.likes {
-                stat(ui, "icon.lospec.likes", "♥", l.to_string());
-            }
-            stat(
-                ui,
-                "icon.lospec.colors",
-                "",
-                format!("{} colors", p.palette.len()),
-            );
-        });
-    });
-    ui.horizontal_top(|ui| {
-        // La tira llega hasta el paginador (o hasta el borde si no hay).
-        #[cfg(not(target_arch = "wasm32"))]
-        let pager_w = if p.examples.len() > 1 {
-            PAGER_W + 5.0
-        } else {
-            0.0
-        };
-        #[cfg(target_arch = "wasm32")]
-        let pager_w = 0.0;
-        swatches(ui, &p.palette, ui.available_width() - pager_w);
-        // Solo con paginador: vacío, su `Ui` igual iría después del aire de la fila y, con la
-        // tira justo del ancho, ensancharía la lista ese aire (lo de abajo se saldría).
-        #[cfg(not(target_arch = "wasm32"))]
-        if pager_w > 0.0 {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                lospec_examples::pager(ui, p, examples);
+                let stats = forms::air_above(TEXT_DROP, forms::natural());
+                tui.style(forms::push_right(stats))
+                    .ui(|ui| stats_line(ui, p, skin.as_deref(), ppp));
             });
-        }
+        tui.style(forms::row_lines(gap)).add(|tui| {
+            tui.style(forms::natural())
+                .ui(|ui| swatches(ui, &p.palette, width - pager_w));
+            #[cfg(not(target_arch = "wasm32"))]
+            if pager_w > 0.0 {
+                tui.style(forms::push_right(forms::natural()))
+                    .ui(|ui| lospec_examples::pager(ui, p, examples));
+            }
+        });
     });
     #[cfg(not(target_arch = "wasm32"))]
     lospec_examples::image(ui, p, examples, now);
     // Abajo: lo que se sabe de ella y Apply / Save.
-    ui.horizontal(|ui| {
-        let mut notes = Vec::new();
-        if exact {
-            notes.push("Exact match");
-        }
-        if in_library {
-            notes.push("In library");
-        }
-        if !notes.is_empty() {
-            ui.weak(notes.join(" · "));
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            if crate::pixel_ui::text_button(ui, "Save").clicked() {
-                *action = Some(LospecAction::Save(p.clone()));
-            }
-            // Sus colores al final de la paleta del sprite (los que no tiene).
-            if crate::pixel_ui::text_button(ui, "Append")
-                .tip("Add its colors to the sprite's palette")
-                .clicked()
-            {
-                *action = Some(LospecAction::Append(p.clone()));
-            }
-            if crate::pixel_ui::text_button(ui, "Apply").clicked() {
-                *action = Some(LospecAction::Apply(p.clone()));
-            }
-        });
-    });
+    let mut notes = Vec::new();
+    if exact {
+        notes.push("Exact match");
+    }
+    if in_library {
+        notes.push("In library");
+    }
+    forms::form(
+        ui,
+        ("lospec_row_actions", list, index, &p.slug),
+        0.0,
+        |tui| {
+            tui.style(forms::min_height(ROW_H, forms::row_lines(BUTTON_GAP)))
+                .add(|tui| {
+                    if !notes.is_empty() {
+                        let notes_leaf = forms::air_above(TEXT_DROP, forms::natural());
+                        tui.style(forms::air_right(BUTTON_GAP, notes_leaf))
+                            .ui(|ui| {
+                                let weak = egui::RichText::new(notes.join(" · ")).weak();
+                                ui.add(egui::Label::new(weak).extend());
+                            });
+                    }
+                    let buttons = forms::push_right(forms::natural());
+                    tui.style(forms::air_above(BUTTON_DROP, buttons)).ui(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+                            if crate::pixel_ui::text_button(ui, "Apply").clicked() {
+                                *action = Some(LospecAction::Apply(p.clone()));
+                            }
+                            // Sus colores al final de la paleta del sprite (los que no tiene).
+                            if crate::pixel_ui::text_button(ui, "Append")
+                                .tip("Add its colors to the sprite's palette")
+                                .clicked()
+                            {
+                                *action = Some(LospecAction::Append(p.clone()));
+                            }
+                            if crate::pixel_ui::text_button(ui, "Save").clicked() {
+                                *action = Some(LospecAction::Save(p.clone()));
+                            }
+                        });
+                    });
+                });
+        },
+    );
     ui.add_space(6.0);
+}
+
+/// Los números de una paleta en una línea, de izquierda a derecha: sus colores, likes y descargas,
+/// cada uno con su ícono a la izquierda (sin el skin, el carácter de `plain`), a media altura de la
+/// línea de 14 de sus textos.
+fn stats_line(ui: &mut egui::Ui, p: &LospecPalette, skin: Option<&crate::skin::Skin>, ppp: f32) {
+    let line_h = ROW_H - 2.0 * TEXT_DROP;
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        ui.spacing_mut().item_spacing.x = STAT_ICON_GAP;
+        let mut first = true;
+        let mut stat = |ui: &mut egui::Ui, icon: &str, plain: &str, value: String| {
+            if !first {
+                ui.add_space(STAT_GAP - STAT_ICON_GAP);
+            }
+            first = false;
+            match skin.and_then(|s| s.piece(icon, crate::skin::WidgetState::Normal)) {
+                Some(piece) => {
+                    let size = egui::vec2(piece.size[0] as f32, piece.size[1] as f32);
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(size.x, line_h), egui::Sense::hover());
+                    let at = egui::Rect::from_min_size(
+                        egui::pos2(rect.left(), (rect.center().y - size.y / 2.0).round()),
+                        size,
+                    );
+                    ui.painter().extend(pixel_ui::piece_shapes(piece, at, ppp));
+                }
+                None => {
+                    ui.label(plain);
+                }
+            }
+            ui.label(value);
+        };
+        stat(
+            ui,
+            "icon.lospec.colors",
+            "",
+            format!("{} colors", p.palette.len()),
+        );
+        if let Some(l) = p.likes {
+            stat(ui, "icon.lospec.likes", "♥", l.to_string());
+        }
+        if let Some(d) = p.downloads {
+            stat(ui, "icon.lospec.downloads", "⬇", d.to_string());
+        }
+    });
 }
 
 /// La tira de colores en su caja (el borde sin las esquinas y 1 px blanco), de 16 de alto: tan
@@ -1658,5 +1736,214 @@ mod tests {
             comments[1],
             "Source: https://lospec.com/palette-list/ice-cream-gb"
         );
+    }
+
+    /// Una biblioteca con un preset del usuario llamado `name` (su fila de Lospec dice "In
+    /// library").
+    struct OneUserPreset(&'static str);
+
+    impl crate::palette_library::PresetStore for OneUserPreset {
+        fn load(&self) -> Vec<crate::palette_library::StoredPreset> {
+            vec![crate::palette_library::StoredPreset {
+                palette: NamedPalette {
+                    name: self.0.into(),
+                    palette: Palette::new(vec![cs_core::Rgba::rgb(0, 0, 0)]),
+                },
+                deletable: true,
+            }]
+        }
+
+        fn save(&mut self, _: &NamedPalette, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn delete(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn folder(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+    }
+
+    /// El panel Lospec acoplado a `width`, como en el barrido de anchos (con Pixel UI y la escala
+    /// de la app, la página de muestra sin red: la segunda paleta con su paginador) y con la
+    /// segunda en la biblioteca: lo que quedó, medido en el cuarto frame de ese ancho (en los tres
+    /// de antes rige Pixel UI y taffy mide con lo del frame anterior).
+    fn lospec_at(width: f32) -> crate::forms::testing::Probe {
+        use crate::panel_registry::PanelId;
+        use crate::width_sweep_tests::{app_for, draw};
+        let mut app = app_for(PanelId::Lospec);
+        app.palettes = crate::palette_library::PaletteLibrary::new(Box::new(OneUserPreset(
+            "Palette Number 2",
+        )));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        for _ in 0..3 {
+            crate::forms::testing::frame_at(&ctx, width, |ui| draw(&mut app, ui, PanelId::Lospec));
+        }
+        crate::forms::testing::frame_at(&ctx, width, |ui| draw(&mut app, ui, PanelId::Lospec))
+    }
+
+    /// Lo de las filas de resultados (de la primera para abajo): sus controles y, como
+    /// `"swatches k"`, el primer cuadro de la tira de la paleta k (todas empiezan con el mismo
+    /// color).
+    fn row_rects(probe: &crate::forms::testing::Probe) -> Vec<(String, egui::Rect)> {
+        // Su autor puede asomar arriba del título (a medio punto, antes de `forms`).
+        let top = probe.rect("Palette Number 1").top() - 2.0;
+        let mut out: Vec<(String, egui::Rect)> = probe
+            .widgets
+            .iter()
+            .filter(|(_, r, _)| r.top() >= top)
+            .map(|(n, r, _)| (n.clone(), *r))
+            .collect();
+        let first = panels::to_color32(cs_core::Rgba::from_hex(0x10_20_30));
+        let cells = probe.fills.iter().filter(|(c, _)| *c == first);
+        for (k, (_, r)) in cells.enumerate() {
+            out.push((format!("swatches {}", k + 1), *r));
+        }
+        out
+    }
+
+    /// Ordenados de arriba abajo y de izquierda a derecha.
+    fn sorted(mut rects: Vec<(String, egui::Rect)>) -> Vec<(String, egui::Rect)> {
+        rects.sort_by(|(_, a), (_, b)| {
+            (a.min.y.total_cmp(&b.min.y)).then(a.min.x.total_cmp(&b.min.x))
+        });
+        rects
+    }
+
+    /// A 364 (su mínimo), 450 y 600: lo de las filas de resultados en puntos enteros, dentro del
+    /// ancho y sin encimarse (con `Align::Center`, los textos y los botones de 17 en las filas de
+    /// 18 caían a medio punto a lo alto).
+    #[test]
+    fn lospec_rows_sit_on_whole_points() {
+        for width in [LOSPEC_PANEL_W, 450.0, 600.0] {
+            let rows = row_rects(&lospec_at(width));
+            // Las seis paletas, con su tira, sus botones y el paginador de la segunda.
+            assert_eq!(
+                rows.iter().filter(|(n, _)| n == "Apply").count(),
+                6,
+                "{rows:?}"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|(n, _)| n.starts_with("swatches"))
+                    .count(),
+                6
+            );
+            for name in [
+                "Previous example",
+                "Next example",
+                "In library",
+                "Load more (6 of 120)",
+            ] {
+                assert!(
+                    rows.iter().any(|(n, _)| n == name),
+                    "no {name:?} at {width}"
+                );
+            }
+            for (name, r) in &rows {
+                for v in [r.min.x, r.min.y, r.max.x, r.max.y] {
+                    assert_eq!(v, v.round(), "{name:?} at {r:?} at {width}");
+                }
+                assert!(
+                    r.min.x >= 0.0 && r.max.x <= width,
+                    "{name:?} at {r:?} past {width}"
+                );
+            }
+            for (i, (a, ra)) in rows.iter().enumerate() {
+                for (b, rb) in &rows[i + 1..] {
+                    let inter = ra.intersect(*rb);
+                    assert!(
+                        inter.width() <= 0.0 || inter.height() <= 0.0,
+                        "{a:?} {ra:?} overlaps {b:?} {rb:?} at {width}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A 364, cada cosa de las filas donde estaba antes de `forms` (copiado de una corrida de
+    /// antes): lo único que cambia es el medio punto a lo alto de lo que caía a medio punto. El
+    /// autor, redondeado hacia abajo; los botones (Apply, Append, Save y Load more), hacia arriba:
+    /// el kit los pintaba en el punto redondeado (418.5 → 419), así que se ven igual que antes
+    /// (hacia abajo subirían 1 punto, 2 px de pantalla).
+    #[test]
+    fn lospec_rows_look_like_before_at_364() {
+        let before: &[(&str, [f32; 4])] = &[
+            ("CREATED BY SOMEBODY 1", [78.0, 75.0, 158.0, 90.0]),
+            ("Palette Number 1", [0.0, 76.0, 74.0, 90.0]),
+            ("4 colors", [270.0, 76.0, 305.0, 90.0]),
+            ("12", [319.0, 76.0, 329.0, 90.0]),
+            ("345", [344.0, 76.0, 359.0, 90.0]),
+            ("swatches 1", [2.0, 97.0, 18.0, 113.0]),
+            ("Apply", [242.0, 119.0, 276.0, 136.0]),
+            ("Append", [281.0, 119.0, 322.0, 136.0]),
+            ("Save", [327.0, 119.0, 359.0, 136.0]),
+            ("CREATED BY SOMEBODY 2", [78.0, 150.0, 158.0, 165.0]),
+            ("Palette Number 2", [0.0, 151.0, 74.0, 165.0]),
+            ("8 colors", [270.0, 151.0, 305.0, 165.0]),
+            ("24", [319.0, 151.0, 329.0, 165.0]),
+            ("690", [344.0, 151.0, 359.0, 165.0]),
+            ("Previous example", [297.0, 170.0, 312.0, 187.0]),
+            ("Next example", [344.0, 170.0, 359.0, 187.0]),
+            ("swatches 2", [2.0, 172.0, 18.0, 188.0]),
+            ("Apply", [242.0, 194.0, 276.0, 211.0]),
+            ("Append", [281.0, 194.0, 322.0, 211.0]),
+            ("Save", [327.0, 194.0, 359.0, 211.0]),
+            ("In library", [0.0, 195.0, 41.0, 209.0]),
+            ("CREATED BY SOMEBODY 3", [78.0, 225.0, 158.0, 240.0]),
+            ("Palette Number 3", [0.0, 226.0, 74.0, 240.0]),
+            ("16 colors", [260.0, 226.0, 300.0, 240.0]),
+            ("36", [314.0, 226.0, 324.0, 240.0]),
+            ("1035", [339.0, 226.0, 359.0, 240.0]),
+            ("swatches 3", [2.0, 247.0, 18.0, 263.0]),
+            ("Apply", [242.0, 269.0, 276.0, 286.0]),
+            ("Append", [281.0, 269.0, 322.0, 286.0]),
+            ("Save", [327.0, 269.0, 359.0, 286.0]),
+            ("CREATED BY SOMEBODY 4", [78.0, 300.0, 158.0, 315.0]),
+            ("Palette Number 4", [0.0, 301.0, 74.0, 315.0]),
+            ("32 colors", [260.0, 301.0, 300.0, 315.0]),
+            ("48", [314.0, 301.0, 324.0, 315.0]),
+            ("1380", [339.0, 301.0, 359.0, 315.0]),
+            ("swatches 4", [2.0, 322.0, 13.0, 338.0]),
+            ("Apply", [242.0, 344.0, 276.0, 361.0]),
+            ("Append", [281.0, 344.0, 322.0, 361.0]),
+            ("Save", [327.0, 344.0, 359.0, 361.0]),
+            ("CREATED BY SOMEBODY 5", [78.0, 375.0, 158.0, 390.0]),
+            ("Palette Number 5", [0.0, 376.0, 74.0, 390.0]),
+            ("64 colors", [260.0, 376.0, 300.0, 390.0]),
+            ("60", [314.0, 376.0, 324.0, 390.0]),
+            ("1725", [339.0, 376.0, 359.0, 390.0]),
+            ("swatches 5", [2.0, 397.0, 7.0, 413.0]),
+            ("Apply", [242.0, 419.0, 276.0, 436.0]),
+            ("Append", [281.0, 419.0, 322.0, 436.0]),
+            ("Save", [327.0, 419.0, 359.0, 436.0]),
+            ("CREATED BY SOMEBODY 6", [78.0, 450.0, 158.0, 465.0]),
+            ("Palette Number 6", [0.0, 451.0, 74.0, 465.0]),
+            ("5 colors", [265.0, 451.0, 300.0, 465.0]),
+            ("72", [314.0, 451.0, 324.0, 465.0]),
+            ("2070", [339.0, 451.0, 359.0, 465.0]),
+            ("swatches 6", [2.0, 472.0, 18.0, 488.0]),
+            ("Apply", [242.0, 494.0, 276.0, 511.0]),
+            ("Append", [281.0, 494.0, 322.0, 511.0]),
+            ("Save", [327.0, 494.0, 359.0, 511.0]),
+            ("Load more (6 of 120)", [131.0, 521.0, 228.0, 538.0]),
+        ];
+        let before = sorted(
+            before
+                .iter()
+                .map(|(n, [x0, y0, x1, y1])| {
+                    let r = egui::Rect::from_min_max(egui::pos2(*x0, *y0), egui::pos2(*x1, *y1));
+                    (n.to_string(), r)
+                })
+                .collect(),
+        );
+        let now = sorted(row_rects(&lospec_at(LOSPEC_PANEL_W)));
+        assert_eq!(now.len(), before.len(), "{now:?}");
+        for ((n, r), (bn, br)) in now.iter().zip(&before) {
+            assert_eq!((n, r), (bn, br));
+        }
     }
 }

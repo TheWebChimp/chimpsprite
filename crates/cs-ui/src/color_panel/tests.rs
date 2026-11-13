@@ -1,13 +1,18 @@
-//! El panel de paleta y color con Pixel UI, manejado con eventos crudos como en la app.
+//! El panel de paleta y color con Pixel UI, hospedado por el workspace como en la app y manejado
+//! con eventos crudos.
 
 use cs_core::{ColorMode, Palette, PixelValue, Rgba, Sprite};
 use eframe::egui::{
     self, Color32, Event, OutputCommand, PointerButton, Pos2, RawInput, Rect, Vec2, pos2, vec2,
 };
 
+use crate::ChimpApp;
+use crate::dock::Edge;
 use crate::editor::Editor;
+use crate::panel_registry::PanelId;
 use crate::skin::{Skin, WidgetState};
-use crate::{panels, pixel_ui};
+use crate::view::ViewSettings;
+use crate::{hosted_panel, panels, pixel_ui};
 
 /// Los 21 colores de la paleta de prueba (como en el diseño, que muestra 21).
 fn test_palette() -> Palette {
@@ -18,75 +23,91 @@ fn test_palette() -> Palette {
     )
 }
 
-/// El panel derecho como en la app (`lib.rs`): con Pixel UI, la paleta y el editor de color
-/// arriba, fuera del scroll del panel; sin Pixel UI, en el scroll. El reloj avanza 50 ms por
-/// frame.
+/// Color como en la app: una `ChimpApp` con una pestaña de 8×8 (la paleta de prueba) y Color solo
+/// a la derecha del lienzo (`Workspace::solo`), dibujado por el workspace con
+/// `ChimpApp::draw_panel` (con Pixel UI, la paleta y el editor de color arriba, fuera del scroll
+/// del panel; sin Pixel UI, en el scroll), en una ventana de 1000×800. Lo que pide el panel
+/// (`PaletteAction`) lo aplica la app en el mismo frame: los tests miran su efecto. Todo lo que
+/// guarda y lo que se le pasa (rects, puntos de clics y arrastres) es relativo a la hoja de Color
+/// (su esquina de arriba a la izquierda es (0, 0)). El reloj avanza 50 ms por frame.
 struct Harness {
     ctx: egui::Context,
-    editor: Editor,
-    skin: Option<Skin>,
-    /// El ancho del panel con sus márgenes (`None`: el de fábrica, que crece con lo de adentro).
-    width: Option<f32>,
-    /// El alto de la caja de la paleta elegido con la división (`ViewSettings::palette_height`).
-    palette_height: f32,
+    app: ChimpApp,
     time: f64,
+    /// La hoja de Color en el último frame, en la ventana.
+    leaf: Rect,
+    /// Los nodos con nombre del último frame: los de Color y sus menús
+    /// (`hosted_panel::panel_nodes`).
     nodes: Vec<(String, Rect)>,
+    /// Lo dibujado en la hoja (y en los menús que abre) en el último frame.
     shapes: Vec<egui::epaint::ClippedShape>,
     /// Lo copiado al portapapeles en cada frame.
     copied: Vec<String>,
-    /// Lo pedido desde el panel en el último frame.
-    action: Option<panels::PaletteAction>,
 }
 
 impl Harness {
-    /// Con `pixel`, el estilo y la fuente de Pixel UI y el skin embebido.
+    /// Con `pixel`, Pixel UI (su estilo, su fuente y el skin embebido, los de la app).
     fn new(pixel: bool) -> Self {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
-        let skin = pixel.then(|| Skin::embedded(&ctx));
-        if let Some(skin) = &skin {
-            ctx.set_fonts(crate::appearance::font_definitions(true));
-            crate::appearance::apply_style(&ctx, Some(skin.colors()));
-        }
         let mut sprite = Sprite::new(8, 8, ColorMode::Rgba);
         sprite.palette = test_palette();
         let mut editor = Editor::with_sprite(sprite);
         editor.primary = PixelValue::Rgba(Rgba::rgb(10, 20, 30));
+        // El ancho de la columna, el de fábrica (`palette_width` en `None`); el alto de la caja de
+        // la paleta, el de fábrica (`palette_height`, el que cambia la división).
+        let view = ViewSettings {
+            pixel_ui: pixel,
+            ..Default::default()
+        };
+        let app = hosted_panel::app(view, editor, PanelId::Color, Edge::Right);
         let mut h = Self {
             ctx,
-            editor,
-            skin,
-            width: None,
-            palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
+            app,
             time: 0.0,
+            leaf: Rect::ZERO,
             nodes: Vec::new(),
             shapes: Vec::new(),
             copied: Vec::new(),
-            action: None,
         };
-        h.frame(vec![]);
-        h.frame(vec![]);
+        // Con Pixel UI, la escala y la fuente rigen desde el segundo frame.
+        for _ in 0..3 {
+            h.frame(vec![]);
+        }
         h
     }
 
-    fn frame(&mut self, events: Vec<Event>) {
+    fn editor(&mut self) -> &mut Editor {
+        &mut self.app.doc.editor
+    }
+
+    /// Con Pixel UI: el skin de la app.
+    fn skin(&self) -> &Skin {
+        self.app.pixel.skin().expect("with Pixel UI")
+    }
+
+    /// Un frame de la app con `events` (las posiciones, relativas a la hoja).
+    fn run(&mut self, events: Vec<Event>) -> egui::FullOutput {
+        let events = hosted_panel::to_window(events, self.leaf);
         self.time += 0.05;
         let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 800.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0))),
             time: Some(self.time),
             events,
             ..Default::default()
         };
-        let editor = &mut self.editor;
-        let skin = self.skin.as_ref();
-        let (width, height) = (self.width, &mut self.palette_height);
-        let mut action = None;
-        let mut output = self.ctx.run_ui(input, |ui| {
-            action = right_panel(ui, editor, skin, width, height);
-        });
-        self.action = action;
-        output.textures_delta.clear();
-        self.nodes = nodes(&output);
+        let output = hosted_panel::frame(&self.ctx, &mut self.app, input);
+        self.leaf = hosted_panel::leaf(&self.app, PanelId::Color);
+        output
+    }
+
+    fn frame(&mut self, events: Vec<Event>) {
+        let output = self.run(events);
+        let (leaf, back) = (self.leaf, -self.leaf.min.to_vec2());
+        self.nodes = hosted_panel::panel_nodes(&self.ctx, &output, leaf)
+            .into_iter()
+            .map(|(t, r, _)| (t, r))
+            .collect();
         self.copied = output
             .platform_output
             .commands
@@ -96,7 +117,20 @@ impl Harness {
                 _ => None,
             })
             .collect();
-        self.shapes = output.shapes;
+        // Lo de Color y sus menús; no las barras de la ventana, el lienzo ni la tira.
+        self.shapes = output
+            .shapes
+            .into_iter()
+            .filter(|c| hosted_panel::clipped_to(c.clip_rect, leaf))
+            .map(|c| {
+                let mut shape = c.shape;
+                shape.translate(back);
+                egui::epaint::ClippedShape {
+                    clip_rect: c.clip_rect.translate(back),
+                    shape,
+                }
+            })
+            .collect();
     }
 
     fn node(&self, label: &str) -> Rect {
@@ -112,7 +146,7 @@ impl Harness {
     }
 
     fn texture(&self, piece: &str) -> egui::TextureId {
-        let skin = self.skin.as_ref().expect("with Pixel UI");
+        let skin = self.skin();
         skin.piece(piece, WidgetState::Normal)
             .unwrap_or_else(|| panic!("{piece}"))
             .texture
@@ -239,62 +273,16 @@ impl Harness {
     }
 
     fn primary(&self) -> Rgba {
-        match self.editor.primary {
+        match self.app.doc.editor.primary {
             PixelValue::Rgba(c) => c,
             other => panic!("{other:?}"),
         }
     }
 
     fn set_primary(&mut self, c: Rgba) {
-        self.editor.primary = PixelValue::Rgba(c);
+        self.editor().primary = PixelValue::Rgba(c);
         self.frame(vec![]);
     }
-}
-
-/// Un panel derecho de pruebas, de `width` de ancho (con sus márgenes) si se pide. Ya no es el de la
-/// app (desde la fase D el workspace aloja el color); es solo el arnés para medir `color_panel`.
-fn right_panel(
-    ui: &mut egui::Ui,
-    editor: &mut Editor,
-    skin: Option<&Skin>,
-    width: Option<f32>,
-    palette_height: &mut f32,
-) -> Option<panels::PaletteAction> {
-    let mut panel = egui::Panel::right("palette").default_size(220.0);
-    if let Some(width) = width {
-        panel = panel.exact_size(width);
-    }
-    panel
-        .show(ui, |ui| match skin {
-            Some(_) => panels::palette(ui, editor, true, skin, palette_height),
-            None => {
-                egui::ScrollArea::vertical()
-                    .show(ui, |ui| {
-                        panels::palette(ui, editor, true, skin, palette_height)
-                    })
-                    .inner
-            }
-        })
-        .inner
-}
-
-fn nodes(output: &egui::FullOutput) -> Vec<(String, Rect)> {
-    let Some(update) = &output.platform_output.accesskit_update else {
-        return Vec::new();
-    };
-    update
-        .nodes
-        .iter()
-        .filter_map(|(_, n)| {
-            let b = n.bounds()?;
-            let text = n.label().or_else(|| n.value())?.to_string();
-            let rect = Rect::from_min_max(
-                pos2(b.x0 as f32, b.y0 as f32),
-                pos2(b.x1 as f32, b.y1 as f32),
-            );
-            Some((text, rect))
-        })
-        .collect()
 }
 
 fn collect_meshes(shape: &egui::Shape, out: &mut Vec<(egui::TextureId, Rect)>) {
@@ -379,7 +367,7 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
     }
     let rects = h.colored_rects();
     for (i, cell) in cells.iter().enumerate() {
-        let color = to_color32(h.editor.sprite().palette.colors()[i]);
+        let color = to_color32(h.app.doc.editor.sprite().palette.colors()[i]);
         let inside = cell.shrink(1.0);
         assert!(
             rects.iter().any(|&(c, r)| c == color && r == inside),
@@ -392,9 +380,12 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
 fn with_pixel_ui_clicking_a_swatch_picks_the_primary_and_right_click_the_secondary() {
     let mut h = Harness::new(true);
     h.click_at(h.node("#3").center());
-    assert_eq!(h.editor.primary, h.editor.palette_value(3));
+    assert_eq!(h.app.doc.editor.primary, h.app.doc.editor.palette_value(3));
     h.click_with(h.node("#5").center(), PointerButton::Secondary);
-    assert_eq!(h.editor.secondary, h.editor.palette_value(5));
+    assert_eq!(
+        h.app.doc.editor.secondary,
+        h.app.doc.editor.palette_value(5)
+    );
 }
 
 #[test]
@@ -413,7 +404,7 @@ fn with_pixel_ui_the_add_mark_follows_the_last_swatch_and_adds_the_primary_color
     let add = Rect::from_min_size(at, vec2(6.0, 7.0));
     assert_eq!(h.drawn("palette.add"), vec![add]);
     h.click_at(add.center());
-    let palette = h.editor.sprite().palette.colors().to_vec();
+    let palette = h.editor().sprite().palette.colors().to_vec();
     assert_eq!(palette.len(), 22);
     assert_eq!(palette[21], Rgba::rgb(10, 20, 30));
     // La marca pasa al lado del nuevo.
@@ -422,18 +413,18 @@ fn with_pixel_ui_the_add_mark_follows_the_last_swatch_and_adds_the_primary_color
         h.node("#21").min + vec2(12.0, 0.0)
     );
     // Se deshace como cualquier cambio de paleta.
-    h.editor.undo();
-    assert_eq!(h.editor.sprite().palette.len(), 21);
+    h.editor().undo();
+    assert_eq!(h.editor().sprite().palette.len(), 21);
 }
 
 #[test]
 fn dragging_over_swatches_selects_them_and_delete_removes_them() {
     let mut h = Harness::new(true);
-    let before = h.editor.sprite().palette.colors().to_vec();
+    let before = h.editor().sprite().palette.colors().to_vec();
     // De #2 a #5 arrastrando: los cuatro, con su marco.
     let from = h.node("#2").center();
     h.drag(from, 12.0 * 3.0);
-    assert_eq!(h.editor.palette_range(), Some(2..=5));
+    assert_eq!(h.editor().palette_range(), Some(2..=5));
     let white = h
         .colored_rects()
         .into_iter()
@@ -444,23 +435,23 @@ fn dragging_over_swatches_selects_them_and_delete_removes_them() {
         key(egui::Key::Delete, true, egui::Modifiers::NONE),
         key(egui::Key::Delete, false, egui::Modifiers::NONE),
     ]);
-    let after = h.editor.sprite().palette.colors().to_vec();
+    let after = h.editor().sprite().palette.colors().to_vec();
     assert_eq!(after.len(), before.len() - 4);
     assert_eq!(after[2], before[6]);
-    assert_eq!(h.editor.palette_range(), None);
-    h.editor.undo();
-    assert_eq!(h.editor.sprite().palette.colors(), &before[..]);
+    assert_eq!(h.editor().palette_range(), None);
+    h.editor().undo();
+    assert_eq!(h.editor().sprite().palette.colors(), &before[..]);
 }
 
 #[test]
 fn dragging_the_add_mark_adds_one_color_per_cell_in_one_undo_step() {
     let mut h = Harness::new(true);
     h.set_primary(Rgba::rgb(10, 20, 30));
-    let before = h.editor.sprite().palette.len();
+    let before = h.editor().sprite().palette.len();
     // Tres celdas más allá de la marca.
     let from = h.node("Add to palette").center();
     h.drag(from, 12.0 * 3.0);
-    let palette = h.editor.sprite().palette.colors().to_vec();
+    let palette = h.editor().sprite().palette.colors().to_vec();
     assert_eq!(
         palette.len(),
         before + 4,
@@ -471,15 +462,15 @@ fn dragging_the_add_mark_adds_one_color_per_cell_in_one_undo_step() {
             .iter()
             .all(|&c| c == Rgba::rgb(10, 20, 30))
     );
-    h.editor.undo();
-    assert_eq!(h.editor.sprite().palette.len(), before);
+    h.editor().undo();
+    assert_eq!(h.editor().sprite().palette.len(), before);
 }
 
 #[test]
 fn with_pixel_ui_the_channel_strip_shows_the_four_values_and_the_hex() {
     let mut h = Harness::new(true);
     h.set_primary(Rgba::new(10, 20, 30, 200));
-    let text_color = h.skin.as_ref().unwrap().colors().field_text;
+    let text_color = h.skin().colors().field_text;
     assert_eq!(text_color, Color32::from_rgb(89, 77, 77));
     // La tira: 16 de alto, 2 px después del botón de copiar (el botón del kit, de 25: 16 de
     // cuerpo y la línea clara), en el orden del diseño.
@@ -691,9 +682,9 @@ fn without_pixel_ui_the_palette_and_the_picker_are_the_egui_ones() {
         assert!(!h.has(label), "{label}");
     }
     assert!(h.has("Presets ⏷") && h.has("≡"), "{:?}", h.nodes);
-    assert!(h.editor.palette_locked);
+    assert!(h.editor().palette_locked);
     // Los cuadritos de 20 de siempre y el selector de egui con sus campos "R ".
-    let color = to_color32(h.editor.sprite().palette.colors()[0]);
+    let color = to_color32(h.editor().sprite().palette.colors()[0]);
     assert!(
         h.colored_rects()
             .iter()
@@ -711,7 +702,7 @@ fn without_pixel_ui_the_palette_and_the_picker_are_the_egui_ones() {
         .unwrap()
         .1;
     h.click_at(first.center());
-    assert_eq!(h.editor.primary, h.editor.palette_value(0));
+    assert_eq!(h.app.doc.editor.primary, h.app.doc.editor.palette_value(0));
 }
 
 fn key(key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> Event {
@@ -835,27 +826,23 @@ fn with_pixel_ui_typing_into_g_b_and_a_changes_the_color() {
     assert_eq!(h.primary(), Rgba::new(10, 100, 200, 128));
 }
 
-/// Si el nodo de accesibilidad `label` se anuncia elegido (prendido).
-fn selected(output: &egui::FullOutput, label: &str) -> Option<bool> {
-    let update = output.platform_output.accesskit_update.as_ref()?;
-    update
-        .nodes
-        .iter()
-        .find(|(_, n)| n.label().is_some_and(|l| l == label))
-        .and_then(|(_, n)| n.toggled())
-        .map(|t| t == egui::accesskit::Toggled::True)
-}
-
 impl Harness {
+    /// El nodo `label` de Color (o de sus menús) en un frame sin eventos.
+    fn quiet_node<R>(
+        &mut self,
+        label: &str,
+        read: impl FnOnce(&egui::accesskit::Node) -> R,
+    ) -> Option<R> {
+        let output = self.quiet_output();
+        hosted_panel::panel_nodes(&self.ctx, &output, self.leaf)
+            .into_iter()
+            .find(|(t, _, _)| t == label)
+            .map(|(_, _, n)| read(n))
+    }
+
     /// Si el botón `label` se anuncia desactivado, en un frame sin eventos.
     fn is_disabled(&mut self, label: &str) -> Option<bool> {
-        let output = self.quiet_output();
-        let update = output.platform_output.accesskit_update.as_ref()?;
-        update
-            .nodes
-            .iter()
-            .find(|(_, n)| n.label().is_some_and(|l| l == label))
-            .map(|(_, n)| n.is_disabled())
+        self.quiet_node(label, |n| n.is_disabled())
     }
 
     /// El tinte de la malla dibujada en `rect` en el último frame.
@@ -874,24 +861,14 @@ impl Harness {
 
     /// Si el botón `label` se anuncia elegido (prendido), en un frame sin eventos.
     fn is_selected(&mut self, label: &str) -> Option<bool> {
-        let output = self.quiet_output();
-        selected(&output, label)
+        self.quiet_node(label, |n| n.toggled())
+            .flatten()
+            .map(|t| t == egui::accesskit::Toggled::True)
     }
 
     /// Un frame sin eventos (y sin guardar lo dibujado).
     fn quiet_output(&mut self) -> egui::FullOutput {
-        self.time += 0.05;
-        let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 800.0))),
-            time: Some(self.time),
-            ..Default::default()
-        };
-        let editor = &mut self.editor;
-        let skin = self.skin.as_ref();
-        let (width, height) = (self.width, &mut self.palette_height);
-        self.ctx.run_ui(input, |ui| {
-            right_panel(ui, editor, skin, width, height);
-        })
+        self.run(vec![])
     }
 }
 
@@ -959,42 +936,42 @@ fn with_pixel_ui_the_top_buttons_are_the_kit_group_and_the_kit_toggle() {
 #[test]
 fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     let mut h = Harness::new(true);
-    assert!(h.editor.palette_locked);
+    assert!(h.editor().palette_locked);
     // Bloqueada: el candado cerrado, en un botón sin apretar.
     assert_eq!(h.drawn("palette.icon.lock").len(), 1);
     assert!(h.drawn("palette.icon.lock.open").is_empty());
-    let before = h.editor.sprite().palette.clone();
+    let before = h.editor().sprite().palette.clone();
     // Bloqueada: elegir #3 y cambiar el rojo cambia el primario, no la paleta.
     h.click_at(h.node("#3").center());
     h.type_into("R", "200");
     assert_eq!(h.primary().r, 200);
-    assert_eq!(h.editor.sprite().palette, before);
+    assert_eq!(h.editor().sprite().palette, before);
     // Desbloqueada: se anuncia apagado y el mismo cambio edita la #3.
     h.click_at(h.node("Lock palette").center());
-    assert!(!h.editor.palette_locked);
+    assert!(!h.editor().palette_locked);
     assert_eq!(h.is_selected("Lock palette"), Some(false));
     h.click_at(h.node("#3").center());
     h.type_into("R", "201");
-    let edited = h.editor.sprite().palette.colors()[3];
+    let edited = h.editor().sprite().palette.colors()[3];
     assert_eq!(edited.r, 201);
     assert_eq!(h.primary(), edited, "the primary follows the entry");
     // Arrastrar el S/V también la edita, en un solo paso de undo.
     let sv = h.node("Saturation and value");
     h.drag(sv.center(), 30.0);
-    assert_ne!(h.editor.sprite().palette.colors()[3], edited);
-    assert_eq!(h.editor.sprite().palette.colors()[3], h.primary());
-    h.editor.undo();
-    assert_eq!(h.editor.sprite().palette.colors()[3], edited);
-    h.editor.undo();
-    assert_eq!(h.editor.sprite().palette, before);
+    assert_ne!(h.editor().sprite().palette.colors()[3], edited);
+    assert_eq!(h.app.doc.editor.sprite().palette.colors()[3], h.primary());
+    h.editor().undo();
+    assert_eq!(h.editor().sprite().palette.colors()[3], edited);
+    h.editor().undo();
+    assert_eq!(h.editor().sprite().palette, before);
     // Agregar con la marca se puede siempre, también bloqueada.
     h.click_at(h.node("Lock palette").center());
-    assert!(h.editor.palette_locked);
+    assert!(h.editor().palette_locked);
     h.click_at(h.node("Add to palette").center());
-    assert_eq!(h.editor.sprite().palette.len(), 22);
+    assert_eq!(h.editor().sprite().palette.len(), 22);
     // Con un color que ya está, también: una entrada nueva para editar.
     h.click_at(h.node("Add to palette").center());
-    assert_eq!(h.editor.sprite().palette.len(), 23);
+    assert_eq!(h.editor().sprite().palette.len(), 23);
 }
 
 #[test]
@@ -1004,7 +981,7 @@ fn with_pixel_ui_the_lock_button_shows_the_closed_or_the_open_lock() {
     // El ícono, donde está en el diseño: 9 px adentro del botón y 3 abajo.
     let icon_at = lock.min + vec2(9.0, 3.0);
     // Bloqueada: el candado cerrado, en un botón normal (sin `palette.button.active`).
-    assert!(h.editor.palette_locked);
+    assert!(h.editor().palette_locked);
     assert_eq!(
         h.drawn("palette.icon.lock"),
         vec![Rect::from_min_size(icon_at, vec2(7.0, 9.0))]
@@ -1013,7 +990,7 @@ fn with_pixel_ui_the_lock_button_shows_the_closed_or_the_open_lock() {
     assert!(h.drawn_boxes("palette.button.active").is_empty());
     // Desbloqueada: el candado abierto, en el mismo lugar, y sigue sin verse apretado.
     h.click_at(lock.center());
-    assert!(!h.editor.palette_locked);
+    assert!(!h.editor().palette_locked);
     assert_eq!(
         h.drawn("palette.icon.lock.open"),
         vec![Rect::from_min_size(icon_at, vec2(7.0, 9.0))]
@@ -1022,7 +999,7 @@ fn with_pixel_ui_the_lock_button_shows_the_closed_or_the_open_lock() {
     assert!(h.drawn_boxes("palette.button.active").is_empty());
     // Otro clic: bloqueada otra vez, con el cerrado.
     h.click_at(lock.center());
-    assert!(h.editor.palette_locked);
+    assert!(h.editor().palette_locked);
     assert_eq!(h.drawn("palette.icon.lock").len(), 1);
     assert!(h.drawn("palette.icon.lock.open").is_empty());
 }
@@ -1049,7 +1026,14 @@ fn with_pixel_ui_the_menu_button_opens_the_presets_and_palette_menu() {
     h.frame(vec![Event::PointerMoved(presets)]);
     h.press(presets, PointerButton::Primary, true);
     h.press(presets, PointerButton::Primary, false);
-    assert_eq!(h.action, Some(panels::PaletteAction::OpenPresets));
+    // La app aplica `PaletteAction::OpenPresets` en el mismo frame: abre la ventana de presets.
+    assert!(h.app.presets_window.is_some(), "the app opened the presets");
+    h.frame(vec![]);
+    for label in ["Load Palette", "Save Palette", "Open Folder"] {
+        assert!(!h.has(label), "choosing closes the menu: {label}");
+    }
+    // Sin la ventana (que tiene sus propios nodos), nada del menú queda.
+    h.app.presets_window = None;
     h.frame(vec![]);
     assert!(!h.has("Presets"), "choosing closes the menu");
 }
@@ -1057,14 +1041,20 @@ fn with_pixel_ui_the_menu_button_opens_the_presets_and_palette_menu() {
 #[test]
 fn with_pixel_ui_the_page_button_asks_for_a_new_palette_only_when_unlocked() {
     let mut h = Harness::new(true);
-    let before = h.editor.sprite().palette.clone();
+    let before = h.editor().sprite().palette.clone();
     // Bloqueada: el botón está desactivado (apagado, con la ayuda de desbloquear) y no hace nada.
     assert_eq!(h.is_disabled("New palette"), Some(true));
     let icon = h.drawn("palette.icon.new")[0];
     assert_ne!(h.mesh_tint(icon), Some(Color32::WHITE), "dimmed");
     h.click_at(h.node("New palette").center());
-    assert_eq!(h.action, None);
-    assert_eq!(h.editor.sprite().palette, before);
+    // La app aplica lo que pide el panel en el mismo frame: no pidió nada. Ni la hizo ni
+    // preguntó, ni hizo lo de otra `PaletteAction` que se vea en la app (los presets, el nombre
+    // de un preset, un mensaje, otra paleta).
+    assert!(h.app.palette_confirm.is_none());
+    assert!(h.app.presets_window.is_none());
+    assert!(h.app.preset_name.is_none());
+    assert!(h.app.message.is_none());
+    assert_eq!(h.editor().sprite().palette, before);
     // Desbloqueada: la pide a la app (que la hace, o pregunta en indexado).
     h.click_at(h.node("Lock palette").center());
     assert_eq!(h.is_disabled("New palette"), Some(false));
@@ -1073,37 +1063,44 @@ fn with_pixel_ui_the_page_button_asks_for_a_new_palette_only_when_unlocked() {
     h.frame(vec![Event::PointerMoved(new)]);
     h.press(new, PointerButton::Primary, true);
     h.press(new, PointerButton::Primary, false);
-    assert_eq!(h.action, Some(panels::PaletteAction::NewPalette));
-    assert_eq!(h.editor.sprite().palette, before, "the app makes it");
+    // La app la hizo en el mismo frame (`PaletteAction::NewPalette`, en RGBA sin preguntar): una
+    // paleta nueva con solo el primario.
+    assert!(h.app.palette_confirm.is_none(), "RGBA: no question");
+    assert_ne!(h.editor().sprite().palette, before);
+    assert_eq!(
+        h.editor().sprite().palette.colors(),
+        &[Rgba::rgb(10, 20, 30)],
+        "the app made it"
+    );
 }
 
 #[test]
 fn with_pixel_ui_picking_a_swatch_switches_the_color_editor_to_that_color() {
     let mut h = Harness::new(true);
     h.click_at(h.node("Lock palette").center());
-    assert!(!h.editor.palette_locked);
+    assert!(!h.editor().palette_locked);
     // Con la mitad de abajo elegida, un clic en #3 vuelve a editar el primario y su entrada.
-    h.editor.editing_secondary = true;
+    h.editor().editing_secondary = true;
     h.frame(vec![]);
     h.click_at(h.node("#3").center());
-    assert!(!h.editor.editing_secondary);
+    assert!(!h.editor().editing_secondary);
     h.type_into("R", "201");
-    assert_eq!(h.editor.sprite().palette.colors()[3].r, 201);
-    assert_eq!(h.primary(), h.editor.sprite().palette.colors()[3]);
+    assert_eq!(h.editor().sprite().palette.colors()[3].r, 201);
+    assert_eq!(h.primary(), h.editor().sprite().palette.colors()[3]);
     // Clic derecho en #5: el editor pasa al secundario y edita la #5.
-    let primary = h.editor.primary;
+    let primary = h.editor().primary;
     h.click_with(h.node("#5").center(), PointerButton::Secondary);
-    assert!(h.editor.editing_secondary);
+    assert!(h.editor().editing_secondary);
     h.type_into("R", "99");
-    let five = h.editor.sprite().palette.colors()[5];
+    let five = h.editor().sprite().palette.colors()[5];
     assert_eq!(five.r, 99);
-    assert_eq!(h.editor.secondary, PixelValue::Rgba(five));
-    assert_eq!(h.editor.primary, primary);
+    assert_eq!(h.editor().secondary, PixelValue::Rgba(five));
+    assert_eq!(h.editor().primary, primary);
     // El Mask, con clic: vuelve al primario; con clic derecho, al secundario.
     h.click_at(h.node("Mask").center());
-    assert!(!h.editor.editing_secondary);
+    assert!(!h.editor().editing_secondary);
     h.click_with(h.node("Mask").center(), PointerButton::Secondary);
-    assert!(h.editor.editing_secondary);
+    assert!(h.editor().editing_secondary);
 }
 
 #[test]
@@ -1111,12 +1108,12 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     let mut h = Harness::new(true);
     assert_eq!(h.is_selected("Mask"), Some(false));
     h.click_at(h.node("Mask").center());
-    assert!(h.editor.is_mask(h.editor.primary));
+    assert!(h.app.doc.editor.is_mask(h.app.doc.editor.primary));
     assert_eq!(h.is_selected("Mask"), Some(true));
     // Prendido: el botón del kit apretado (su ícono baja 1 px).
     let pressed = h.drawn("palette.icon.mask")[0];
     h.click_at(h.node("Mask").center());
-    assert!(!h.editor.is_mask(h.editor.primary));
+    assert!(!h.app.doc.editor.is_mask(h.app.doc.editor.primary));
     assert_eq!(h.drawn("palette.icon.mask")[0].min.y, pressed.min.y - 1.0);
     h.click_at(h.node("Mask").center());
     h.click_at(h.node("Mask").center());
@@ -1124,14 +1121,15 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     assert_eq!(h.is_selected("Mask"), Some(false));
     // Clic derecho: el Mask como secundario.
     h.click_with(h.node("Mask").center(), PointerButton::Secondary);
-    assert!(h.editor.is_mask(h.editor.secondary));
+    assert!(h.app.doc.editor.is_mask(h.app.doc.editor.secondary));
 }
 
 impl Harness {
-    /// Con Pixel UI y el panel de `width` de ancho (con sus márgenes).
+    /// Con Pixel UI y la columna derecha de `width` de ancho (`view.palette_width`: con su
+    /// divisor de 2, del que cuenta el margen izquierdo de Color).
     fn with_width(width: f32) -> Self {
         let mut h = Self::new(true);
-        h.width = Some(width);
+        h.app.view.palette_width = Some(width);
         h.set_primary(Rgba::new(10, 20, 30, 200));
         h.frame(vec![]);
         h
@@ -1293,21 +1291,25 @@ fn with_pixel_ui_a_narrower_panel_puts_the_copy_button_beside_the_hex() {
 #[test]
 fn with_pixel_ui_the_minimum_width_fits_the_rgba_group_and_the_top_buttons() {
     let mut h = Harness::new(true);
-    let skin = h.skin.take().unwrap();
+    let skin = h.app.pixel.shared_skin().expect("with Pixel UI");
     let (mut min, mut panel) = (0.0, 0.0);
     let _ = h.ctx.run_ui(RawInput::default(), |ui| {
         min = crate::color_panel::min_width(ui, &skin);
         panel = crate::color_panel::panel_min_size(ui, &skin);
     });
-    h.skin = Some(skin);
     // 2 + la punta de R (3) + 4 tramos de 27 + 3 líneas + la punta derecha (2) + 2.
     assert_eq!(min, 120.0);
-    // Con los márgenes del panel (8 de cada lado) y la línea contra el lienzo.
-    assert_eq!(panel, 137.0);
-    // En ese ancho, todo se ve.
-    h.width = Some(panel);
+    // Con los márgenes de su cuerpo (8 de cada lado).
+    assert_eq!(panel, 136.0);
+    // Más angosta no se puede: la columna se queda en ese mínimo (con su divisor de 2, del que
+    // cuenta el margen izquierdo de Color: 136 − 2 − (8 − 2) − 8) y, ahí, todo se ve.
+    h.app.view.palette_width = Some(panel - 20.0);
     h.set_primary(Rgba::new(10, 20, 30, 200));
     h.frame(vec![]);
+    assert_eq!(
+        h.app.workspace.column_rect().map(|r| r.width()),
+        Some(panel)
+    );
     assert_eq!(h.palette_box().width(), min);
     assert_header_fits(&h);
     let column = h.palette_box();
@@ -1339,27 +1341,29 @@ fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
     // Abajo 30: la caja crece y el editor la sigue.
     h.drag_by(split.center(), vec2(0.0, 30.0));
     assert_eq!(h.palette_box().height(), 237.0);
-    assert_eq!(h.palette_height, 237.0);
+    assert_eq!(h.app.view.palette_height, 237.0);
     assert_eq!(h.node("Copy color").top(), h.palette_box().bottom() + 6.0);
     // Arriba de más: 2 filas de cuadritos (4 + 2 × 12 + 1 + 4).
     let split = h.node("Palette height");
     h.drag_by(split.center(), vec2(0.0, -400.0));
     assert_eq!(h.palette_box().height(), 33.0);
-    assert_eq!(h.palette_height, 33.0);
-    // Abajo de más: el editor queda entero en el panel (800 de alto).
+    assert_eq!(h.app.view.palette_height, 33.0);
+    // Abajo de más: el editor queda entero en el panel (en su hoja, de la barra de opciones a la
+    // de estado; en el panel de antes, la ventana entera de 800 de alto).
     let split = h.node("Palette height");
     h.drag_by(split.center(), vec2(0.0, 2000.0));
     let alpha = h.node("Alpha");
     let bars = h.drawn_boxes("picker.bars")[0];
+    let bottom = h.leaf.height();
     assert!(
-        bars.bottom() <= 800.0 && alpha.bottom() < bars.bottom(),
-        "{bars:?}"
+        bars.bottom() <= bottom && alpha.bottom() < bars.bottom(),
+        "{bars:?} in {bottom}"
     );
     // Sin nada abajo (no es una instancia), la caja toma todo lo que sobra: el editor llega
     // al fondo del panel.
     assert!(
-        bars.bottom() >= 780.0,
-        "the palette took the rest: {bars:?}"
+        bars.bottom() >= bottom - 20.0,
+        "the palette took the rest: {bars:?} in {bottom}"
     );
 }
 
@@ -1367,8 +1371,8 @@ fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
 fn with_pixel_ui_colors_that_do_not_fit_scroll_inside_the_palette_box() {
     let mut h = Harness::new(true);
     let palette = Palette::new((0..120u8).map(|i| Rgba::rgb(i, i, i)).collect());
-    assert!(h.editor.apply_palette(palette));
-    h.palette_height = 33.0;
+    assert!(h.editor().apply_palette(palette));
+    h.app.view.palette_height = 33.0;
     h.frame(vec![]);
     h.frame(vec![]);
     let pbox = h.palette_box();
