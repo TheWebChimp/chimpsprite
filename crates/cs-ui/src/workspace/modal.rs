@@ -534,6 +534,25 @@ mod tests {
                 size: SIZE,
             },
             ModalCase {
+                name: "Dock from the menu of the tab of a floating window",
+                pixel_only: false,
+                setup: |app| {
+                    app.workspace
+                        .float(PanelId::Color, egui::pos2(320.0, 120.0))
+                },
+                act: |ctx, app, out, size| {
+                    let tab = node_rect(out, "Color").unwrap();
+                    let secondary = egui::PointerButton::Secondary;
+                    let out = click_at(ctx, app, tab.center(), secondary, size);
+                    // Con el diálogo, el menú no se abre (no hay "Dock" que apretar).
+                    if let Some(dock) = node_rect(&out, crate::dock::MENU_DOCK) {
+                        let primary = egui::PointerButton::Primary;
+                        click_at(ctx, app, dock.center(), primary, size);
+                    }
+                },
+                size: SIZE,
+            },
+            ModalCase {
                 name: "the grab strip of the Preview in its window",
                 pixel_only: true,
                 setup: |app| app.view.preview = true,

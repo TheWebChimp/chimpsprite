@@ -3,7 +3,8 @@
 //! scroll y sus márgenes de siempre; el timeline debajo del lienzo, con el marco del panel de abajo
 //! de antes; el Preview solo en su ventana, con la del diseño: ver [`PreviewWindow`], en
 //! [`preview_window`](super::preview_window)) y pega lo que va encima de egui_dock (las pestañas y
-//! la × del kit, la franja de agarre y el botón « de cada grupo: ver [`tabs`](super::tabs); los
+//! la × del kit, la franja de agarre y el botón « de cada grupo, el "Dock" del menú de las
+//! pestañas de lo que flota: ver [`tabs`](super::tabs); los
 //! divisores de la toolbar y del timeline tapados: ver [`cover_tools_divider`] y
 //! [`cover_timeline_divider`], en [`dividers`](super::dividers); el marco y la barra de la ventana
 //! del Preview y la tira de íconos: `ChimpApp::strip_area`). Con un diálogo modal, lo de
@@ -23,9 +24,10 @@ use super::fit::{
     quadrant, record_sides, tidy_canvas, toolbar_width,
 };
 use super::modal::{Frozen, disable_unfaded, hold_windows, modal_shields, plain_preview_title};
+use super::model::floats;
 use super::preview_window::PreviewWindow;
 use super::tabs::{
-    close_marks, collapse_buttons, dropped_past_last, tab_arrows, tab_wheel, to_the_end,
+    close_marks, collapse_buttons, dock_menus, dropped_past_last, tab_arrows, tab_wheel, to_the_end,
 };
 use super::{SurfaceIndex, Workspace, dock_id, skin};
 use crate::app_panels::{PanelAction, PanelCtx, PanelHost};
@@ -293,9 +295,10 @@ impl TabViewer for Viewer<'_> {
 
     /// El lienzo no flota (egui_dock tampoco lo deja arrastrar: ver `fit::block_canvas_drag`).
     /// Justo después de dibujar el grupo de la ventana que se arrastra (`see_through`), no: así
-    /// egui_dock no lo toma como destino y queda el de debajo (ver el punto 12 de `skin`).
+    /// egui_dock no lo toma como destino y queda el de debajo (ver el punto 12 de `skin`). Por
+    /// eso no es un predicado puro: fuera de egui_dock se usa `model::floats`.
     fn allowed_in_windows(&self, tab: &mut PanelId) -> bool {
-        !self.own_group.take() && *tab != PanelId::Canvas
+        !self.own_group.take() && floats(*tab)
     }
 
     fn tab_style_override(
@@ -1002,6 +1005,12 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
             },
         }
     }
+    // "Dock" en el menú de la pestaña de lo que flota: se acopla más abajo (con el menú cerrado).
+    let home = if modal {
+        None
+    } else {
+        dock_menus(&ctx, &workspace, &hits)
+    };
     let released = tab_drag_released(&ctx, &workspace.state, &hits);
     // Lo que egui_dock soltó en el lienzo (como pestaña): al lado, del lado del cuadrante.
     let mut changed = tidy_canvas(&mut workspace.state, released.map(|(_, at)| at));
@@ -1050,6 +1059,10 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) -> Option
     }
     if let Some((surface, node)) = collapse_buttons(ui, skin, &workspace, modal) {
         workspace.collapse_to_icons(surface, node);
+    }
+    if let Some(id) = home {
+        workspace.dock_home(id);
+        changed = true;
     }
     // Si un panel se soltó en otro grupo (o junto al lienzo), la barra de algún grupo cambia: este
     // frame ya se dibujó con la de antes, así que se descarta y se vuelve a dibujar (sin el

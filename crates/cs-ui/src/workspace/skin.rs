@@ -51,10 +51,14 @@
 //!     contiene el puntero sobrescribe el destino (`hover_data`, el último gana: la superficie
 //!     principal primero, las ventanas después) en `tab_body` de `show/leaf.rs`, justo después
 //!     de `TabViewer::ui` de su pestaña al frente, y solo si `TabViewer::allowed_in_windows` (o la
-//!     superficie principal) lo deja: es la primera llamada a `allowed_in_windows` después de ese
-//!     `ui` (el menú de las pestañas va apagado). El `Viewer` de `show` marca su grupo en `ui` y
-//!     `allowed_in_windows` gasta la marca (dice que no). La llamada de `show_drag_drop_overlay`
-//!     (al empezar el `DockArea`, antes de los grupos) no la ve. El frame en que egui_dock empieza
+//!     superficie principal) lo deja. El `Viewer` de `show` marca su grupo en `ui` y
+//!     `allowed_in_windows` gasta la marca (dice que no). El invariante: nada puede llamar
+//!     `Viewer::allowed_in_windows` entre el `ui` de un grupo y esa comprobación, ni usarlo como
+//!     predicado puro (fuera de egui_dock: `model::floats`). Por eso el menú de las pestañas de
+//!     egui_dock va apagado (`tab_context_menus(false)`: el suyo llama `allowed_in_windows`) y el
+//!     "Dock" de las pestañas de lo que flota es de `workspace` (`tabs::dock_menus`, después del
+//!     `DockArea`). La llamada de `show_drag_drop_overlay` (al empezar el `DockArea`, antes de los
+//!     grupos) no ve la marca. El frame en que egui_dock empieza
 //!     el arrastre todavía no hay `dnd` (no pregunta `allowed_in_windows`) y el destino es la
 //!     propia ventana: su zona (el grupo entero o su barra, `Armed::faded_leaf`) no se pinta.
 //! 13. El grupo recordado (punto 9) se cambia en `State::set_drag_and_drop`, al empezar el

@@ -1043,6 +1043,12 @@ impl Workspace {
             self.dock(id, DockTarget::Split(s, n, Split::Right));
             return;
         }
+        self.tools_home();
+    }
+
+    /// La toolbar a su lugar de fábrica: a la izquierda de todo (junto al lienzo, en Essentials).
+    fn tools_home(&mut self) {
+        let id = PanelId::Tools;
         let focus = self.focused_panel();
         self.take(id);
         let main = self.state.main_surface_mut();
@@ -1052,6 +1058,34 @@ impl Workspace {
             main.split_left(NodeIndex::root(), 0.5, vec![id]);
         }
         self.refocus(focus);
+    }
+
+    /// Si `id` tiene un lugar de fábrica al que "Dock" lo regresa ([`Workspace::dock_home`]):
+    /// todos los que flotan salvo el Preview (flota por diseño).
+    pub(crate) fn has_home(id: PanelId) -> bool {
+        floats(id) && id != PanelId::Preview
+    }
+
+    /// "Dock" del menú de la pestaña de una ventana flotante: `id` a su lugar de fábrica (el de
+    /// Essentials), no al último donde estuvo. Color, la columna derecha (la orilla derecha:
+    /// [`DockTarget::Edge`], del ancho de la columna); la toolbar, a la izquierda de todo, junto al
+    /// lienzo (como "Dock" desde una tira que no es la de la derecha, ver
+    /// [`Workspace::dock_from_strip`]); el timeline, debajo del lienzo; los del dock, a la tira de
+    /// la derecha, en su lugar (ver [`Workspace::to_strip_at`]). Los que no tienen
+    /// ([`Workspace::has_home`]), nada.
+    pub(crate) fn dock_home(&mut self, id: PanelId) {
+        match id {
+            _ if !Workspace::has_home(id) => {}
+            PanelId::Color => self.dock(id, DockTarget::Edge(Edge::Right)),
+            PanelId::Tools => self.tools_home(),
+            PanelId::Timeline => {
+                let focus = self.focused_panel();
+                self.take(id);
+                put_below_canvas(&mut self.state);
+                self.refocus(focus);
+            }
+            _ => self.to_strip_at(id, Edge::Right),
+        }
     }
 
     /// Los paneles del grupo `(surface, node)` (ninguno si no existe).
@@ -1250,6 +1284,11 @@ fn ranked_place(strip: &[PanelId], id: PanelId) -> usize {
         .iter()
         .position(|p| rank(p) > rank(&id))
         .unwrap_or(strip.len())
+}
+
+/// Si `id` puede ir en una ventana flotante: todos menos el lienzo (ver `fit::block_canvas_drag`).
+pub(super) fn floats(id: PanelId) -> bool {
+    id != PanelId::Canvas
 }
 
 /// Si a un grupo con `tabs` va lo que se acopla "con el foco": no al del lienzo (no recibe

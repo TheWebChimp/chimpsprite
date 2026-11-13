@@ -898,3 +898,97 @@ fn a_two_tab_window_over_the_right_strip_takes_its_own_tab_dropped_on_it() {
     assert!(w.floating(PanelId::Color), "{}", describe(&h));
     assert_eq!(color.0, library.0, "{}", describe(&h));
 }
+
+// --- Tarea 3: "Dock" en la pestaña de una ventana flotante ---
+
+/// Clic derecho en `at` (la pestaña de una ventana flotante, o su franja de agarre) y, en su
+/// menú, "Dock".
+fn dock_from_menu(h: &mut LayoutHarness, at: Pos2) {
+    h.click(at, PointerButton::Secondary);
+    let dock = h.button(crate::dock::MENU_DOCK).center();
+    h.click(dock, PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+}
+
+/// Si el último frame de `h` tiene un botón "Dock" (el del menú abierto).
+fn dock_offered(h: &LayoutHarness) -> bool {
+    h.buttons.iter().any(|(l, _)| l == crate::dock::MENU_DOCK)
+}
+
+#[test]
+fn dock_on_the_tab_of_floating_color_gives_back_essentials() {
+    // El menú de la pestaña "Color" de su ventana: "Dock" la regresa a la columna derecha de
+    // Essentials (la orilla derecha, del ancho de la columna), esté donde esté la ventana.
+    for size in [vec2(1200.0, 800.0), vec2(960.0, 505.0)] {
+        let reference = essentials(size);
+        for start in [Start::Middle, Start::Dragged, Start::Right] {
+            let mut h = color_floating(size, start);
+            let tab = h.button("Color").center();
+            dock_from_menu(&mut h, tab);
+            assert_like(&h, &reference, &format!("{size:?} {start:?}"));
+        }
+    }
+}
+
+#[test]
+fn dock_on_a_floating_tab_puts_the_toolbar_the_timeline_or_a_dock_panel_back_in_place() {
+    // La toolbar (sola en su ventana, con Pixel UI, sin barra: el menú es de su franja de
+    // agarre), el timeline y Library: cada uno a su lugar de Essentials (la toolbar a la
+    // izquierda del lienzo, el timeline debajo, Library a la tira derecha en su lugar).
+    let size = vec2(1200.0, 800.0);
+    let reference = essentials(size);
+    for id in [PanelId::Tools, PanelId::Timeline, PanelId::Library] {
+        let mut h = essentials(size);
+        h.app.workspace.float(id, pos2(400.0, 150.0));
+        for _ in 0..5 {
+            h.frame();
+        }
+        assert!(h.app.workspace.floating(id), "{id:?}");
+        let at = if id == PanelId::Tools {
+            assert!(h.app.workspace.bare_tools().is_some());
+            let leaf = h.leaf(id);
+            pos2(leaf.center().x, leaf.top() + 1.0)
+        } else {
+            // Su pestaña, la de su ventana (la tira también tiene un botón "Timeline").
+            let window = h.window(id);
+            h.buttons
+                .iter()
+                .find(|(l, r)| l == id.spec().title && window.contains_rect(*r))
+                .map(|(_, r)| r.center())
+                .unwrap_or_else(|| panic!("{id:?}'s tab in {window:?}"))
+        };
+        dock_from_menu(&mut h, at);
+        let case = format!("{id:?}");
+        assert_like(&h, &reference, &case);
+        assert_eq!(
+            h.app.workspace.strip_at(Edge::Right),
+            reference.app.workspace.strip_at(Edge::Right),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn the_preview_tab_offers_no_dock() {
+    // El Preview flota por diseño: su pestaña (aquí junto a Library en su ventana) no lleva
+    // "Dock"; la de Library, sí.
+    let mut h = essentials(vec2(1200.0, 800.0));
+    h.app.view.preview = true;
+    for _ in 0..3 {
+        h.frame();
+    }
+    let (s, n) = h.app.workspace.leaf_of(PanelId::Preview).unwrap();
+    assert!(!s.is_main());
+    h.app
+        .workspace
+        .dock(PanelId::Library, DockTarget::Leaf(s, n));
+    for _ in 0..3 {
+        h.frame();
+    }
+    h.click(h.button("Preview").center(), PointerButton::Secondary);
+    assert!(!dock_offered(&h), "{:?}", h.buttons);
+    h.click(h.button("Library").center(), PointerButton::Secondary);
+    assert!(dock_offered(&h));
+}

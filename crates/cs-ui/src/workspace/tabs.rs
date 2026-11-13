@@ -1,19 +1,58 @@
 //! Lo que va encima de las barras de pestañas de egui_dock (ver [`super::show::show`]): el botón
-//! « de cada grupo ([`collapse_buttons`]), la × del kit ([`close_marks`]), la rueda y las flechas
-//! de una barra que no cabe ([`tab_wheel`], [`tab_arrows`]) y lo que se suelta pasando su última
-//! pestaña ([`dropped_past_last`], [`to_the_end`]).
+//! « de cada grupo ([`collapse_buttons`]), la × del kit ([`close_marks`]), el menú de las pestañas
+//! de las ventanas flotantes ([`dock_menus`]), la rueda y las flechas de una barra que no cabe
+//! ([`tab_wheel`], [`tab_arrows`]) y lo que se suelta pasando su última pestaña
+//! ([`dropped_past_last`], [`to_the_end`]).
 
 use eframe::egui;
 use egui_dock::DockState;
 
 use super::drop::dragged_tab;
-use super::{NodeIndex, SurfaceIndex, Workspace, skin};
+use super::{NodeIndex, SurfaceIndex, Workspace, dock_id, skin};
 use crate::panel_registry::PanelId;
 use crate::skin::Skin;
 use crate::{dock, kit, pixel_ui};
 
 /// El nombre del botón « de un grupo acoplado (su tooltip y su etiqueta accesible).
 pub(crate) const COLLAPSE: &str = "Collapse to Icons";
+
+/// El menú contextual de la pestaña de un panel que flota (`hits`: las respuestas de las pestañas
+/// que egui_dock registró este frame) o, en una ventana sin barra (la toolbar sola con Pixel UI),
+/// de su franja de agarre: "Dock", que lo regresa a su lugar de fábrica (ver
+/// `Workspace::dock_home`), si tiene uno (`Workspace::has_home`: el Preview no). Va después del
+/// `DockArea` y no pregunta nada al `Viewer` (ver el punto 12 de `skin`). Devuelve el panel cuyo
+/// "Dock" se eligió: se acopla después, con el menú ya cerrado. Con un diálogo modal no se llama.
+pub(super) fn dock_menus(
+    ctx: &egui::Context,
+    w: &Workspace,
+    hits: &[skin::TabHit],
+) -> Option<PanelId> {
+    let floating = |id: PanelId| Workspace::has_home(id) && w.floating(id);
+    let mut chosen = None;
+    let mut menu = |response: &egui::Response, id: PanelId| {
+        crate::menus::context_menu(response, |ui| {
+            if ui.add(crate::menus::plain(dock::MENU_DOCK)).clicked() {
+                chosen = Some(id);
+                ui.close();
+            }
+        });
+    };
+    for h in hits.iter().filter(|h| floating(h.id)) {
+        menu(&h.response, h.id);
+    }
+    for (path, leaf) in w.state.iter_leaves() {
+        if path.surface.is_main() || !leaf.tab_bar_hidden {
+            continue;
+        }
+        if let Some(&id) = leaf.tabs.get(leaf.active.0)
+            && floating(id)
+            && let Some(strip) = ctx.read_response(skin::hidden_strip_id(dock_id(), path))
+        {
+            menu(&strip, id);
+        }
+    }
+    chosen
+}
 
 /// El botón « ("Collapse to Icons") de cada grupo acoplado que tenga algo que mandar a la tira
 /// (ver [`Workspace::collapsible`]), la flecha de atrás de las pestañas del kit: al final de su
