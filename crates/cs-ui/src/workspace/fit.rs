@@ -158,12 +158,7 @@ impl Workspace {
     }
 
     /// Lo que mide de siempre un lado del lienzo con `id` solo, a lo ancho (`horizontal`) o a lo
-    /// alto, hasta el centro de su divisor (como los demás lados, ver [`SidePoints`]): Color, el
-    /// ancho de la columna (`view.palette_width` o el que tomó sola, `SidePoints::palette`); la
-    /// toolbar, el de su caja; los demás, lo que piden de fábrica (su `reference_width` con su
-    /// margen y la barra de scroll, ver [`reference`]). A lo alto, el timeline lo suyo
-    /// (`view.timeline_height`) y los demás su `default_size`. Es lo que toma un lado nuevo con
-    /// él solo (ver [`pin_sides`], a lo más el 45 % de su split; [`SidePoints::preferred`]).
+    /// alto: [`SidePoints::preferred`] con lo que dio el anfitrión (para los tests).
     #[cfg(test)]
     pub(crate) fn preferred_side(&self, id: PanelId, horizontal: bool) -> f32 {
         self.sides.preferred(id, horizontal)
@@ -171,7 +166,7 @@ impl Workspace {
 
     /// El lado del lienzo con `id` solo (el de un split recién hecho, por el workspace o por
     /// egui_dock), si lo hay, va como un lado nuevo: del ancho (o alto) de siempre del panel (ver
-    /// [`Workspace::preferred_side`]; a lo más el 45 % de su split), no de lo que mida dibujado
+    /// [`SidePoints::preferred`]; a lo más el 45 % de su split), no de lo que mida dibujado
     /// (egui_dock parte a la mitad y dibuja así el frame en que suelta; ese ancho se quedaría).
     /// La columna derecha, la toolbar y el timeline los pide el anfitrión (ver [`pin_sides`]):
     /// ahí no cambia nada.
@@ -816,7 +811,7 @@ pub(crate) struct SidePoints {
     pub column: Option<f32>,
     /// Lo que mide un lado con Color solo fuera de la columna, hasta el centro de su divisor: su
     /// grupo, del ancho de siempre de Color (`view.palette_width` o el que tomó sola), como lo
-    /// de adentro de la columna (ver [`Workspace::preferred_side`]). Lo da el anfitrión.
+    /// de adentro de la columna (ver [`SidePoints::preferred`]). Lo da el anfitrión.
     pub palette: Option<f32>,
     /// El ancho de la toolbar (ver [`toolbar_width`]): lo da el anfitrión. Su lado del lienzo
     /// (ver [`Workspace::tools_side`]) mide eso hasta el borde de su divisor, siempre (no se
@@ -865,7 +860,13 @@ struct Pinned {
 }
 
 impl SidePoints {
-    /// Lo que mide de siempre un lado con `id` solo (ver `Workspace::preferred_side`).
+    /// Lo que mide de siempre un lado del lienzo con `id` solo, a lo ancho (`horizontal`) o a lo
+    /// alto, hasta el centro de su divisor (como los demás lados, ver [`SidePoints`]): Color, el
+    /// ancho de la columna (`view.palette_width` o el que tomó sola, [`SidePoints::palette`]); la
+    /// toolbar, el de su caja; los demás, lo que piden de fábrica (su `reference_width` con su
+    /// margen y la barra de scroll, ver [`reference`]). A lo alto, el timeline lo suyo
+    /// (`view.timeline_height`) y los demás su `default_size`. Es lo que toma un lado nuevo con
+    /// él solo (ver [`pin_sides`], a lo más el 45 % de su split).
     pub(super) fn preferred(&self, id: PanelId, horizontal: bool) -> f32 {
         let half = self.sep / 2.0;
         let fallback = panel_reference(id, horizontal) + half;

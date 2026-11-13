@@ -54,7 +54,7 @@ pub(crate) enum DockTarget {
     /// En la orilla `Edge` de la superficie principal, de lado a lado: una columna de alto
     /// completo (a la izquierda o a la derecha) o una fila de ancho completo (arriba o abajo), por
     /// fuera de lo que ya va en esa orilla y del ancho (o alto) de siempre del panel (ver
-    /// [`Workspace::preferred_side`] y `edge_node`).
+    /// `fit::SidePoints::preferred` y `edge_node`).
     Edge(Edge),
 }
 

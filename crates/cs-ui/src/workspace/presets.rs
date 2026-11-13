@@ -101,10 +101,10 @@ impl Workspace {
     /// `id` no puede ser el lienzo.
     ///
     /// Lo que mide el lado lo pone `fit::pin_sides` en el primer frame (la fracción de aquí no
-    /// importa): la toolbar a un lado, el ancho de su caja; cualquier otro a la derecha es la
-    /// columna derecha (`view.palette_width`); el timeline arriba o abajo, `view.timeline_height`;
-    /// lo demás, lo que pide de fábrica (a lo ancho, el de referencia: Color,
-    /// `color_panel::DEFAULT_WIDTH`; a lo alto, `default_size.y` de su ficha).
+    /// importa): la toolbar a un lado, el ancho de su caja; Color a la derecha es la columna
+    /// derecha (`view.palette_width`); el timeline arriba o abajo, `view.timeline_height`; lo
+    /// demás (también otro panel a la derecha), lo que pide de fábrica (a lo ancho, el de
+    /// referencia: Color, `color_panel::DEFAULT_WIDTH`; a lo alto, `default_size.y` de su ficha).
     pub(crate) fn solo(id: PanelId, edge: crate::dock::Edge) -> Workspace {
         use crate::dock::Edge;
         use egui_dock::{DockState, NodePath};
